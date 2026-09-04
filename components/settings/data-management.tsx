@@ -78,8 +78,10 @@ type PendingCloudRestore = {
   item: CloudBackupListItem;
 };
 
+type DynamicImageRange = "all" | "7d" | "3d";
+
 type ConfirmRequest =
-  | { type: "export"; moduleIds: DataModuleId[]; labels: string }
+  | { type: "export"; moduleIds: DataModuleId[]; labels: string; dynamicImageDays?: 3 | 7 }
   | { type: "import"; moduleIds: DataModuleId[]; labels: string; overwrite: boolean }
   | { type: "clear"; moduleIds: DataModuleId[]; labels: string }
   | { type: "media-maintenance" }
@@ -282,6 +284,7 @@ function buildRestartMessage(summary: string): string {
 export function DataManagement({ onNotice }: DataManagementProps) {
   const [snapshot, setSnapshot] = useState<DataSnapshot | null>(null);
   const [selectedExportModules, setSelectedExportModules] = useState<DataModuleId[]>(ALL_MODULE_IDS);
+  const [dynamicImageRange, setDynamicImageRange] = useState<DynamicImageRange>("all");
   const [selectedImportModules, setSelectedImportModules] = useState<DataModuleId[]>([]);
   const [selectedClearModules, setSelectedClearModules] = useState<DataModuleId[]>([]);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
@@ -471,12 +474,22 @@ export function DataManagement({ onNotice }: DataManagementProps) {
       return;
     }
     const labels = moduleIds.map(moduleLabel).join("、");
-    setConfirmRequest({ type: "export", moduleIds, labels });
+    const dynamicImageDays = cloudConfig.excludeMedia
+      ? undefined
+      : dynamicImageRange === "3d" ? 3 : dynamicImageRange === "7d" ? 7 : undefined;
+    setConfirmRequest({ type: "export", moduleIds, labels, dynamicImageDays });
   };
 
-  const executeExport = (moduleIds: DataModuleId[]) => runAction("导出中", async () => {
-    const { blob, manifest, warnings } = await createBackupBlob(moduleIds, { excludeMedia: cloudConfig.excludeMedia });
-    const note = manifest.mediaExcluded ? "（不含图片/多媒体）" : "";
+  const executeExport = (moduleIds: DataModuleId[], dynamicImageDays?: 3 | 7) => runAction("导出中", async () => {
+    const { blob, manifest, warnings } = await createBackupBlob(moduleIds, {
+      excludeMedia: cloudConfig.excludeMedia,
+      dynamicImageDays,
+    });
+    const note = manifest.mediaExcluded
+      ? "（不含图片/多媒体）"
+      : manifest.dynamicImageDays
+        ? `（动态图片仅最近${manifest.dynamicImageDays}天，头像与主题资源完整）`
+        : "";
     // 导出侧不静默：数据库打不开 / 关键模块 0 记录必须当面告知，
     // 否则用户会带着一个"看起来成功、实际缺整库"的备份走（用户实报踩坑）
     const warnNote = warnings.length > 0 ? `⚠️ ${warnings.join("；")}` : "";
@@ -613,7 +626,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
     const request = confirmRequest;
     setConfirmRequest(null);
     if (request.type === "export") {
-      void executeExport(request.moduleIds);
+      void executeExport(request.moduleIds, request.dynamicImageDays);
       return;
     }
     if (request.type === "import") {
@@ -680,6 +693,32 @@ export function DataManagement({ onNotice }: DataManagementProps) {
             <span className="menu-right">
               <Toggle checked={mediaConfig.enabled} onChange={updateMediaMaintenance} disabled={Boolean(busy)} />
             </span>
+          </div>
+          <div className="menu-item data-readonly-item">
+            <div className="menu-label-group">
+              <span className="menu-label">动态图片备份范围</span>
+              <span className="menu-desc">限制聊天与朋友圈图片的时间范围；用户/角色头像、主题图片、图标和壁纸始终完整保留。</span>
+            </div>
+            <div className="menu-right data-inline-actions">
+              {([
+                { value: "all", label: "全部" },
+                { value: "7d", label: "最近7天" },
+                { value: "3d", label: "最近3天" },
+              ] as const).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`ui-btn ${dynamicImageRange === option.value && !cloudConfig.excludeMedia ? "ui-btn-primary" : "ui-btn-outline"} py-1 px-3 ts-12`}
+                  onClick={() => {
+                    setDynamicImageRange(option.value);
+                    if (cloudConfig.excludeMedia) updateCloud({ excludeMedia: false });
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="menu-item data-readonly-item">
             <div className="menu-label-group">
@@ -1055,6 +1094,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
               <p className="menu-desc" style={{ marginBottom: 12 }}>
                 {pendingExport.manifest.modules.length} 个模块 · {formatBytes(pendingExport.manifest.totalBytes)}
                 {pendingExport.manifest.mediaExcluded ? " · 不含图片/多媒体" : ""}
+                {pendingExport.manifest.dynamicImageDays ? ` · 动态图片最近${pendingExport.manifest.dynamicImageDays}天` : ""}
               </p>
               <p className="menu-desc">
                 {isIOSBrowser()
@@ -1086,6 +1126,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
               <p className="menu-desc" style={{ marginBottom: 12 }}>
                 {formatTime(pendingImport.manifest.createdAt)} · {formatBytes(pendingImport.manifest.totalBytes)}
                 {pendingImport.manifest.mediaExcluded ? " · 不含图片" : ""}
+                {pendingImport.manifest.dynamicImageDays ? ` · 动态图片最近${pendingImport.manifest.dynamicImageDays}天` : ""}
               </p>
               <div className="data-inline-actions" style={{ marginBottom: 10 }}>
                 <span className="menu-desc" style={{ marginRight: "auto" }}>选择要导入的模块（{selectedImportModules.length} / {pendingImportItems.length}）</span>
@@ -1169,7 +1210,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
           }
           message={
             confirmRequest.type === "export"
-              ? `将导出以下模块：${confirmRequest.labels}。是否继续？`
+              ? `将导出以下模块：${confirmRequest.labels}。${cloudConfig.excludeMedia ? "本次不包含图片/多媒体。" : confirmRequest.dynamicImageDays ? `聊天与朋友圈动态图片仅包含最近${confirmRequest.dynamicImageDays}天，头像与主题资源完整保留。` : "本次包含全部图片/多媒体。"}是否继续？`
               : confirmRequest.type === "import"
                 ? confirmRequest.overwrite
                   ? `覆盖导入会用备份中的数据覆盖已选模块：${confirmRequest.labels}。建议先导出当前数据。是否继续？`
