@@ -44,6 +44,12 @@ export type MixHookPayload = {
     /** 出杯后：这一轮全部状态栏/小剧场块的原文，按输出顺序 */
     ticketRaws?: string[];
     encoreRaws?: string[];
+    /**
+     * 出杯后专用：这次不是新生成，是玩家编辑了这一轮原文后手动要求的重跑。
+     * 玩家选「替换」时应用已先把 store 回滚到这一轮记账前（钩子照常当新一轮记）；
+     * 选「追加」则在现有 store 上再跑一遍。一般无需特殊处理，此标记仅供知情。
+     */
+    edited?: boolean;
 };
 
 /** 沙盒还回来的东西 */
@@ -58,18 +64,16 @@ export type MixHookResult = {
     store?: MixMechanismStore;
 };
 
-/** 单条文本上限：防止机括往正文里灌一大坨把上下文撑爆 */
-const MAX_TEXT = 20_000;
-const MAX_NOTE = 2_000;
-/** 存储桶上限：键数与总字节 */
-const MAX_STORE_KEYS = 100;
-const MAX_STORE_BYTES = 100_000;
-/** 一次能写多少个记住值 */
+// text / note / store 不设长度上限，也绝不静默裁剪——被截在半句话上的记忆、
+// 悄悄丢掉的存储键，出了问题根本查不到原因，比撑大上下文更伤人。
+// 内容多大是机括作者自己的责任（记忆类机括本来就要全量喂回模型）。
+/** 一次能写多少个记住值（记住值是状态栏用的短文本，仍保留形状契约） */
 const MAX_STATE_KEYS = 50;
 const MAX_STATE_VALUE = 200;
 
-function cleanText(value: unknown, max: number): string {
-    return String(value ?? "").replace(/\u0000/g, "").slice(0, max);
+function cleanText(value: unknown, max?: number): string {
+    const text = String(value ?? "").replace(/\u0000/g, "");
+    return max ? text.slice(0, max) : text;
 }
 
 /** 记住的值只收数字与短文本，其余（对象、数组、函数残留）一律丢掉 */
@@ -85,15 +89,11 @@ function normalizeStateValue(value: unknown): MixStateValue | undefined {
 export function normalizeMechanismStore(value: unknown): MixMechanismStore {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     const out: MixMechanismStore = {};
-    let bytes = 0;
     for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)) {
-        if (Object.keys(out).length >= MAX_STORE_KEYS) break;
-        const key = cleanText(rawKey, 80).trim();
+        const key = cleanText(rawKey).trim();
         if (!key) continue;
         // 值统一存成字符串：机括想存结构自己 JSON.stringify，省得在边界上猜类型
-        const text = typeof rawValue === "string" ? cleanText(rawValue, MAX_STORE_BYTES) : cleanText(JSON.stringify(rawValue ?? null), MAX_STORE_BYTES);
-        bytes += key.length + text.length;
-        if (bytes > MAX_STORE_BYTES) break;
+        const text = typeof rawValue === "string" ? cleanText(rawValue) : cleanText(JSON.stringify(rawValue ?? null));
         out[key] = text;
     }
     return out;
@@ -108,9 +108,9 @@ export function normalizeHookResult(value: unknown): MixHookResult {
     const record = value as Record<string, unknown>;
     const out: MixHookResult = {};
 
-    if (typeof record.text === "string") out.text = cleanText(record.text, MAX_TEXT);
+    if (typeof record.text === "string") out.text = cleanText(record.text);
     if (typeof record.note === "string") {
-        const note = cleanText(record.note, MAX_NOTE).trim();
+        const note = cleanText(record.note).trim();
         if (note) out.note = note;
     }
     if (record.state && typeof record.state === "object" && !Array.isArray(record.state)) {
