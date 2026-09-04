@@ -694,12 +694,12 @@ export function DataManagement({ onNotice }: DataManagementProps) {
               <Toggle checked={mediaConfig.enabled} onChange={updateMediaMaintenance} disabled={Boolean(busy)} />
             </span>
           </div>
-          <div className="menu-item data-readonly-item">
+          <div className="menu-item data-readonly-item data-image-range-item">
             <div className="menu-label-group">
               <span className="menu-label">动态图片备份范围</span>
               <span className="menu-desc">限制聊天与朋友圈图片的时间范围；用户/角色头像、主题图片、图标和壁纸始终完整保留。</span>
             </div>
-            <div className="menu-right data-inline-actions">
+            <div className="data-image-range-options" role="group" aria-label="动态图片备份范围">
               {([
                 { value: "all", label: "全部" },
                 { value: "7d", label: "最近7天" },
@@ -708,7 +708,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                 <button
                   key={option.value}
                   type="button"
-                  className={`ui-btn ${dynamicImageRange === option.value && !cloudConfig.excludeMedia ? "ui-btn-primary" : "ui-btn-outline"} py-1 px-3 ts-12`}
+                  className={`ui-btn data-image-range-button ${dynamicImageRange === option.value && !cloudConfig.excludeMedia ? "ui-btn-primary" : "ui-btn-outline"}`}
                   onClick={() => {
                     setDynamicImageRange(option.value);
                     if (cloudConfig.excludeMedia) updateCloud({ excludeMedia: false });
