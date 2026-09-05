@@ -357,18 +357,20 @@ export function ImageGenerationSettings() {
                     </Select>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                    <label className="menu-desc ml-1">请求方式</label>
-                    <Select
-                        value={settings.requestMode}
-                        onChange={(event) => updateSettings({
-                            requestMode: event.target.value as ImageGenerationSettingsType["requestMode"],
-                        })}
-                    >
-                        <option value="server">服务端转发（推荐，可避免跨域报错）</option>
-                        <option value="direct">浏览器直连（需接口允许 CORS 跨域）</option>
-                    </Select>
-                </div>
+                {settings.provider === "novelai" && (
+                    <div className="flex flex-col gap-1">
+                        <label className="menu-desc ml-1">请求方式</label>
+                        <Select
+                            value={settings.requestMode}
+                            onChange={(event) => updateSettings({
+                                requestMode: event.target.value as ImageGenerationSettingsType["requestMode"],
+                            })}
+                        >
+                            <option value="server">服务端转发（推荐，可避免跨域报错）</option>
+                            <option value="direct">浏览器直连（需接口允许 CORS 跨域）</option>
+                        </Select>
+                    </div>
+                )}
 
                 {settings.provider === "novelai" ? (
                     /* --- NovelAI 配置面板 --- */
