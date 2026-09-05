@@ -694,6 +694,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     extraPrompt: "",
     novelai: {
         apiKey: "",
+        requestMode: "direct",
         activePresetId: DEFAULT_NOVELAI_PRESET.id,
         presets: [DEFAULT_NOVELAI_PRESET],
     },
@@ -790,6 +791,9 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
 
     const novelai: import("./settings-types").NovelAiSettings = {
         apiKey: typeof rawNai?.apiKey === "string" ? rawNai.apiKey : "",
+        requestMode: rawNai?.requestMode === "server" || rawNai?.requestMode === "direct"
+            ? rawNai.requestMode
+            : requestMode,
         activePresetId,
         presets: naiPresets,
     };
