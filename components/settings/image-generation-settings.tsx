@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { AlertCircle, Camera, ChevronDown, Image, Info, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Camera, ChevronDown, Image, Info, Plus, RefreshCw, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import type { ImageGenerationSettings as ImageGenerationSettingsType, NovelAiPreset, OpenAiImagePreset } from "@/lib/settings-types";
 import {
     DEFAULT_IMAGE_GENERATION_SETTINGS,
@@ -76,6 +76,8 @@ export function ImageGenerationSettings() {
     const [naiTokenStatus, setNaiTokenStatus] = useState<Status | null>(null);
     const [testPreviewUrl, setTestPreviewUrl] = useState<string | null>(null);
     const [pendingDeletePresetId, setPendingDeletePresetId] = useState<string | null>(null);
+    const [pendingDeleteOpenAiPresetId, setPendingDeleteOpenAiPresetId] = useState<string | null>(null);
+    const [openAiDraft, setOpenAiDraft] = useState<OpenAiImagePreset | null>(null);
     const openaiPresets = settings.openaiPresets?.length ? settings.openaiPresets : [{
         id: "preset_openai_default",
         name: "默认方案",
@@ -91,18 +93,43 @@ export function ImageGenerationSettings() {
         ? settings.activeOpenAiPresetId
         : openaiPresets[0].id;
     const activeOpenAiPreset = openaiPresets.find(p => p.id === activeOpenAiPresetId) || openaiPresets[0];
+    const editableOpenAiPreset = openAiDraft?.id === activeOpenAiPresetId ? openAiDraft : activeOpenAiPreset;
+    const isOpenAiPresetDirty = useMemo(
+        () => JSON.stringify(editableOpenAiPreset) !== JSON.stringify(activeOpenAiPreset),
+        [activeOpenAiPreset, editableOpenAiPreset],
+    );
 
     useEffect(() => {
         // Sync the ratio hint to the saved size on load, so the hint is present
         // by default (not only after the user manually switches the size).
         const loaded = loadImageGenerationSettings();
-        const syncedExtra = withRatioHint(loaded.extraPrompt, loaded.size);
-        if (syncedExtra !== loaded.extraPrompt) {
-            const next = { ...loaded, extraPrompt: syncedExtra };
+        const loadedPresets = loaded.openaiPresets?.length ? loaded.openaiPresets : [{
+            id: "preset_openai_default",
+            name: "默认方案",
+            requestMode: loaded.requestMode,
+            apiKey: loaded.apiKey,
+            baseUrl: loaded.baseUrl,
+            model: loaded.model,
+            size: loaded.size,
+            quality: loaded.quality,
+            extraPrompt: loaded.extraPrompt,
+        } satisfies OpenAiImagePreset];
+        const loadedActiveId = loaded.activeOpenAiPresetId && loadedPresets.some(preset => preset.id === loaded.activeOpenAiPresetId)
+            ? loaded.activeOpenAiPresetId
+            : loadedPresets[0].id;
+        const loadedActivePreset = loadedPresets.find(preset => preset.id === loadedActiveId) || loadedPresets[0];
+        const syncedExtra = withRatioHint(loadedActivePreset.extraPrompt, loadedActivePreset.size);
+        if (syncedExtra !== loadedActivePreset.extraPrompt) {
+            const nextPresets = loadedPresets.map(preset => preset.id === loadedActiveId
+                ? { ...preset, extraPrompt: syncedExtra }
+                : preset);
+            const next = { ...loaded, openaiPresets: nextPresets, activeOpenAiPresetId: loadedActiveId, extraPrompt: syncedExtra };
             saveImageGenerationSettings(next);
             setSettings(next);
+            setOpenAiDraft({ ...nextPresets.find(preset => preset.id === loadedActiveId)! });
         } else {
             setSettings(loaded);
+            setOpenAiDraft({ ...loadedActivePreset });
         }
         setCharacters(loadCharacters());
     }, []);
@@ -139,29 +166,50 @@ export function ImageGenerationSettings() {
         persist({ ...settings, ...patch });
     }, [persist, settings]);
 
-    const updateOpenAiPreset = useCallback((patch: Partial<OpenAiImagePreset>) => {
-        const nextPresets = openaiPresets.map(preset => preset.id === activeOpenAiPresetId ? { ...preset, ...patch } : preset);
-        const active = nextPresets.find(preset => preset.id === activeOpenAiPresetId) || nextPresets[0];
-        persist({ ...settings, openaiPresets: nextPresets, activeOpenAiPresetId, requestMode: active.requestMode, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, size: active.size, quality: active.quality, extraPrompt: active.extraPrompt });
-    }, [activeOpenAiPresetId, openaiPresets, persist, settings]);
+    const updateOpenAiDraft = useCallback((patch: Partial<OpenAiImagePreset>) => {
+        setOpenAiDraft(current => ({
+            ...(current?.id === activeOpenAiPresetId ? current : activeOpenAiPreset),
+            ...patch,
+        }));
+        setStatus(null);
+    }, [activeOpenAiPreset, activeOpenAiPresetId]);
+
+    const saveOpenAiPreset = useCallback(() => {
+        const savedPreset: OpenAiImagePreset = {
+            ...editableOpenAiPreset,
+            name: editableOpenAiPreset.name.trim() || "未命名预设",
+        };
+        const nextPresets = openaiPresets.map(preset => preset.id === activeOpenAiPresetId ? savedPreset : preset);
+        persist({ ...settings, openaiPresets: nextPresets, activeOpenAiPresetId, requestMode: savedPreset.requestMode, apiKey: savedPreset.apiKey, baseUrl: savedPreset.baseUrl, model: savedPreset.model, size: savedPreset.size, quality: savedPreset.quality, extraPrompt: savedPreset.extraPrompt });
+        setOpenAiDraft({ ...savedPreset });
+        setStatus({ success: true, message: `预设“${savedPreset.name}”已保存。` });
+    }, [activeOpenAiPresetId, editableOpenAiPreset, openaiPresets, persist, settings]);
 
     const addOpenAiPreset = useCallback(() => {
         const newId = `preset_openai_${Date.now()}`;
-        const newPreset = { ...activeOpenAiPreset, id: newId, name: `${activeOpenAiPreset.name || "默认方案"}（副本）` };
+        const newPreset = { ...editableOpenAiPreset, id: newId, name: `${editableOpenAiPreset.name || "默认方案"}（副本）` };
         persist({ ...settings, openaiPresets: [...openaiPresets, newPreset], activeOpenAiPresetId: newId, requestMode: newPreset.requestMode, apiKey: newPreset.apiKey, baseUrl: newPreset.baseUrl, model: newPreset.model, size: newPreset.size, quality: newPreset.quality, extraPrompt: newPreset.extraPrompt });
-    }, [activeOpenAiPreset, openaiPresets, persist, settings]);
+        setOpenAiDraft({ ...newPreset });
+        setStatus({ success: true, message: `已新建预设“${newPreset.name}”。` });
+    }, [editableOpenAiPreset, openaiPresets, persist, settings]);
 
-    const deleteOpenAiPreset = useCallback(() => {
+    const deleteOpenAiPreset = useCallback((presetId: string) => {
         if (openaiPresets.length <= 1) return;
-        const next = openaiPresets.filter(preset => preset.id !== activeOpenAiPresetId);
-        const active = next[0];
+        const deletedIndex = openaiPresets.findIndex(preset => preset.id === presetId);
+        if (deletedIndex < 0) return;
+        const next = openaiPresets.filter(preset => preset.id !== presetId);
+        const active = next[Math.min(deletedIndex, next.length - 1)];
         persist({ ...settings, openaiPresets: next, activeOpenAiPresetId: active.id, requestMode: active.requestMode, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, size: active.size, quality: active.quality, extraPrompt: active.extraPrompt });
-    }, [activeOpenAiPresetId, openaiPresets, persist, settings]);
+        setOpenAiDraft({ ...active });
+        setStatus({ success: true, message: "预设已删除。" });
+    }, [openaiPresets, persist, settings]);
 
     const selectOpenAiPreset = useCallback((id: string) => {
         const active = openaiPresets.find(preset => preset.id === id);
         if (!active) return;
         persist({ ...settings, activeOpenAiPresetId: id, requestMode: active.requestMode, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, size: active.size, quality: active.quality, extraPrompt: active.extraPrompt });
+        setOpenAiDraft({ ...active });
+        setStatus(null);
     }, [openaiPresets, persist, settings]);
 
     // NovelAI 预设管理与状态
@@ -171,17 +219,19 @@ export function ImageGenerationSettings() {
         const activePreset = presets.find(p => p.id === nai?.activePresetId) || presets[0];
         return {
             apiKey: nai?.apiKey || "",
+            requestMode: nai?.requestMode || settings.requestMode,
             activePresetId: activePreset.id,
             presets,
             activePreset,
         };
-    }, [settings.novelai]);
+    }, [settings.novelai, settings.requestMode]);
 
     const updateNovelAi = useCallback((patch: Partial<import("@/lib/settings-types").NovelAiSettings>) => {
         persist({
             ...settings,
             novelai: {
                 apiKey: naiSettings.apiKey,
+                requestMode: naiSettings.requestMode,
                 activePresetId: naiSettings.activePresetId,
                 presets: naiSettings.presets,
                 ...patch,
@@ -238,13 +288,13 @@ export function ImageGenerationSettings() {
 
     const fetchModels = async () => {
         setStatus(null);
-        if (!activeOpenAiPreset.apiKey.trim() || !activeOpenAiPreset.baseUrl.trim()) {
+        if (!editableOpenAiPreset.apiKey.trim() || !editableOpenAiPreset.baseUrl.trim()) {
             setStatus({ success: false, message: "请先填写 Base URL 和 API Key。" });
             return;
         }
         setIsFetchingModels(true);
         try {
-            const fetched = await fetchImageGenerationModels(activeOpenAiPreset);
+            const fetched = await fetchImageGenerationModels(editableOpenAiPreset);
             setModels(fetched);
             setStatus({
                 success: true,
@@ -283,11 +333,26 @@ export function ImageGenerationSettings() {
         setStatus(null);
         setIsTesting(true);
         try {
+            const testSettings: ImageGenerationSettingsType = settings.provider === "novelai"
+                ? { ...settings, enabled: true }
+                : {
+                    ...settings,
+                    enabled: true,
+                    requestMode: editableOpenAiPreset.requestMode,
+                    apiKey: editableOpenAiPreset.apiKey,
+                    baseUrl: editableOpenAiPreset.baseUrl,
+                    model: editableOpenAiPreset.model,
+                    size: editableOpenAiPreset.size,
+                    quality: editableOpenAiPreset.quality,
+                    extraPrompt: editableOpenAiPreset.extraPrompt,
+                    openaiPresets: openaiPresets.map(preset => preset.id === activeOpenAiPresetId ? editableOpenAiPreset : preset),
+                    activeOpenAiPresetId,
+                };
             const result = await generateImageFromConfiguredApi({
                 description: settings.provider === "novelai"
                     ? "1girl, solo, upper body, white coffee cup on the wooden table, soft window light"
                     : "一张放在桌面上的白色咖啡杯，柔和自然光，真实照片风格",
-                settings: { ...settings, enabled: true },
+                settings: testSettings,
             });
             if (!result) throw new Error("图像生成未返回结果。");
             if (testPreviewUrl) URL.revokeObjectURL(testPreviewUrl);
@@ -361,8 +426,8 @@ export function ImageGenerationSettings() {
                     <div className="flex flex-col gap-1">
                         <label className="menu-desc ml-1">请求方式</label>
                         <Select
-                            value={settings.requestMode}
-                            onChange={(event) => updateSettings({
+                            value={naiSettings.requestMode}
+                            onChange={(event) => updateNovelAi({
                                 requestMode: event.target.value as ImageGenerationSettingsType["requestMode"],
                             })}
                         >
@@ -610,9 +675,10 @@ export function ImageGenerationSettings() {
                         <div className="flex flex-col gap-2 rounded-xl bg-[var(--c-input)]/40 p-3 border border-[var(--c-card-border)]">
                             <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
                                 <label className="menu-label text-sm font-semibold">OpenAI API 配置预设</label>
-                                <div className="grid grid-cols-2 gap-2 sm:flex">
+                                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                                     <button type="button" onClick={addOpenAiPreset} className="ui-btn ui-btn-soft-action min-h-11 !px-3 !py-2 text-xs flex items-center gap-1"><Plus size={14} />新建预设</button>
-                                    {openaiPresets.length > 1 && <button type="button" onClick={deleteOpenAiPreset} className="ui-btn ui-btn-danger min-h-11 !px-3 !py-2 text-xs flex items-center gap-1"><Trash2 size={14} />删除预设</button>}
+                                    <button type="button" onClick={saveOpenAiPreset} disabled={!isOpenAiPresetDirty} className="ui-btn ui-btn-primary min-h-11 !px-3 !py-2 text-xs flex items-center gap-1"><Save size={14} />保存预设</button>
+                                    {openaiPresets.length > 1 && <button type="button" onClick={() => setPendingDeleteOpenAiPresetId(activeOpenAiPresetId)} className="ui-btn ui-btn-danger min-h-11 !px-3 !py-2 text-xs flex items-center gap-1"><Trash2 size={14} />删除预设</button>}
                                 </div>
                             </div>
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -624,14 +690,17 @@ export function ImageGenerationSettings() {
                                 </div>
                                 <div className="flex flex-col gap-1">
                                     <span className="menu-desc ml-1">预设备注</span>
-                                    <Input type="text" value={activeOpenAiPreset.name} onChange={(event) => updateOpenAiPreset({ name: event.target.value })} placeholder="未命名预设" />
+                                    <Input type="text" value={editableOpenAiPreset.name} onChange={(event) => updateOpenAiDraft({ name: event.target.value })} placeholder="未命名预设" />
                                 </div>
                             </div>
+                            <p className={`menu-desc ${isOpenAiPresetDirty ? "text-amber-600" : "opacity-70"}`}>
+                                {isOpenAiPresetDirty ? "当前有未保存的修改，请点击“保存预设”。" : "当前预设已保存。"}
+                            </p>
                         </div>
 
                         <div className="flex flex-col gap-1">
                             <label className="menu-desc ml-1">请求方式</label>
-                            <Select value={activeOpenAiPreset.requestMode} onChange={(event) => updateOpenAiPreset({ requestMode: event.target.value as ImageGenerationSettingsType["requestMode"] })}>
+                            <Select value={editableOpenAiPreset.requestMode} onChange={(event) => updateOpenAiDraft({ requestMode: event.target.value as ImageGenerationSettingsType["requestMode"] })}>
                                 <option value="server">服务端转发（推荐，可避免跨域报错）</option>
                                 <option value="direct">浏览器直连（需接口允许 CORS 跨域）</option>
                             </Select>
@@ -641,8 +710,8 @@ export function ImageGenerationSettings() {
                             <label className="menu-desc ml-1">Base URL</label>
                             <Input
                                 type="url"
-                                value={activeOpenAiPreset.baseUrl}
-                                onChange={(event) => updateOpenAiPreset({ baseUrl: event.target.value })}
+                                value={editableOpenAiPreset.baseUrl}
+                                onChange={(event) => updateOpenAiDraft({ baseUrl: event.target.value })}
                                 placeholder="https://api.example.com/v1"
                             />
                         </div>
@@ -651,8 +720,8 @@ export function ImageGenerationSettings() {
                             <label className="menu-desc ml-1">API Key</label>
                             <Input
                                 type="password"
-                                value={activeOpenAiPreset.apiKey}
-                                onChange={(event) => updateOpenAiPreset({ apiKey: event.target.value })}
+                                value={editableOpenAiPreset.apiKey}
+                                onChange={(event) => updateOpenAiDraft({ apiKey: event.target.value })}
                                 placeholder="sk-..."
                             />
                         </div>
@@ -663,8 +732,8 @@ export function ImageGenerationSettings() {
                                 <div className="relative flex-1">
                                     <Input
                                         type="text"
-                                        value={activeOpenAiPreset.model}
-                                        onChange={(event) => updateOpenAiPreset({ model: event.target.value })}
+                                        value={editableOpenAiPreset.model}
+                                        onChange={(event) => updateOpenAiDraft({ model: event.target.value })}
                                         placeholder="gpt-image-2 / image2 / chatgpt-image-latest"
                                         className={likelyModels.length > 0 ? "w-full pr-9" : "w-full"}
                                     />
@@ -675,7 +744,7 @@ export function ImageGenerationSettings() {
                                                 aria-label="选择拉取到的模型"
                                                 value=""
                                                 onChange={(event) => {
-                                                    if (event.target.value) updateOpenAiPreset({ model: event.target.value });
+                                                    if (event.target.value) updateOpenAiDraft({ model: event.target.value });
                                                 }}
                                                 className="absolute inset-y-0 right-0 w-10 cursor-pointer opacity-0"
                                             >
@@ -700,16 +769,16 @@ export function ImageGenerationSettings() {
                         <div className="grid grid-cols-2 gap-3">
                             <div className="flex flex-col gap-1">
                                 <label className="menu-desc ml-1">尺寸</label>
-                                <Select value={activeOpenAiPreset.size} onChange={(event) => {
+                                <Select value={editableOpenAiPreset.size} onChange={(event) => {
                                         const size = event.target.value;
-                                        updateOpenAiPreset({ size, extraPrompt: withRatioHint(activeOpenAiPreset.extraPrompt, size) });
+                                        updateOpenAiDraft({ size, extraPrompt: withRatioHint(editableOpenAiPreset.extraPrompt, size) });
                                     }}>
                                     {SIZE_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
                                 </Select>
                             </div>
                             <div className="flex flex-col gap-1">
                                 <label className="menu-desc ml-1">质量</label>
-                                <Select value={activeOpenAiPreset.quality} onChange={(event) => updateOpenAiPreset({ quality: event.target.value })}>
+                                <Select value={editableOpenAiPreset.quality} onChange={(event) => updateOpenAiDraft({ quality: event.target.value })}>
                                     {QUALITY_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
                                 </Select>
                             </div>
@@ -718,8 +787,8 @@ export function ImageGenerationSettings() {
                         <div className="flex flex-col gap-1">
                             <label className="menu-desc ml-1">补充提示词</label>
                             <Textarea
-                                value={activeOpenAiPreset.extraPrompt}
-                                onChange={(event) => updateOpenAiPreset({ extraPrompt: event.target.value })}
+                                value={editableOpenAiPreset.extraPrompt}
+                                onChange={(event) => updateOpenAiDraft({ extraPrompt: event.target.value })}
                                 placeholder="会和角色输出的图片描述一起发送给生图模型。"
                                 rows={4}
                             />
@@ -941,6 +1010,22 @@ export function ImageGenerationSettings() {
                         setPendingDeletePresetId(null);
                     }}
                     onCancel={() => setPendingDeletePresetId(null)}
+                />
+            )}
+
+            {pendingDeleteOpenAiPresetId && (
+                <ConfirmDialog
+                    title="确认删除 OpenAI 预设？"
+                    message={`预设“${openaiPresets.find(preset => preset.id === pendingDeleteOpenAiPresetId)?.name || "未命名预设"}”及其中的 API 配置删除后无法恢复。`}
+                    icon={Trash2}
+                    variant="danger"
+                    confirmLabel="确认删除"
+                    cancelLabel="取消"
+                    onConfirm={() => {
+                        deleteOpenAiPreset(pendingDeleteOpenAiPresetId);
+                        setPendingDeleteOpenAiPresetId(null);
+                    }}
+                    onCancel={() => setPendingDeleteOpenAiPresetId(null)}
                 />
             )}
 
