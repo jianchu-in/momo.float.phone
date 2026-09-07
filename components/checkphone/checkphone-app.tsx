@@ -277,7 +277,7 @@ function AppGlyph({ appId, size = 26, strokeWidth = 1.5 }: { appId: CheckPhoneAp
 }
 
 function getAppIconClass(appId: CheckPhoneAppId, isDock = false) {
-  const baseClass = isDock ? "cp-app-icon cp-app-icon--dock" : "cp-app-icon";
+  const baseClass = isDock ? "cp-app-icon cp-app-icon--dock relative" : "cp-app-icon relative";
   // Interspersed distribution to ensure grey icons don't cluster in one column
   const midGreyApps: string[] = ["photos", "weibo", "steam", "telegram", "reddit"];
   const lightGreyApps: string[] = ["messages", "bilibili", "xiaohongshu", "email", "instagram"];
@@ -872,7 +872,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                             >
                               <div className={getAppIconClass(appId)}>
                                 <AppGlyph appId={appId} size={32} strokeWidth={1.4} />
-                                {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                                {unreadAppIds.includes(appId) && <span className="pointer-events-none absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-[#ff3b30] shadow-sm" aria-label="有新内容" />}
                               </div>
                               <span className="cp-app-label">{spec.shortLabel ?? spec.label}</span>
                             </button>
@@ -925,7 +925,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                             >
                               <div className={getAppIconClass(appId)}>
                                 <AppGlyph appId={appId} size={32} strokeWidth={1.4} />
-                                {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                                {unreadAppIds.includes(appId) && <span className="pointer-events-none absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-[#ff3b30] shadow-sm" aria-label="有新内容" />}
                               </div>
                               <span className="cp-app-label">{spec.shortLabel ?? spec.label}</span>
                             </button>
@@ -964,7 +964,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                             <button key={appId} type="button" className="cp-app-btn" onClick={() => openApp(appId)}>
                               <div className={getAppIconClass(appId)}>
                                 <AppGlyph appId={appId} size={32} strokeWidth={1.4} />
-                                {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                                {unreadAppIds.includes(appId) && <span className="pointer-events-none absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-[#ff3b30] shadow-sm" aria-label="有新内容" />}
                               </div>
                               <span className="cp-app-label">{spec.shortLabel ?? spec.label}</span>
                             </button>
@@ -991,7 +991,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                           >
                             <div className={getAppIconClass(appId, true)}>
                               <AppGlyph appId={appId} />
-                              {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                              {unreadAppIds.includes(appId) && <span className="pointer-events-none absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-[#ff3b30] shadow-sm" aria-label="有新内容" />}
                             </div>
                           </button>
                         );
