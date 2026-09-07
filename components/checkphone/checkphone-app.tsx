@@ -83,6 +83,8 @@ import {
   savePhoneSnapshot,
   hydrateCheckPhoneStorage,
   readPhoneManifestCache,
+  loadCheckPhoneUnreadAppIds,
+  saveCheckPhoneUnreadAppIds,
   loadCheckPhoneProjectionEntries,
   removeCheckPhoneProjectionEntry,
   clearCheckPhoneProjectionEntries,
@@ -354,6 +356,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   const [batchAppIds, setBatchAppIds] = useState<CheckPhoneAppId[]>([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchStatus, setBatchStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [unreadAppIdsByCharacter, setUnreadAppIdsByCharacter] = useState<Record<string, CheckPhoneAppId[]>>({});
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(DEFAULT_CHECKPHONE_BILINGUAL_PROMPT);
   const [checkPhoneSettings, setCheckPhoneSettings] = useState<CheckPhoneSettings>({
@@ -367,6 +370,9 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
     const all = loadCharacters();
     setCharacters(all);
     setCheckPhoneSettings(loadCheckPhoneSettings());
+    setUnreadAppIdsByCharacter(Object.fromEntries(
+      all.map((character) => [character.id, loadCheckPhoneUnreadAppIds(character.id)]),
+    ));
 
     (async () => {
       await hydrateCheckPhoneStorage();
@@ -437,6 +443,21 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
     CHECKPHONE_EMBEDDED_APP_IDS.includes(selectedAppId as (typeof CHECKPHONE_EMBEDDED_APP_IDS)[number]);
 
   const closeSelectedApp = () => setSelectedAppId(null);
+
+  function updateUnreadApps(characterId: string, update: (current: CheckPhoneAppId[]) => CheckPhoneAppId[]) {
+    setUnreadAppIdsByCharacter((previous) => {
+      const nextIds = [...new Set(update(previous[characterId] || []))];
+      saveCheckPhoneUnreadAppIds(characterId, nextIds);
+      return { ...previous, [characterId]: nextIds };
+    });
+  }
+
+  function openApp(appId: CheckPhoneAppId) {
+    if (activeCharId) {
+      updateUnreadApps(activeCharId, (current) => current.filter((id) => id !== appId));
+    }
+    setSelectedAppId(appId);
+  }
 
   function updateCheckPhoneSettings(patch: Partial<CheckPhoneSettings>) {
     const next = { ...checkPhoneSettings, ...patch };
@@ -582,6 +603,10 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
       await savePhoneSnapshot(snapshot);
       savedCount += 1;
     }
+    const generatedAppIds = result.items.filter((item) => item.payload).map((item) => item.appId);
+    if (generatedAppIds.length > 0) {
+      updateUnreadApps(activeCharId, (current) => [...current, ...generatedAppIds]);
+    }
     const failures = result.items.filter((item) => !item.payload).map((item) => CHECKPHONE_APP_SPECS[item.appId].label);
     if (result.error) {
       setBatchStatus({ success: false, message: result.error });
@@ -621,11 +646,13 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
       },
     }));
     setSelectedAppId(null);
+    updateUnreadApps(activeCharId, () => []);
     setConfirmClearOpen(false);
   }
 
   const topApps = sanitizeCheckPhoneAppIds(manifest?.topAppIds);
   const dockApps = sanitizeCheckPhoneAppIds(manifest?.dockAppIds);
+  const unreadAppIds = activeCharId ? unreadAppIdsByCharacter[activeCharId] || [] : [];
   const selectedAppSpec = selectedAppId && isCheckPhoneAppId(selectedAppId) ? CHECKPHONE_APP_SPECS[selectedAppId] : null;
 
   // STAGE 2: PURE FULLSCREEN IMMERSIVE SIMULATOR
@@ -841,9 +868,12 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                               key={appId}
                               type="button"
                               className="cp-app-btn"
-                              onClick={() => setSelectedAppId(appId)}
+                              onClick={() => openApp(appId)}
                             >
-                              <div className={getAppIconClass(appId)}><AppGlyph appId={appId} size={32} strokeWidth={1.4} /></div>
+                              <div className={getAppIconClass(appId)}>
+                                <AppGlyph appId={appId} size={32} strokeWidth={1.4} />
+                                {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                              </div>
                               <span className="cp-app-label">{spec.shortLabel ?? spec.label}</span>
                             </button>
                           );
@@ -890,10 +920,13 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                               key={appId} 
                               type="button" 
                               className="cp-app-btn" 
-                              onClick={() => setSelectedAppId(appId)}
+                              onClick={() => openApp(appId)}
                               style={isBottomRow ? { transform: "translateY(-8px)" } : undefined}
                             >
-                              <div className={getAppIconClass(appId)}><AppGlyph appId={appId} size={32} strokeWidth={1.4} /></div>
+                              <div className={getAppIconClass(appId)}>
+                                <AppGlyph appId={appId} size={32} strokeWidth={1.4} />
+                                {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                              </div>
                               <span className="cp-app-label">{spec.shortLabel ?? spec.label}</span>
                             </button>
                           );
@@ -928,8 +961,11 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                         {topApps.slice(8, 12).map((appId) => {
                           const spec = CHECKPHONE_APP_SPECS[appId];
                           return (
-                            <button key={appId} type="button" className="cp-app-btn" onClick={() => setSelectedAppId(appId)}>
-                              <div className={getAppIconClass(appId)}><AppGlyph appId={appId} size={32} strokeWidth={1.4} /></div>
+                            <button key={appId} type="button" className="cp-app-btn" onClick={() => openApp(appId)}>
+                              <div className={getAppIconClass(appId)}>
+                                <AppGlyph appId={appId} size={32} strokeWidth={1.4} />
+                                {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
+                              </div>
                               <span className="cp-app-label">{spec.shortLabel ?? spec.label}</span>
                             </button>
                           );
@@ -951,10 +987,11 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                             key={appId}
                             type="button"
                             className="cp-app-btn cp-app-btn--dock"
-                            onClick={() => setSelectedAppId(appId)}
+                            onClick={() => openApp(appId)}
                           >
                             <div className={getAppIconClass(appId, true)}>
                               <AppGlyph appId={appId} />
+                              {unreadAppIds.includes(appId) && <span className="cp-app-unread-dot" aria-label="有新内容" />}
                             </div>
                           </button>
                         );
