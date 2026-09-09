@@ -13,7 +13,7 @@ import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-hooks";
 import { parseAIResponse } from "./rich-message-parser";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
-import { findUserAvatarChangeIntent } from "./chat-avatar-intent";
+import { findUserAvatarChangeIntent, inferAvatarDecisionFromReply } from "./chat-avatar-intent";
 
 export const DEFAULT_VISION_IMAGE_PROMPT_LIMIT = 1;
 export const MAX_VISION_IMAGE_PROMPT_LIMIT = 20;
@@ -316,9 +316,6 @@ const AVATAR_DECLINE_RE = /[\[【]\s*拒绝头像推荐\s*[\]】]/;
 
 function resolvePendingAvatarRecommendation(message: ChatMessage): void {
     if (message.role !== "assistant" || !message.rawResponseText) return;
-    const accepted = AVATAR_ACCEPT_RE.test(message.rawResponseText);
-    const declined = AVATAR_DECLINE_RE.test(message.rawResponseText);
-    if (!accepted && !declined) return;
 
     const session = _sessionsCache.find(item => item.id === message.sessionId);
     if (!session || session.isGroup) return;
@@ -333,6 +330,15 @@ function resolvePendingAvatarRecommendation(message: ChatMessage): void {
     const recommendation = legacyRecommendation
         || findUserAvatarChangeIntent(_messagesCache, message.sessionId, session.contactId)?.image;
     if (!recommendation) return;
+
+    const explicitAccepted = AVATAR_ACCEPT_RE.test(message.rawResponseText);
+    const explicitDeclined = AVATAR_DECLINE_RE.test(message.rawResponseText);
+    const inferredDecision = !explicitAccepted && !explicitDeclined
+        ? inferAvatarDecisionFromReply(`${message.rawResponseText}\n${message.content}`)
+        : null;
+    const accepted = explicitAccepted || inferredDecision === "accepted";
+    const declined = explicitDeclined || inferredDecision === "declined";
+    if (!accepted && !declined) return;
 
     recommendation.mediaData = {
         ...recommendation.mediaData,
