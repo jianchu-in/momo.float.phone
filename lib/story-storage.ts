@@ -36,6 +36,8 @@ export type StoryCharacterSettings = {
   userPerspective?: "second" | "third" | "username";
   proseStyle?: string;
   proseStylePrompt?: string;
+  proseStyleSchemes?: StoryTailScheme[];
+  activeProseStyleSchemeId?: string;
   statusSchemes?: StoryTailScheme[];
   activeStatusSchemeId?: string;
   theaterSchemes?: StoryTailScheme[];
