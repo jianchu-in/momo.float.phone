@@ -36,7 +36,11 @@ function StoryTransformAutoReader() {
     let button: HTMLButtonElement | null = null;
     let observer: MutationObserver | null = null;
 
-    const clearTransform = () => {
+    const syncAndClearTransform = (position?: number) => {
+      if (stage && position != null) {
+        const maxPosition = Math.max(0, stage.scrollHeight - stage.clientHeight);
+        stage.scrollTop = Math.min(maxPosition, Math.max(0, position));
+      }
       if (inner) inner.style.removeProperty("transform");
       if (stage) stage.removeAttribute("data-story-auto-transform");
     };
@@ -50,14 +54,17 @@ function StoryTransformAutoReader() {
       running = false;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
-      clearTransform();
+      // At the end, land the native scroller at the real bottom before removing
+      // the transform so there is no visual jump back to the old scrollTop.
+      const maxPosition = stage ? Math.max(0, stage.scrollHeight - stage.clientHeight) : virtualPosition;
+      syncAndClearTransform(maxPosition);
       if (button && button.dataset.reading === "true") button.click();
     };
 
     const tick = (time: number) => {
       if (!running || !stage || !inner || !button || button.dataset.reading !== "true") {
         running = false;
-        clearTransform();
+        syncAndClearTransform(virtualPosition);
         return;
       }
 
@@ -106,7 +113,7 @@ function StoryTransformAutoReader() {
         running = false;
         if (frame) cancelAnimationFrame(frame);
         frame = 0;
-        clearTransform();
+        syncAndClearTransform(virtualPosition);
       }
     };
 
@@ -128,7 +135,7 @@ function StoryTransformAutoReader() {
       observer?.disconnect();
       document.removeEventListener("click", watch, true);
       stage?.removeEventListener("touchstart", handleStageTouchStart);
-      clearTransform();
+      syncAndClearTransform();
     };
   }, []);
 
