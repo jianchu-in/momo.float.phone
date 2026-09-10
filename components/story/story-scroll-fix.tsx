@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { loadStorySessions } from "@/lib/story-storage";
 
 const DEFAULT_AUTO_READING_SPEED = 36;
 
@@ -24,6 +25,19 @@ const STORY_SCROLL_FIX = `
   will-change: transform;
 }
 `;
+
+function getConfiguredSpeed(): number {
+  const shell = document.querySelector<HTMLElement>(".story-app-shell");
+  const sessionClass = shell
+    ? Array.from(shell.classList).find((name) => name.startsWith("story-session-"))
+    : null;
+  const sessionId = sessionClass?.slice("story-session-".length) || "";
+  if (!sessionId) return DEFAULT_AUTO_READING_SPEED;
+
+  const session = loadStorySessions().find((item) => item.id === sessionId);
+  const speed = session?.uiPrefs?.autoReadingSpeed;
+  return Math.max(12, Math.min(120, typeof speed === "number" ? speed : DEFAULT_AUTO_READING_SPEED));
+}
 
 function StoryTransformAutoReader() {
   useEffect(() => {
@@ -54,8 +68,6 @@ function StoryTransformAutoReader() {
       running = false;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
-      // At the end, land the native scroller at the real bottom before removing
-      // the transform so there is no visual jump back to the old scrollTop.
       const maxPosition = stage ? Math.max(0, stage.scrollHeight - stage.clientHeight) : virtualPosition;
       syncAndClearTransform(maxPosition);
       if (button && button.dataset.reading === "true") button.click();
@@ -72,7 +84,8 @@ function StoryTransformAutoReader() {
       previousTime = time;
 
       const maxPosition = Math.max(0, stage.scrollHeight - stage.clientHeight);
-      virtualPosition = Math.min(maxPosition, virtualPosition + (DEFAULT_AUTO_READING_SPEED * elapsed) / 1000);
+      const speed = getConfiguredSpeed();
+      virtualPosition = Math.min(maxPosition, virtualPosition + (speed * elapsed) / 1000);
 
       // Native scrollTop may work on Chrome but fail to advance on iOS/PWA.
       // The transform compensates for whatever native scrolling actually did,
