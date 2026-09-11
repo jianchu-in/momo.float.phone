@@ -23,8 +23,8 @@ type MascotFeatureKnowledgeRecord = {
 
 const OWNER_FEATURES: MascotFeatureKnowledgeRecord = {
     key: OWNER_FEATURES_KEY,
-    revision: "2026-09-09.4",
-    updatedAt: "2026-09-09T00:00:00.000Z",
+    revision: "2026-09-11.1",
+    updatedAt: "2026-09-11T00:00:00.000Z",
     entries: [
         {
             id: "theme-presets",
@@ -106,9 +106,22 @@ const OWNER_FEATURES: MascotFeatureKnowledgeRecord = {
         {
             id: "chat-unread",
             title: "私聊未读红点",
-            location: "聊天会话列表与桌面聊天图标",
+            location: "聊天会话列表",
             facts: [
                 "角色产生新消息且对应会话不在前台时，会累加未读数量并显示红点；进入会话后标记已读。",
+                "未读红点只出现在聊天 App 的会话列表里；桌面聊天图标右上角不显示未读红点，这是用户刻意的选择，不要建议加回。",
+            ],
+        },
+        {
+            id: "story-tail-schemes",
+            title: "剧情尾部方案（状态栏方案与小剧场方案）",
+            location: "剧情 App → 右上角设置 → 剧情尾部",
+            facts: [
+                "每个角色可保存多套「状态栏方案」和「小剧场方案」，各自由 输出契约 + HTML 渲染 + 示例数据 组成，随时切换当前启用的一套。",
+                "状态栏方案让 AI 在 <story_status> 标签里输出结构化数据（时间/地点/关系温度等），内容默认进入下一轮上下文。",
+                "小剧场方案让 AI 在 <story_theater> 标签里写一段不影响主线的加演短文，默认仅展示、不进入上下文。",
+                "渲染画布在沙盒 iframe 里运行，通过 window.STORY_RAW 或 {{RAW}} 读取输出原文；小剧场额外有 window.THEATER_RAW。",
+                "小卷可以通过「剧情方案套件」列出、读取、创建、更新、删除这些方案；线上聊天的状态栏走「线上聊天状态栏套件」，两者不要混。",
             ],
         },
         {
