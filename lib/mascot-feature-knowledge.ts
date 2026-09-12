@@ -23,7 +23,7 @@ type MascotFeatureKnowledgeRecord = {
 
 const OWNER_FEATURES: MascotFeatureKnowledgeRecord = {
     key: OWNER_FEATURES_KEY,
-    revision: "2026-09-12.3",
+    revision: "2026-09-12.4",
     updatedAt: "2026-09-12T00:00:00.000Z",
     entries: [
         {
@@ -130,6 +130,7 @@ const OWNER_FEATURES: MascotFeatureKnowledgeRecord = {
             location: "剧情 App → 右上角设置 → 剧情尾部",
             facts: [
                 "每个角色可保存多套「状态栏方案」和「小剧场方案」，各自由 输出契约 + HTML 渲染 + 示例数据 组成，随时切换当前启用的一套。",
+                "方案编辑器里可以导入导出：导出把该类型的全部方案存成一个 JSON 文件；导入支持导出文件、方案数组或单个方案对象，方案会追加进列表（重名自动加序号），状态栏和小剧场的导出文件互导会被拦截。",
                 "状态栏方案让 AI 在 <story_status> 标签里输出结构化数据（时间/地点/关系温度等），内容默认进入下一轮上下文。",
                 "小剧场方案让 AI 在 <story_theater> 标签里写一段不影响主线的加演短文，默认仅展示、不进入上下文。",
                 "渲染画布在沙盒 iframe 里运行，通过 window.STORY_RAW 或 {{RAW}} 读取输出原文；小剧场额外有 window.THEATER_RAW。",
