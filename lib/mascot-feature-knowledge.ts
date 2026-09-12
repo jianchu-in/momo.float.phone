@@ -23,8 +23,8 @@ type MascotFeatureKnowledgeRecord = {
 
 const OWNER_FEATURES: MascotFeatureKnowledgeRecord = {
     key: OWNER_FEATURES_KEY,
-    revision: "2026-09-11.1",
-    updatedAt: "2026-09-11T00:00:00.000Z",
+    revision: "2026-09-12.1",
+    updatedAt: "2026-09-12T00:00:00.000Z",
     entries: [
         {
             id: "theme-presets",
@@ -122,6 +122,17 @@ const OWNER_FEATURES: MascotFeatureKnowledgeRecord = {
                 "小剧场方案让 AI 在 <story_theater> 标签里写一段不影响主线的加演短文，默认仅展示、不进入上下文。",
                 "渲染画布在沙盒 iframe 里运行，通过 window.STORY_RAW 或 {{RAW}} 读取输出原文；小剧场额外有 window.THEATER_RAW。",
                 "小卷可以通过「剧情方案套件」列出、读取、创建、更新、删除这些方案；线上聊天的状态栏走「线上聊天状态栏套件」，两者不要混。",
+            ],
+        },
+        {
+            id: "story-quick-input",
+            title: "剧情快捷输入面板",
+            location: "剧情 App → 右上角设置 → 快捷输入面板",
+            facts: [
+                "开启后“续写”右侧出现“输入”按钮，点按可在输入框上方展开/收起一条窄长的横幅面板，选项过多时可左右滑动。",
+                "点按面板选项会把该内容插入到输入框光标处；插入后光标停在选项左边、中间还是右边，可以在设置里选择（“中间”适合成对引号，光标落在引号正中）。",
+                "默认选项为 “” 「」 ，？ ……，用户可以在设置里自定义增删选项。",
+                "设置保存在当前角色的剧情会话里，每个角色独立。",
             ],
         },
         {
