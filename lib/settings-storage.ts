@@ -1,4 +1,5 @@
 import type {
+    GenerationParameterKey,
     PresetConfig,
     WorldBookConfig,
     WorldBookEntry,
@@ -13,7 +14,6 @@ import type {
     CharacterBinding,
     Prompt,
     PromptOrderEntry,
-    GenerationParameterKey,
 } from "./settings-types";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { createBuiltinPreset, BUILTIN_PRESET_VERSION } from "./builtin-preset";
@@ -328,12 +328,9 @@ export function parsePresetFromJson(text: string, fallbackName: string = "导入
         if (typeof obj.openai_max_tokens === "number") preset.openai_max_tokens = obj.openai_max_tokens;
         if (typeof obj.openai_max_context === "number") preset.openai_max_context = obj.openai_max_context;
         if (Array.isArray(obj.enabled_generation_parameters)) {
-            const generationParameters = (obj.enabled_generation_parameters as unknown[]).filter(
-                (item): item is GenerationParameterKey => typeof item === "string" && isGenerationParameterKey(item),
+            preset.enabled_generation_parameters = Array.from(
+                new Set<GenerationParameterKey>(obj.enabled_generation_parameters.filter(isGenerationParameterKey)),
             );
-            preset.enabled_generation_parameters = [
-                ...new Set<GenerationParameterKey>(generationParameters),
-            ];
         }
         // New preset globals
         if (typeof obj.top_a === "number") preset.top_a = obj.top_a;
