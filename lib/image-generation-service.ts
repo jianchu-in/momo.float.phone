@@ -132,10 +132,6 @@ async function normalizeReferenceImageForEdit(
   }
 }
 
-function isLikelySelfieDescription(description: string): boolean {
-  return /(自拍|自拍照|对镜|镜子前|手机前置|前置镜头|举着手机|selfie|mirror\s*selfie|front[- ]facing)/i.test(description);
-}
-
 function imageExtension(mimeType: string): string {
   const subtype = mimeType.split("/")[1] || "png";
   return subtype.replace("jpeg", "jpg");
@@ -814,11 +810,11 @@ export async function generateImageFromConfiguredApi(params: {
   if (!openaiSettings.apiKey.trim() || !openaiSettings.baseUrl.trim() || !openaiSettings.model.trim()) return null;
 
   const reference = params.characterId ? settings.characterReferences?.[params.characterId] : undefined;
+  // 「非自拍不使用参考图」开关已从生图设置页删除：参考图启用后始终参与生成
   const shouldUseReference = Boolean(
     params.useReferenceImage
     && reference?.assetId
-    && reference.enabled !== false
-    && (reference.selfieOnly === false || isLikelySelfieDescription(description)),
+    && reference.enabled !== false,
   );
   const rawReferenceImageDataUrl = shouldUseReference && reference?.assetId
     ? await getChatImageFromIndexedDB(reference.assetId)

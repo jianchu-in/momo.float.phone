@@ -55,8 +55,9 @@ function selectStoryPresetPrompts(preset: PresetConfig | null, selectedIds?: str
 
 function buildStorySettingsPrompt(settings: StoryCharacterSettings | undefined, userName: string): string {
   if (!settings) return "";
-  const minChars = Math.max(50, Math.min(4000, settings.minChars ?? 800));
-  const maxChars = Math.max(minChars, Math.min(4000, settings.maxChars ?? 1500));
+  // 字数收敛到 50–10000：用户存 0/负数按 50 生效，超过 10000 按 10000 生效
+  const minChars = Math.max(50, Math.min(10000, settings.minChars ?? 800));
+  const maxChars = Math.max(minChars, Math.min(10000, settings.maxChars ?? 1500));
   const perspective = settings.userPerspective === "third"
     ? "使用第三人称“TA”称呼用户"
     : settings.userPerspective === "username"

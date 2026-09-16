@@ -120,6 +120,44 @@ function ProseStyleEditor({
   );
 }
 
+// 剧情字数输入：编辑期间允许清空、全选重输，不做强制纠正；失焦或回车才落库。
+// 存成 0 或超过 10000 时原样保留用户数字，由生成引擎在提示词里收敛到 50–10000。
+function CharLimitInput({ label, value, onCommit }: { label: string; value: number; onCommit: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [value, focused]);
+  const commitDraft = () => {
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? NaN : Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    onCommit(Math.trunc(parsed));
+    setDraft(String(Math.trunc(parsed)));
+  };
+  const outOfRange = value < 50 || value > 10000;
+  return (
+    <label>
+      <span>{label}</span>
+      <input
+        type="number"
+        min={50}
+        max={10000}
+        inputMode="numeric"
+        value={draft}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setFocused(false); commitDraft(); }}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+      />
+      <small className="story-char-limit-hint" data-out={outOfRange ? "true" : undefined}>{outOfRange ? `已保存 ${value}，生成时按 50–10000 生效` : "范围 50–10000"}</small>
+    </label>
+  );
+}
+
 function SettingCard({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section className="story-settings-card">
@@ -489,8 +527,8 @@ export function StorySettingsPage(props: StorySettingsPageProps) {
 
         <SettingCard title="生成设置" hint="检查预设条目与生成设置是否重复">
           <div className="story-number-grid">
-            <label><span>最少字数</span><input type="number" min={50} max={4000} value={normalized.minChars} onChange={(event) => patchSettings({ minChars: Math.max(50, Math.min(4000, Number(event.target.value) || 50)) })} /></label>
-            <label><span>最多字数</span><input type="number" min={50} max={4000} value={normalized.maxChars} onChange={(event) => patchSettings({ maxChars: Math.max(50, Math.min(4000, Number(event.target.value) || 50)) })} /></label>
+            <CharLimitInput label="最少字数" value={normalized.minChars ?? 800} onCommit={(minChars) => patchSettings({ minChars })} />
+            <CharLimitInput label="最多字数" value={normalized.maxChars ?? 1500} onCommit={(maxChars) => patchSettings({ maxChars })} />
           </div>
           <label className="story-settings-field"><span>用户人称</span><select value={normalized.userPerspective} onChange={(event) => patchSettings({ userPerspective: event.target.value as StoryCharacterSettings["userPerspective"] })}><option value="second">第二人称“你”</option><option value="third">第三人称“TA”</option><option value="username">使用用户名“{props.userName}”</option></select></label>
           <ProseStyleEditor schemes={repo.proseStyleSchemes} activeId={normalized.activeProseStyleSchemeId!} onChange={(proseStyleSchemes, activeProseStyleSchemeId) => { patchRepo({ proseStyleSchemes }); patchSettings({ activeProseStyleSchemeId }); }} />

@@ -1,10 +1,36 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import type { NativeTimelineEntry } from "@/lib/short-term-assembler";
 import { buildTwoLevelMomentThreads } from "@/lib/moments-comment-threading";
 import { findStickerByName } from "@/lib/sticker-data";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
+
+/* ================================================================
+   标签筛选：把每条事件的来源折叠成短标签，顶部胶囊点选过滤
+   ================================================================ */
+
+/** 事件来源 → 筛选标签（与记忆来源设置里的命名保持一致） */
+function eventSourceTag(evt: NativeTimelineEntry): string {
+    const app = evt.sourceApp;
+    if (app === "chat") {
+        if (evt.sourceDetail === "group") return "群聊";
+        if (evt.sourceDetail === "chat_offline") return "线下";
+        return "私聊";
+    }
+    if (app === "moments") return "朋友圈";
+    if (app === "story") return "剧情";
+    if (app === "vn") return "漫卷";
+    if (app === "map") return "冒险";
+    if (app === "game") return "小游戏";
+    if (app === "diary") return evt.sourceDetail === "notewall" ? "便签墙" : "日记";
+    if (app === "xiaohongshu") return "小红书";
+    if (app === "checkphone") return "查手机";
+    if (app === "interview_magazine") return "访谈";
+    if (app === "cocreate") return "共创";
+    if (app === "custom_app") return evt.customAppLabel || evt.customAppName || "APP";
+    return "其他";
+}
 
 /* ================================================================
    Parsed types — structured data extracted from pre-formatted content
@@ -606,19 +632,53 @@ const CLUSTER_PAGE_SIZE = 30;
 export function MemoryTimeline({ events, userName }: Props) {
     const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
     const [visibleCount, setVisibleCount] = useState(CLUSTER_PAGE_SIZE);
+    // 标签筛选：空集合 = 全部；选中集合 = 只看这些来源的事件
+    const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+    const tagBarRef = useRef<HTMLDivElement | null>(null);
+
+    // 顶部标签条：统计各来源条数，按数量降序排列
+    const tagCounts = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const evt of events) {
+            const tag = eventSourceTag(evt);
+            counts.set(tag, (counts.get(tag) || 0) + 1);
+        }
+        return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+    }, [events]);
+
+    const filteredEvents = useMemo(() => {
+        if (activeTags.size === 0) return events;
+        return events.filter(evt => activeTags.has(eventSourceTag(evt)));
+    }, [events, activeTags]);
 
     const clusters = useMemo(() => {
-        const parsed = events.map(e => parseEntry(e, userName)).filter((e): e is ParsedEntry => e !== null);
+        const parsed = filteredEvents.map(e => parseEntry(e, userName)).filter((e): e is ParsedEntry => e !== null);
         return clusterByTimeGap(parsed);
-    }, [events, userName]);
+    }, [filteredEvents, userName]);
 
-    // 切换角色/标签页时回到首屏
+    // 切换角色/标签页/筛选标签时回到首屏
     useEffect(() => {
         setVisibleCount(CLUSTER_PAGE_SIZE);
         setExpandedClusterId(null);
     }, [events]);
 
-    if (clusters.length === 0) {
+    useEffect(() => {
+        setVisibleCount(CLUSTER_PAGE_SIZE);
+        setExpandedClusterId(null);
+        // 换筛选后标签条滚回最左，避免停留在看不见的位置
+        if (tagBarRef.current) tagBarRef.current.scrollLeft = 0;
+    }, [activeTags]);
+
+    const toggleTag = (tag: string) => {
+        setActiveTags(prev => {
+            const next = new Set(prev);
+            if (next.has(tag)) next.delete(tag);
+            else next.add(tag);
+            return next;
+        });
+    };
+
+    if (events.length === 0) {
         return (
             <p className="text-center ts-14 mt-10 text-secondary">
                 暂无数据。聊天或朋友圈互动后会自动显示。
@@ -628,6 +688,36 @@ export function MemoryTimeline({ events, userName }: Props) {
 
     return (
         <>
+            {/* 顶部标签收纳筛选条 */}
+            {tagCounts.length > 1 && (
+                <div className="mem-tl-tag-bar" ref={tagBarRef} role="group" aria-label="按来源筛选事件">
+                    <button
+                        type="button"
+                        className="mem-tl-tag-chip"
+                        {...(activeTags.size === 0 ? { "data-active": "" } : {})}
+                        onClick={() => setActiveTags(new Set())}
+                    >
+                        全部<span className="mem-tl-tag-count">{events.length}</span>
+                    </button>
+                    {tagCounts.map(([tag, count]) => (
+                        <button
+                            key={tag}
+                            type="button"
+                            className="mem-tl-tag-chip"
+                            {...(activeTags.has(tag) ? { "data-active": "" } : {})}
+                            aria-pressed={activeTags.has(tag)}
+                            onClick={() => toggleTag(tag)}
+                        >
+                            {tag}<span className="mem-tl-tag-count">{count}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+            {clusters.length === 0 ? (
+                <p className="text-center ts-14 mt-10 text-secondary">
+                    当前筛选条件下暂无事件，换个标签试试。
+                </p>
+            ) : (
             <div className="mem-tl mem-tl-cards">
                 {clusters.slice(0, visibleCount).map((cluster) => {
                     const expanded = expandedClusterId === cluster.id;
@@ -666,6 +756,7 @@ export function MemoryTimeline({ events, userName }: Props) {
                     );
                 })}
             </div>
+            )}
             {clusters.length > visibleCount ? (
                 <button
                     type="button"

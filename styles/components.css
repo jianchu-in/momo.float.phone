@@ -5241,6 +5241,58 @@
   padding: 26px 0 0;
 }
 
+/* 顶部来源标签收纳筛选条：横向滑动胶囊 */
+.mem-tl-tag-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 2px;
+  margin: -8px -2px 2px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  background: color-mix(in srgb, var(--c-page-body-bg) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.mem-tl-tag-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.mem-tl-tag-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  border: 1px solid var(--c-panel-border);
+  border-radius: 999px;
+  background: var(--c-panel);
+  color: var(--c-icon);
+  font-size: calc(11.5px*var(--app-text-scale,1));
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.mem-tl-tag-chip[data-active] {
+  background: color-mix(in srgb, var(--c-icon-active) 14%, var(--c-panel));
+  border-color: color-mix(in srgb, var(--c-icon-active) 45%, transparent);
+  color: var(--c-icon-active);
+  font-weight: 600;
+}
+
+.mem-tl-tag-count {
+  font-size: calc(10px*var(--app-text-scale,1));
+  font-variant-numeric: tabular-nums;
+  opacity: 0.72;
+}
+
 /* Card */
 .mem-tl-card {
   width: 100%;

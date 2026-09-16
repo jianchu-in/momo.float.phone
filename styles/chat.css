@@ -1192,6 +1192,33 @@
   overflow: visible;
 }
 
+/* ── 仿真拉黑：被拒收消息的仿微信红色感叹号 + 拒收提示灰字 ── */
+.chat-msg-rejected-mark {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  margin-inline-start: 6px;
+  cursor: pointer;
+  animation: chat-rejected-pop 240ms ease-out;
+}
+.chat-msg-rejected-note {
+  align-self: flex-end;
+  margin-right: 46px; /* 对齐气泡右缘（留出头像宽） */
+  margin-top: -6px;
+  color: var(--c-icon);
+  opacity: 0.72;
+  font-size: calc(10.5px*var(--app-text-scale,1));
+  line-height: 1.4;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@keyframes chat-rejected-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 .chat-system-instruction-card {
   width: min(90%, 520px);
   color: var(--c-text);

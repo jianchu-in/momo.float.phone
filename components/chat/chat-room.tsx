@@ -3478,6 +3478,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             sessionId: session.id,
             role: "user",
             content,
+            // 仿真拉黑：私聊被拉黑期间发出的富媒体消息同样标记拒收
+            status: !session.isGroup && session.isBlacklisted ? "rejected" : undefined,
             mediaType,
             mediaData: walletDebit.mediaData,
             ...(mediaUrl ? { mediaUrl } : {}),
@@ -4002,6 +4004,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 sessionId: session.id,
                 role: "user",
                 content: currentText,
+                // 仿真拉黑：私聊被拉黑期间发出的消息一律标记拒收（仿微信红色感叹号）
+                status: !session.isGroup && session.isBlacklisted ? "rejected" : undefined,
                 mediaType: diceOnly ? "dice" : isQuoting ? "quote" : undefined,
                 mediaData: diceOnly ? { diceFace } : isQuoting ? quoteData : undefined,
             });
@@ -6087,6 +6091,21 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                 </svg>
                                             </button>
                                         )}
+                                        {/* 仿真拉黑：被拒收消息的仿微信红色感叹号（气泡与头像之间） */}
+                                        {msg.role === "user" && !isEmptyBubble && msg.status === "rejected" && (
+                                            <span
+                                                className="chat-msg-rejected-mark"
+                                                role="img"
+                                                aria-label="消息已发出，但被对方拒收了"
+                                                title="消息已发出，但被对方拒收了"
+                                            >
+                                                <svg viewBox="0 0 20 20" width="18" height="18" style={{ display: "block" }}>
+                                                    <circle cx="10" cy="10" r="9" fill="#fa5151" />
+                                                    <rect x="9" y="4.6" width="2" height="7.4" rx="1" fill="#fff" />
+                                                    <circle cx="10" cy="14.9" r="1.15" fill="#fff" />
+                                                </svg>
+                                            </span>
+                                        )}
                                         {msg.role === "user" && !isEmptyBubble && (
                                             <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
                                                 {effectiveUserAvatar ? (
@@ -6099,6 +6118,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     </>
                                 )}
                             </div>
+                            {/* 仿真拉黑：拒收提示（仿微信灰字，靠用户一侧） */}
+                            {msg.role === "user" && msg.status === "rejected" && (
+                                <div className="chat-msg-rejected-note">消息已发出，但被对方拒收了</div>
+                            )}
                             {/* Voice message: text transcription bubble */}
                             {renderMsg.mediaType === "audio" && voiceTextIds.has(msg.id) && renderMsg.mediaData?.label && (
                                 <div className={`chat-msg-wrapper`} data-role={uiRole(msg)} style={{ marginTop: -12 }}>

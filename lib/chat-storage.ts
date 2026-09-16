@@ -91,7 +91,7 @@ export type ChatSession = {
     isSpectator?: boolean; // 围观群：用户不在群内，只能生成/线下
 };
 
-export type ChatMessageStatus = "sending" | "sent" | "read" | "failed";
+export type ChatMessageStatus = "sending" | "sent" | "read" | "failed" | "rejected";
 export type ChatMessageRole = "user" | "assistant" | "system" | "tool";
 
 export type StateValue = { name: string; value: number };

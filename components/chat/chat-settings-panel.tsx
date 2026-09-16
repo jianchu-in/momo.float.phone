@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
     CHAT_INITIAL_VISIBLE_MESSAGE_COUNT,
     CHAT_LOAD_MORE_MESSAGE_COUNT,
+    CHAT_REQUEST_REPLY_EVENT,
     ChatSession,
     clearChatSessionMessages,
     clearChatSessionToolHistory,
@@ -49,7 +50,7 @@ import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { KeyboardAutoSendDebounceItem } from "@/components/chat/keyboard-auto-send-debounce-item";
 import { SessionChatSoundsSection } from "@/components/chat/session-chat-sounds";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Camera, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, Ban, MessageSquare, Search, AlertCircle, Code, Laptop, Trash2, Smile, Sparkles, X, Play, Upload, Download, Save, FolderOpen, Camera, type LucideIcon } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -326,6 +327,8 @@ export function ChatSettingsPanel({
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
+    // 仿真拉黑：拉黑期间用户发出的消息会被对方拒收（仿微信红色感叹号）
+    const [isBlacklisted, setIsBlacklisted] = useState(session.isBlacklisted || false);
     // 自定义状态栏（状态区）
     const [statusRegion, setStatusRegion] = useState<StatusRegionConfig>(() => getStatusRegionConfig(session.id, !session.isGroup));
     const [statusUsesGlobal, setStatusUsesGlobal] = useState(() => !session.isGroup && !hasOwnStatusRegionConfig(session.id));
@@ -740,6 +743,23 @@ export function ChatSettingsPanel({
             saveChatSessions(sessions);
             Object.assign(session, updates);
         }
+    };
+
+    // 仿真拉黑：开关落库 + 记录系统事件（进短期记忆）+ 请求一轮角色知情反应
+    const handleToggleBlacklist = (blocked: boolean) => {
+        setIsBlacklisted(blocked);
+        updateSession({ isBlacklisted: blocked });
+        const charLabel = character?.name || characterName;
+        const userLabel = userIdentity?.name || "用户";
+        pushChatMessage({
+            sessionId: session.id,
+            role: "system",
+            content: blocked
+                ? `${userLabel}已把${charLabel}拉黑，${userLabel}发出去的消息都会被${charLabel}拒收`
+                : `${userLabel}解除了对${charLabel}的拉黑`,
+        });
+        // 让角色「知道」并做出反应：走聊天室完整生成管线（聊天页未挂载时由桌面壳兜底）
+        window.dispatchEvent(new CustomEvent(CHAT_REQUEST_REPLY_EVENT, { detail: { sessionId: session.id } }));
     };
 
     const handleClearHistory = () => {
@@ -1164,6 +1184,19 @@ export function ChatSettingsPanel({
                             <Toggle checked={isPinned} onChange={c => { setIsPinned(c); updateSession({ isPinned: c }); }} />
                         </div>
                     </div>
+                    {/* 仿真拉黑：仅私聊提供 */}
+                    {!session.isGroup && (
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Ban} color="#e5484d" />
+                            <div className="menu-label-group">
+                                <span className="menu-label">拉黑 TA</span>
+                                <span className="menu-desc">拉黑后你发的消息会被对方拒收（红色感叹号）；TA 会知道这件事并做出反应</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle checked={isBlacklisted} onChange={handleToggleBlacklist} />
+                            </div>
+                        </div>
+                    )}
                     <div className="menu-item">
                         <ChatInfoIcon icon={ImageIcon} color={BINDING_ACCENTS.api} />
                         <div className="menu-label-group">
