@@ -7,29 +7,20 @@ import { findStickerByName } from "@/lib/sticker-data";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 
 /* ================================================================
-   标签筛选：把每条事件的来源折叠成短标签，顶部胶囊点选过滤
+   标签筛选：顶部胶囊按来源收纳过滤
    ================================================================ */
 
-/** 事件来源 → 筛选标签（与记忆来源设置里的命名保持一致） */
+/** 固定展示顺序：私聊 / 群聊 / 查手机 / 朋友圈 / 剧情 / 其他APP */
+const MEM_TAG_ORDER: readonly string[] = ["私聊", "群聊", "查手机", "朋友圈", "剧情", "其他APP"];
+
+/** 事件来源 → 筛选标签（其余来源一律归入「其他APP」收纳） */
 function eventSourceTag(evt: NativeTimelineEntry): string {
     const app = evt.sourceApp;
-    if (app === "chat") {
-        if (evt.sourceDetail === "group") return "群聊";
-        if (evt.sourceDetail === "chat_offline") return "线下";
-        return "私聊";
-    }
+    if (app === "chat") return evt.sourceDetail === "group" ? "群聊" : "私聊";
+    if (app === "checkphone") return "查手机";
     if (app === "moments") return "朋友圈";
     if (app === "story") return "剧情";
-    if (app === "vn") return "漫卷";
-    if (app === "map") return "冒险";
-    if (app === "game") return "小游戏";
-    if (app === "diary") return evt.sourceDetail === "notewall" ? "便签墙" : "日记";
-    if (app === "xiaohongshu") return "小红书";
-    if (app === "checkphone") return "查手机";
-    if (app === "interview_magazine") return "访谈";
-    if (app === "cocreate") return "共创";
-    if (app === "custom_app") return evt.customAppLabel || evt.customAppName || "APP";
-    return "其他";
+    return "其他APP";
 }
 
 /* ================================================================
@@ -636,14 +627,14 @@ export function MemoryTimeline({ events, userName }: Props) {
     const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
     const tagBarRef = useRef<HTMLDivElement | null>(null);
 
-    // 顶部标签条：统计各来源条数，按数量降序排列
+    // 顶部标签条：统计各来源条数，按固定顺序输出（私聊/群聊/查手机/朋友圈/剧情/其他APP）
     const tagCounts = useMemo(() => {
         const counts = new Map<string, number>();
         for (const evt of events) {
             const tag = eventSourceTag(evt);
             counts.set(tag, (counts.get(tag) || 0) + 1);
         }
-        return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+        return Array.from(counts.entries()).sort((a, b) => MEM_TAG_ORDER.indexOf(a[0]) - MEM_TAG_ORDER.indexOf(b[0]));
     }, [events]);
 
     const filteredEvents = useMemo(() => {

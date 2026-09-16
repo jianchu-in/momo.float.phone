@@ -1340,6 +1340,17 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
         newMsg = pluginResult.message;
     }
 
+    // 仿真拉黑（私聊）：用户把角色拉黑后，角色发出去的消息会被用户拒收——
+    // 角色消息标记 rejected（界面上显示仿微信红色感叹号 + 拒收提示）；
+    // 用户自己发的消息正常送达，不带任何标记。统一在这里处理，
+    // 聊天页生成、后台兜底回复、follow-up 等所有落库路径全覆盖。
+    if (newMsg.role === "assistant") {
+        const sessionForBlock = _sessionsCache.find(s => s.id === newMsg.sessionId);
+        if (sessionForBlock && !sessionForBlock.isGroup && sessionForBlock.isBlacklisted) {
+            newMsg.status = "rejected";
+        }
+    }
+
     _messagesCache.push(newMsg);
     dbPutMessage(newMsg);
     resolvePendingAvatarRecommendation(newMsg);

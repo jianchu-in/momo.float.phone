@@ -5241,11 +5241,14 @@
   padding: 26px 0 0;
 }
 
-/* 顶部来源标签收纳筛选条：横向滑动胶囊 */
+/* 顶部来源标签收纳筛选条：横向滑动胶囊。
+   sticky 贴滚动容器顶（记忆详情页该处即页头下缘）；
+   z-index 抬高到 9：既压过事件卡片/悬浮按钮（防滚上来时盖住胶囊），
+   又低于浮动页头（z-index 10），保证不与页头冲突 */
 .mem-tl-tag-bar {
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: 9;
   display: flex;
   gap: 8px;
   overflow-x: auto;

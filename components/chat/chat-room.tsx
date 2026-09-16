@@ -3478,8 +3478,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             sessionId: session.id,
             role: "user",
             content,
-            // 仿真拉黑：私聊被拉黑期间发出的富媒体消息同样标记拒收
-            status: !session.isGroup && session.isBlacklisted ? "rejected" : undefined,
             mediaType,
             mediaData: walletDebit.mediaData,
             ...(mediaUrl ? { mediaUrl } : {}),
@@ -4004,8 +4002,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 sessionId: session.id,
                 role: "user",
                 content: currentText,
-                // 仿真拉黑：私聊被拉黑期间发出的消息一律标记拒收（仿微信红色感叹号）
-                status: !session.isGroup && session.isBlacklisted ? "rejected" : undefined,
                 mediaType: diceOnly ? "dice" : isQuoting ? "quote" : undefined,
                 mediaData: diceOnly ? { diceFace } : isQuoting ? quoteData : undefined,
             });
@@ -6091,8 +6087,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                 </svg>
                                             </button>
                                         )}
-                                        {/* 仿真拉黑：被拒收消息的仿微信红色感叹号（气泡与头像之间） */}
-                                        {msg.role === "user" && !isEmptyBubble && msg.status === "rejected" && (
+                                        {/* 仿真拉黑：角色消息被用户拒收的仿微信红色感叹号（角色气泡右侧） */}
+                                        {msg.role === "assistant" && !isSilentThought && !isEmptyBubble && msg.status === "rejected" && (
                                             <span
                                                 className="chat-msg-rejected-mark"
                                                 role="img"
@@ -6118,8 +6114,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     </>
                                 )}
                             </div>
-                            {/* 仿真拉黑：拒收提示（仿微信灰字，靠用户一侧） */}
-                            {msg.role === "user" && msg.status === "rejected" && (
+                            {/* 仿真拉黑：拒收提示（仿微信灰字，靠角色一侧） */}
+                            {msg.role === "assistant" && msg.status === "rejected" && (
                                 <div className="chat-msg-rejected-note">消息已发出，但被对方拒收了</div>
                             )}
                             {/* Voice message: text transcription bubble */}

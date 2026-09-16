@@ -755,8 +755,8 @@ export function ChatSettingsPanel({
             sessionId: session.id,
             role: "system",
             content: blocked
-                ? `${userLabel}已把${charLabel}拉黑，${userLabel}发出去的消息都会被${charLabel}拒收`
-                : `${userLabel}解除了对${charLabel}的拉黑`,
+                ? `${userLabel}把${charLabel}拉黑了，${charLabel}发出去的消息都会被${userLabel}拒收`
+                : `${userLabel}解除了对${charLabel}的拉黑，${charLabel}的消息恢复正常送达`,
         });
         // 让角色「知道」并做出反应：走聊天室完整生成管线（聊天页未挂载时由桌面壳兜底）
         window.dispatchEvent(new CustomEvent(CHAT_REQUEST_REPLY_EVENT, { detail: { sessionId: session.id } }));
@@ -1190,7 +1190,7 @@ export function ChatSettingsPanel({
                             <ChatInfoIcon icon={Ban} color="#e5484d" />
                             <div className="menu-label-group">
                                 <span className="menu-label">拉黑 TA</span>
-                                <span className="menu-desc">拉黑后你发的消息会被对方拒收（红色感叹号）；TA 会知道这件事并做出反应</span>
+                                <span className="menu-desc">拉黑后 TA 会知道被你拉黑并做出反应；TA 发的消息会被你拒收（TA 的消息旁显示红色感叹号），你的消息不受影响</span>
                             </div>
                             <div className="menu-right">
                                 <Toggle checked={isBlacklisted} onChange={handleToggleBlacklist} />
