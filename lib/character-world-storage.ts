@@ -3,13 +3,24 @@ import { loadChatContacts } from "./chat-storage";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import type { Character } from "./character-types";
 import type { MomentComment, MomentLike, MomentPost } from "./moments-types";
-import { resolveUserIdentity } from "./settings-storage";
+import { loadUserIdentities, resolveUserIdentity } from "./settings-storage";
 
 const CHARACTER_WORLDS_KEY = "ai_phone_character_worlds_v1";
 export const CHARACTER_WORLDS_UPDATED_EVENT = "character-worlds-updated";
 export const DEFAULT_CHARACTER_WORLD_ID = "world_default";
 /** 关系网中的用户是特殊节点，不会被当作可聊天/可选剧情角色。 */
 export const CHARACTER_WORLD_USER_NODE_ID = "__current_user_identity__";
+export const CHARACTER_WORLD_USER_NODE_PREFIX = "__user_identity__:";
+
+export function getCharacterWorldUserNodeId(identityId: string): string {
+    return `${CHARACTER_WORLD_USER_NODE_PREFIX}${identityId}`;
+}
+
+export function getCharacterWorldUserIdentityId(nodeId: string): string | null {
+    return nodeId.startsWith(CHARACTER_WORLD_USER_NODE_PREFIX)
+        ? nodeId.slice(CHARACTER_WORLD_USER_NODE_PREFIX.length) || null
+        : null;
+}
 
 registerKvMigration(CHARACTER_WORLDS_KEY);
 
@@ -26,12 +37,14 @@ export type CharacterWorldGroup = {
     description: string;
     memberIds: string[];
     relations: CharacterWorldRelation[];
-    userNode: {
+    /** 手动加入当前世界的身份；角色绑定的身份会自动出现，无需重复保存。 */
+    userIdentityIds: string[];
+    userNodes: Record<string, {
         canvasX: number;
         canvasY: number;
         canvasRot: number;
         canvasZIndex: number;
-    };
+    }>;
     createdAt: string;
     updatedAt: string;
 };
@@ -57,7 +70,8 @@ function createDefaultGroup(memberIds: string[], now = new Date().toISOString())
         description: "",
         memberIds,
         relations: [],
-        userNode: { canvasX: 70, canvasY: 90, canvasRot: -3, canvasZIndex: 180 },
+        userIdentityIds: [],
+        userNodes: {},
         createdAt: now,
         updatedAt: now,
     };
@@ -77,6 +91,8 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
     const now = new Date().toISOString();
     const validIds = new Set(characters.map(character => character.id));
     const assigned = new Set<string>();
+    const identities = loadUserIdentities();
+    const validIdentityIds = new Set(identities.map(identity => identity.id));
     let changed = false;
 
     let normalized = groups
@@ -92,8 +108,54 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
                 members.push(memberId);
             }
 
-            const memberSet = new Set([...members, CHARACTER_WORLD_USER_NODE_ID]);
-            const relations = (Array.isArray(group.relations) ? group.relations : [])
+            const rawGroup = group as CharacterWorldGroup & {
+                userNode?: { canvasX?: number; canvasY?: number; canvasRot?: number; canvasZIndex?: number };
+                userIdentityIds?: string[];
+                userNodes?: CharacterWorldGroup["userNodes"];
+            };
+            if (!Array.isArray(rawGroup.userIdentityIds) || !rawGroup.userNodes) changed = true;
+            const userIdentityIds = Array.from(new Set(
+                (Array.isArray(rawGroup.userIdentityIds) ? rawGroup.userIdentityIds : [])
+                    .filter(identityId => validIdentityIds.has(identityId))
+            ));
+            const boundIdentityIds = members
+                .map(memberId => resolveUserIdentity(memberId)?.id)
+                .filter((identityId): identityId is string => Boolean(identityId));
+            const defaultIdentityId = resolveUserIdentity()?.id || identities[0]?.id;
+            const visibleIdentityIds = Array.from(new Set([
+                ...userIdentityIds,
+                ...boundIdentityIds,
+                ...(userIdentityIds.length === 0 && boundIdentityIds.length === 0 && defaultIdentityId ? [defaultIdentityId] : []),
+            ]));
+            const fallbackIdentityId = visibleIdentityIds[0] || defaultIdentityId;
+            const userNodes: CharacterWorldGroup["userNodes"] = {};
+            visibleIdentityIds.forEach((identityId, index) => {
+                const stored = rawGroup.userNodes?.[identityId];
+                const legacy = index === 0 ? rawGroup.userNode : undefined;
+                const source = stored || legacy;
+                userNodes[identityId] = {
+                    canvasX: Number.isFinite(source?.canvasX) ? Number(source?.canvasX) : 70 + index * 150,
+                    canvasY: Number.isFinite(source?.canvasY) ? Number(source?.canvasY) : 90 + (index % 2) * 180,
+                    canvasRot: Number.isFinite(source?.canvasRot) ? Number(source?.canvasRot) : -3 + index * 2,
+                    canvasZIndex: Number.isFinite(source?.canvasZIndex) ? Number(source?.canvasZIndex) : 180 + index,
+                };
+            });
+            const validUserNodeIds = new Set(identities.map(identity => getCharacterWorldUserNodeId(identity.id)));
+            const memberSet = new Set([...members, ...validUserNodeIds]);
+            const rawRelations = Array.isArray(group.relations) ? group.relations : [];
+            if (rawRelations.some(relation => relation.fromCharacterId === CHARACTER_WORLD_USER_NODE_ID || relation.toCharacterId === CHARACTER_WORLD_USER_NODE_ID)) {
+                changed = true;
+            }
+            const relations = rawRelations
+                .map(relation => fallbackIdentityId ? {
+                    ...relation,
+                    fromCharacterId: relation.fromCharacterId === CHARACTER_WORLD_USER_NODE_ID
+                        ? getCharacterWorldUserNodeId(fallbackIdentityId)
+                        : relation.fromCharacterId,
+                    toCharacterId: relation.toCharacterId === CHARACTER_WORLD_USER_NODE_ID
+                        ? getCharacterWorldUserNodeId(fallbackIdentityId)
+                        : relation.toCharacterId,
+                } : relation)
                 .filter(relation => (
                     relation
                     && typeof relation.id === "string"
@@ -118,12 +180,8 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
                 description: typeof group.description === "string" ? group.description.trim() : "",
                 memberIds: members,
                 relations,
-                userNode: {
-                    canvasX: Number.isFinite(group.userNode?.canvasX) ? group.userNode.canvasX : 70,
-                    canvasY: Number.isFinite(group.userNode?.canvasY) ? group.userNode.canvasY : 90,
-                    canvasRot: Number.isFinite(group.userNode?.canvasRot) ? group.userNode.canvasRot : -3,
-                    canvasZIndex: Number.isFinite(group.userNode?.canvasZIndex) ? group.userNode.canvasZIndex : 180,
-                },
+                userIdentityIds,
+                userNodes,
                 createdAt: group.createdAt || now,
                 updatedAt: group.updatedAt || now,
             };
@@ -177,7 +235,8 @@ export function createCharacterWorldGroup(name: string): CharacterWorldGroup {
         description: "",
         memberIds: [],
         relations: [],
-        userNode: { canvasX: 70, canvasY: 90, canvasRot: -3, canvasZIndex: 180 },
+        userIdentityIds: [],
+        userNodes: {},
         createdAt: now,
         updatedAt: now,
     };
@@ -223,7 +282,10 @@ export function moveCharacterToWorld(characterId: string, groupId: string): void
         const nextMemberIds = group.memberIds.filter(id => id !== characterId);
         const receivesMember = group.id === groupId;
         const memberIds = receivesMember ? [...nextMemberIds, characterId] : nextMemberIds;
-        const memberSet = new Set([...memberIds, CHARACTER_WORLD_USER_NODE_ID]);
+        const memberSet = new Set([
+            ...memberIds,
+            ...loadUserIdentities().map(identity => getCharacterWorldUserNodeId(identity.id)),
+        ]);
         return {
             ...group,
             memberIds,
@@ -241,7 +303,10 @@ export function addCharacterWorldRelation(groupId: string, fromCharacterId: stri
     const now = new Date().toISOString();
     saveCharacterWorldGroups(loadCharacterWorldGroups().map(group => {
         if (group.id !== groupId) return group;
-        const memberSet = new Set([...group.memberIds, CHARACTER_WORLD_USER_NODE_ID]);
+        const memberSet = new Set([
+            ...group.memberIds,
+            ...loadUserIdentities().map(identity => getCharacterWorldUserNodeId(identity.id)),
+        ]);
         if (!memberSet.has(fromCharacterId) || !memberSet.has(toCharacterId)) return group;
         return {
             ...group,
@@ -259,11 +324,35 @@ export function addCharacterWorldRelation(groupId: string, fromCharacterId: stri
     }));
 }
 
-export function updateCharacterWorldUserNodePosition(groupId: string, canvasX: number, canvasY: number): void {
+export function addUserIdentityToCharacterWorld(groupId: string, identityId: string): void {
+    const now = new Date().toISOString();
+    saveCharacterWorldGroups(loadCharacterWorldGroups().map(group => {
+        if (group.id !== groupId || group.userIdentityIds.includes(identityId)) return group;
+        const index = Object.keys(group.userNodes).length;
+        return {
+            ...group,
+            userIdentityIds: [...group.userIdentityIds, identityId],
+            userNodes: {
+                ...group.userNodes,
+                [identityId]: { canvasX: 70 + index * 150, canvasY: 90 + (index % 2) * 180, canvasRot: -3 + index * 2, canvasZIndex: 180 + index },
+            },
+            updatedAt: now,
+        };
+    }));
+}
+
+export function updateCharacterWorldUserNodePosition(groupId: string, identityId: string, canvasX: number, canvasY: number): void {
     const now = new Date().toISOString();
     saveCharacterWorldGroups(loadCharacterWorldGroups().map(group => group.id === groupId ? {
         ...group,
-        userNode: { ...group.userNode, canvasX, canvasY },
+        userNodes: {
+            ...group.userNodes,
+            [identityId]: {
+                ...(group.userNodes[identityId] || { canvasRot: -3, canvasZIndex: 180 }),
+                canvasX,
+                canvasY,
+            },
+        },
         updatedAt: now,
     } : group));
 }
@@ -359,7 +448,9 @@ export function formatCharacterRelationsForPrompt(characterId: string): string {
     const userIdentity = resolveUserIdentity(characterId);
     const userName = userIdentity?.name?.trim() || "用户";
     const nameById = new Map(characters.map(character => [character.id, character.name]));
-    nameById.set(CHARACTER_WORLD_USER_NODE_ID, userName);
+    for (const identity of loadUserIdentities()) {
+        nameById.set(getCharacterWorldUserNodeId(identity.id), identity.name?.trim() || "用户");
+    }
     // 标注哪些同世界角色已是用户好友——供「推荐联系人」判断是否还需要发名片
     const contactIds = new Set(loadChatContacts().map(contact => contact.characterId));
     const memberNames = group.memberIds
@@ -386,7 +477,8 @@ export function formatCharacterRelationsForPrompt(characterId: string): string {
         lines.push(`${fromName}是${toName}的${relation.label}。`);
     }
 
-    if (group.relations.some(relation => relation.fromCharacterId === CHARACTER_WORLD_USER_NODE_ID || relation.toCharacterId === CHARACTER_WORLD_USER_NODE_ID)) {
+    const currentUserNodeId = userIdentity ? getCharacterWorldUserNodeId(userIdentity.id) : "";
+    if (currentUserNodeId && group.relations.some(relation => relation.fromCharacterId === currentUserNodeId || relation.toCharacterId === currentUserNodeId)) {
         const identityDetails = [
             userIdentity?.gender ? `性别：${userIdentity.gender}` : "",
             userIdentity?.age ? `年龄：${userIdentity.age}` : "",

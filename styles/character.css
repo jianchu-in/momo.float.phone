@@ -1039,6 +1039,30 @@
   background: var(--c-page-body-bg);
 }
 
+.char-identity-add-button {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  transform: translateY(calc(-50% - 3px));
+  border: 1px solid rgba(17, 17, 17, .12);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .94);
+  color: #111;
+  box-shadow: 0 8px 22px rgba(17, 17, 17, .14);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: transform .16s ease, background .16s ease;
+}
+
+.char-identity-add-button:active {
+  transform: translateY(calc(-50% - 3px)) scale(.92);
+  background: #f5f5f5;
+}
+
 .wt-bottom-pill {
   display: flex;
   align-items: center;
