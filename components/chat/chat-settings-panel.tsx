@@ -18,6 +18,7 @@ import {
     normalizeVisionImagePromptLimit,
     MAX_VISION_IMAGE_PROMPT_LIMIT,
     loadChatAppSettings,
+    resolveChatCharacterAvatar,
     resolveChatUserAvatar,
     resolveVisionImagePromptLimit,
     type ChatMessage,
@@ -39,7 +40,7 @@ import {
 import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
 import { removeChatSessionCompletely } from "@/lib/chat-session-remove";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
-import { loadCharacters, saveCharacters } from "@/lib/character-storage";
+import { loadCharacters } from "@/lib/character-storage";
 import { isAgentComputerConfigured } from "@/lib/agent-computer";
 import { CharacterComputerPage } from "./character-computer-page";
 import { resolveUserIdentity, loadApiConfigs, loadBindingConfig, loadPresets, resolveBinding } from "@/lib/settings-storage";
@@ -606,6 +607,7 @@ export function ChatSettingsPanel({
         : [];
     const userIdentity = resolveUserIdentity(session.isGroup ? undefined : session.contactId, session.isGroup ? "group_chat" : "chat");
     const effectiveUserAvatar = resolveChatUserAvatar(session, userIdentity?.avatarUrl);
+    const effectiveCharacterAvatar = resolveChatCharacterAvatar(session, character?.avatar);
     const [notifyAvatarChange, setNotifyAvatarChange] = useState(session.notifyCharacterOnUserAvatarChange !== false);
 
     const updateOwnAvatar = async (file: File) => {
@@ -631,10 +633,7 @@ export function ChatSettingsPanel({
 
     const updateCharacterAvatar = async (file: File) => {
         const avatar = await fileToAvatarDataUrl(file);
-        const latest = loadCharacters();
-        saveCharacters(latest.map(item => item.id === session.contactId
-            ? { ...item, avatar, updatedAt: new Date().toISOString() }
-            : item));
+        updateSession({ characterAvatarOverride: avatar });
         setAvatarRevision(value => value + 1);
     };
 
@@ -1091,7 +1090,7 @@ export function ChatSettingsPanel({
                                     {effectiveUserAvatar ? <img src={effectiveUserAvatar} className="h-full w-full object-cover" alt="我的头像" /> : <ChatFallbackAvatar />}
                                 </div>
                                 <div className="-ml-3 h-7 w-7 overflow-hidden rounded-full bg-[var(--c-input)] ring-2 ring-[var(--c-card-bg)]">
-                                    {character?.avatar ? <img src={character.avatar} className="h-full w-full object-cover" alt="对方头像" /> : <ChatFallbackAvatar />}
+                                    {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="h-full w-full object-cover" alt="对方头像" /> : <ChatFallbackAvatar />}
                                 </div>
                                 <ChevronRight size={16} />
                             </div>
@@ -2018,19 +2017,22 @@ export function ChatSettingsPanel({
                                     {effectiveUserAvatar ? <img src={effectiveUserAvatar} className="h-full w-full object-cover" alt="我的头像" /> : <ChatFallbackAvatar />}
                                 </div>
                                 <div className="mt-3 text-center ts-14 font-medium text-[var(--c-text-title)]">我的头像</div>
-                                <div className="mt-1 text-center ts-11 opacity-50">从相册更换</div>
+                                <div className="mt-1 text-center ts-11 opacity-50">仅当前私聊</div>
                             </button>
                             <button type="button" className="rounded-2xl bg-[var(--c-card-bg)] p-4 text-left shadow-sm" onClick={() => characterAvatarInputRef.current?.click()}>
                                 <div className="mx-auto h-16 w-16 overflow-hidden rounded-full bg-[var(--c-input)]">
-                                    {character?.avatar ? <img src={character.avatar} className="h-full w-full object-cover" alt="对方头像" /> : <ChatFallbackAvatar />}
+                                    {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="h-full w-full object-cover" alt="对方头像" /> : <ChatFallbackAvatar />}
                                 </div>
                                 <div className="mt-3 text-center ts-14 font-medium text-[var(--c-text-title)]">{character?.name || "对方"}的头像</div>
-                                <div className="mt-1 text-center ts-11 opacity-50">直接更换</div>
+                                <div className="mt-1 text-center ts-11 opacity-50">仅当前私聊</div>
                             </button>
                         </div>
 
                         {session.userAvatarOverride && (
                             <button type="button" className="mt-3 w-full rounded-xl py-2 ts-12 text-[var(--c-danger)]" onClick={() => { updateSession({ userAvatarOverride: "" }); setAvatarRevision(value => value + 1); }}>我的头像恢复全局设置</button>
+                        )}
+                        {session.characterAvatarOverride && (
+                            <button type="button" className="mt-1 w-full rounded-xl py-2 ts-12 text-[var(--c-danger)]" onClick={() => { updateSession({ characterAvatarOverride: "" }); setAvatarRevision(value => value + 1); }}>对方头像恢复角色资料设置</button>
                         )}
                         <div className="mt-2 flex items-center gap-2 rounded-xl bg-[var(--c-card-bg)] px-3 py-2">
                             <div className="min-w-0 flex-1">
@@ -2160,4 +2162,3 @@ export function ChatSettingsPanel({
         </PageShell>
     );
 }
-

@@ -45,6 +45,8 @@ export type ChatSession = {
     backgroundImage?: string; // Add support for custom background
     /** 仅当前私聊里展示的用户头像；不修改用户身份、主页或其他会话 */
     userAvatarOverride?: string;
+    /** 仅当前私聊里展示的角色头像；不修改角色资料、剧情、动态或其他会话 */
+    characterAvatarOverride?: string;
     /** 用户更换当前会话头像后是否通知角色。未设置时默认开启 */
     notifyCharacterOnUserAvatarChange?: boolean;
     /** 角色给用户设置的私聊备注；会显示在“查手机”的真实私聊列表中。 */
@@ -432,12 +434,20 @@ export function resolveVisionImagePromptLimit(session: Pick<ChatSession, "vision
     return normalizeVisionImagePromptLimit(globalValue ?? session?.visionImagePromptLimit);
 }
 
-/** 聊天内用户头像：单独会话 > 全局聊天信息 > 用户资料头像，私聊与群聊通用。 */
+/** 聊天内用户头像：私聊可单独覆盖；群聊始终使用全局聊天头像/用户资料头像。 */
 export function resolveChatUserAvatar(
     session: Pick<ChatSession, "userAvatarOverride" | "isGroup"> | null | undefined,
     identityAvatar?: string | null,
 ): string {
-    return session?.userAvatarOverride || loadChatAppSettings().globalChatUserAvatar || identityAvatar || "";
+    return (!session?.isGroup ? session?.userAvatarOverride : "") || loadChatAppSettings().globalChatUserAvatar || identityAvatar || "";
+}
+
+/** 角色头像的会话级覆盖严格限制在当前私聊，其他页面继续读取固定角色资料。 */
+export function resolveChatCharacterAvatar(
+    session: Pick<ChatSession, "characterAvatarOverride" | "isGroup"> | null | undefined,
+    characterAvatar?: string | null,
+): string {
+    return (!session?.isGroup ? session?.characterAvatarOverride : "") || characterAvatar || "";
 }
 
 /** 聊天背景：单独会话 > 全局聊天信息，私聊与群聊通用。 */
