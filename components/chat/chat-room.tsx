@@ -3387,7 +3387,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: isSessionStreamingEnabled(session, true) });
                 if (!isCurrentGeneration()) return;
                 scheduleFollowUp(session.id, 0, result.stateValues);
-                handleCallTrigger(result.triggerCall);
+                if (result.triggerCall) {
+                    if (result.triggerCall === "voice") setShowVoiceCall(true);
+                    else if (result.triggerCall === "video") setShowVideoCall(true);
+                }
                 shouldRunDeclineReply = Boolean(result.hasDecline);
             }
         } catch (error: any) {
@@ -3928,8 +3931,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         window.dispatchEvent(new CustomEvent("ai-call-trigger", {
                             detail: { sessionId: session.id, type: lastSendResult.triggerCall },
                         }));
-                    } else {
-                        handleCallTrigger(lastSendResult.triggerCall);
+                    } else if (lastSendResult.triggerCall) {
+                        if (lastSendResult.triggerCall === "voice") setShowVoiceCall(true);
+                        else if (lastSendResult.triggerCall === "video") setShowVideoCall(true);
                     }
                     shouldRunDeclineReply = Boolean(lastSendResult.hasDecline);
                 }
