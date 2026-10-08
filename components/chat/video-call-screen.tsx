@@ -19,6 +19,7 @@ import { splitBilingualText } from "@/lib/bilingual-text";
 import type { Character } from "@/lib/character-types";
 import { DEFAULT_AUTO_CHAT_CONFIG, calculateNextSilenceInterval } from "@/lib/call-auto-chat";
 import { useCallReplyQueue } from "./use-call-reply-queue";
+import { callSessionStore } from "@/lib/call-session-store";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
@@ -455,11 +456,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
             setSubtitles(prev => [...prev, { id: `ai-${Date.now()}`, role: "assistant", text: displayText }]);
 
-            // 缩小为悬浮窗期间收到的回复：只静默记录文字，不播放语音
-            if (minimizedRef.current) {
-                setCallState("IDLE");
-                return;
-            }
+            // 悬浮窗/常驻通话模式：照常播放 TTS，实现后台与跨页面收听
+            /* if (minimizedRef.current) { setCallState("IDLE"); return; } */
 
             setCallState("AI_SPEAKING");
 
@@ -692,11 +690,17 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         <div className="absolute inset-0 z-[100] flex flex-col bg-black text-white overflow-hidden call-keyboard-shift" style={keyboardOffsetStyle}>
             <CallVolumeControl />
 
-            {onMinimize && callState !== "ENDED" && (
+            {callState !== "ENDED" && (
                 <button
                     type="button"
                     className="call-back-btn"
-                    onClick={onMinimize}
+                    onClick={() => {
+                        if (onMinimize) {
+                            onMinimize();
+                        } else {
+                            callSessionStore.minimizeCall();
+                        }
+                    }}
                     aria-label="缩小通话"
                     title="缩小通话"
                 >

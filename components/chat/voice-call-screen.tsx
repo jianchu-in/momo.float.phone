@@ -19,6 +19,7 @@ import { splitBilingualText } from "@/lib/bilingual-text";
 import type { Character } from "@/lib/character-types";
 import { DEFAULT_AUTO_CHAT_CONFIG, calculateNextSilenceInterval } from "@/lib/call-auto-chat";
 import { useCallReplyQueue } from "./use-call-reply-queue";
+import { callSessionStore } from "@/lib/call-session-store";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
@@ -112,13 +113,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     useEffect(() => { stateRef.current = callState; }, [callState]);
     useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
 
-    // 缩小为悬浮窗：冻结通话——停止监听、打断在播放的语音
+    // 缩小为悬浮窗时：常驻通话保持语音会话，不断开音频和监听
     useEffect(() => {
-        if (!minimized) return;
-        if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
-        setInterimText("");
-        if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
-        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        // 全局常驻通话在后台/悬浮窗状态下继续运行，不强行中断语音播放
     }, [minimized]);
 
     // 来电等待接听：循环振动（开关在聊天主页，iOS 网页不支持自动无效果）
@@ -393,11 +390,8 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             const subtitleId = `ai-${Date.now()}`;
             setSubtitles(prev => [...prev, { id: subtitleId, role: "assistant", text: displayText }]);
 
-            // 缩小为悬浮窗期间收到的回复：只静默记录文字，不播放语音
-            if (minimizedRef.current) {
-                setCallState("IDLE");
-                return;
-            }
+            // 悬浮窗/常驻通话模式：照常播放 TTS，实现后台与跨页面收听
+            /* if (minimizedRef.current) { setCallState("IDLE"); return; } */
 
             // 6. TTS
             setCallState("AI_SPEAKING");
@@ -603,7 +597,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     autoChatCountRef.current
                 );
                 autoChatTimerRef.current = setTimeout(() => {
-                    if (stateRef.current === "IDLE" && !minimizedRef.current) {
+                    if (stateRef.current === "IDLE") {
                         autoChatCountRef.current += 1;
                         runConversationTurn(); // 触发角色主动找话
                     }
@@ -717,11 +711,17 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
             <CallVolumeControl />
 
-            {onMinimize && callState !== "ENDED" && (
+            {callState !== "ENDED" && (
                 <button
                     type="button"
                     className="call-back-btn"
-                    onClick={onMinimize}
+                    onClick={() => {
+                        if (onMinimize) {
+                            onMinimize();
+                        } else {
+                            callSessionStore.minimizeCall();
+                        }
+                    }}
                     aria-label="缩小通话"
                     title="缩小通话"
                 >
