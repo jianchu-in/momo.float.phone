@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useActiveCall, callSessionStore } from "@/lib/call-session-store";
 import { VoiceCallScreen } from "./voice-call-screen";
 import { VideoCallScreen } from "./video-call-screen";
@@ -8,6 +9,8 @@ import { GroupCallScreen } from "./group-call-screen";
 import { CallMiniWindow } from "./call-mini-window";
 
 export function CallLayer() {
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => { setMounted(true); }, []);
     const activeCall = useActiveCall();
     const [duration, setDuration] = useState(0);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -61,7 +64,7 @@ export function CallLayer() {
     return (
         <>
             {/* 最小化悬浮小窗 */}
-            {activeCall.isMinimized && (
+            {activeCall.isMinimized && mounted && typeof document !== "undefined" && createPortal(
                 <CallMiniWindow
                     title={title}
                     avatar={avatar}
@@ -69,11 +72,13 @@ export function CallLayer() {
                     subText={activeCall.type === "video" ? "视频通话" : "语音通话"}
                     onRestore={handleRestore}
                     onHangup={handleEnd}
-                />
+                />,
+                document.body
             )}
 
             {/* 全屏或后台保持挂载的通话屏幕 */}
             <div
+                className="fixed inset-0 z-[9999]"
                 style={{
                     display: activeCall.isMinimized ? "none" : "block",
                 }}

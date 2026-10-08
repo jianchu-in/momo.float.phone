@@ -59,7 +59,7 @@ export function CallMiniWindow({
 
     return (
         <div
-            className="fixed z-[9999] select-none touch-none"
+            className="fixed z-[99999] select-none touch-none pointer-events-auto"
             style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
