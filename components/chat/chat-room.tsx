@@ -39,6 +39,7 @@ import { ChatSettingsPanel } from "./chat-settings-panel";
 import { VoiceCallScreen } from "./voice-call-screen";
 import { VideoCallScreen } from "./video-call-screen";
 import { GroupCallScreen } from "./group-call-screen";
+import { callSessionStore } from "@/lib/call-session-store";
 import { TransferTargetModal } from "./transfer-target-modal";
 import { GiftPickerModal } from "./gift-picker-modal";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -1131,11 +1132,39 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [customPlusActions, setCustomPlusActions] = useState<RegisteredCustomAppChatPlusAction[]>(() => loadCustomAppChatPlusActions());
     const [activeCustomChatPlus, setActiveCustomChatPlus] = useState<ActiveCustomChatPlus | null>(null);
     const [showSettings, setShowSettings] = useState(false);
-    const [showVoiceCall, setShowVoiceCall] = useState(false);
-    const [showVideoCall, setShowVideoCall] = useState(false);
     const [callMinimized, setCallMinimized] = useState(false);
     const [callInitiator, setCallInitiator] = useState<"user" | "character">("user");
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
+
+    // 全局通话接入代理：将局部通话标志桥接到全局 callSessionStore
+    const showVoiceCall = false;
+    const showVideoCall = false;
+    const setShowVoiceCall = useCallback((show: boolean) => {
+        if (show) {
+            callSessionStore.startCall({
+                type: session.isGroup ? "group" : "voice",
+                session,
+                character: character || undefined,
+                characters: session.isGroup ? groupCharacters : undefined,
+                initiator: callInitiator,
+            });
+        } else {
+            callSessionStore.endCall();
+        }
+    }, [session, character, groupCharacters, callInitiator]);
+
+    const setShowVideoCall = useCallback((show: boolean) => {
+        if (show) {
+            callSessionStore.startCall({
+                type: "video",
+                session,
+                character: character || undefined,
+                initiator: callInitiator,
+            });
+        } else {
+            callSessionStore.endCall();
+        }
+    }, [session, character, callInitiator]);
     const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
     const [chatAppSettingsRevision, setChatAppSettingsRevision] = useState(0);
