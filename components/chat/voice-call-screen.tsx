@@ -681,25 +681,12 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── Render ──────────────────────────────────────
 
-    if (minimized) {
-        return (
-            <button
-                type="button"
-                className="call-mini-window"
-                style={{ backgroundImage: `url(${bgImageResolved || character.avatar || ""})` }}
-                onClick={onRestore}
-                aria-label={`返回与${character.name}的语音通话`}
-                title="点击返回通话"
-            >
-                <span className="call-mini-window-overlay" />
-                <span className="call-mini-window-name">{character.name}</span>
-            </button>
-        );
-    }
+    // minimized=true：通话由 CallLayer 的 CallMiniWindow portal 接管显示，本组件不渲染任何 UI
+    if (minimized) return null;
 
     return (
         <div
-            className="absolute inset-0 z-[100] flex flex-col text-white overflow-hidden call-bg-default call-keyboard-shift"
+            className="fixed inset-0 z-[9000] flex flex-col text-white overflow-hidden call-bg-default call-keyboard-shift"
             style={bgImageResolved ? { ...keyboardOffsetStyle, background: `url(${bgImageResolved}) center/cover no-repeat` } : keyboardOffsetStyle}
         >
             {/* Dark overlay for readability */}
