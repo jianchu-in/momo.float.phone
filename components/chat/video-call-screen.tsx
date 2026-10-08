@@ -593,12 +593,11 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             }
             if (
                 DEFAULT_AUTO_CHAT_CONFIG.enabled &&
-                autoChatCountRef.current < DEFAULT_AUTO_CHAT_CONFIG.maxTurnsPerCall &&
-                !minimized
+                autoChatCountRef.current < DEFAULT_AUTO_CHAT_CONFIG.maxTurnsPerCall
             ) {
                 const interval = calculateNextSilenceInterval(DEFAULT_AUTO_CHAT_CONFIG, autoChatCountRef.current);
                 autoChatTimerRef.current = setTimeout(() => {
-                    if (stateRef.current === "IDLE" && !minimizedRef.current) {
+                    if (stateRef.current === "IDLE") {
                         autoChatCountRef.current += 1;
                         runConversationTurn();
                     }

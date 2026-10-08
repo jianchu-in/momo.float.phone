@@ -586,11 +586,10 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 return;
             }
 
-            // 煲电话粥逻辑：开启静默定时器自动搭话
+            // 煲电话粥逻辑：开启静默定时器自动搭话（最小化悬浮窗时也继续搭话）
             if (
                 DEFAULT_AUTO_CHAT_CONFIG.enabled &&
-                autoChatCountRef.current < DEFAULT_AUTO_CHAT_CONFIG.maxTurnsPerCall &&
-                !minimized
+                autoChatCountRef.current < DEFAULT_AUTO_CHAT_CONFIG.maxTurnsPerCall
             ) {
                 const interval = calculateNextSilenceInterval(
                     DEFAULT_AUTO_CHAT_CONFIG,

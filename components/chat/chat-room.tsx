@@ -39,7 +39,7 @@ import { ChatSettingsPanel } from "./chat-settings-panel";
 import { VoiceCallScreen } from "./voice-call-screen";
 import { VideoCallScreen } from "./video-call-screen";
 import { GroupCallScreen } from "./group-call-screen";
-
+import { callSessionStore } from "@/lib/call-session-store";
 import { TransferTargetModal } from "./transfer-target-modal";
 import { GiftPickerModal } from "./gift-picker-modal";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -1135,6 +1135,41 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [callMinimized, setCallMinimized] = useState(false);
     const [callInitiator, setCallInitiator] = useState<"user" | "character">("user");
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
+
+    // 全局通话层桥接：setShowVoiceCall(true) / setShowVideoCall(true) 时同时通知 callSessionStore
+    const prevShowVoiceCallRef = useRef(false);
+    const prevShowVideoCallRef = useRef(false);
+    useEffect(() => {
+        if (showVoiceCall && !prevShowVoiceCallRef.current) {
+            if (!session.isGroup) {
+                callSessionStore.startCall({
+                    type: "voice",
+                    session,
+                    character: character || undefined,
+                    initiator: callInitiator,
+                });
+            }
+        } else if (!showVoiceCall && prevShowVoiceCallRef.current) {
+            callSessionStore.endCall();
+        }
+        prevShowVoiceCallRef.current = showVoiceCall;
+    }, [showVoiceCall]);
+
+    useEffect(() => {
+        if (showVideoCall && !prevShowVideoCallRef.current) {
+            if (!session.isGroup) {
+                callSessionStore.startCall({
+                    type: "video",
+                    session,
+                    character: character || undefined,
+                    initiator: callInitiator,
+                });
+            }
+        } else if (!showVideoCall && prevShowVideoCallRef.current) {
+            callSessionStore.endCall();
+        }
+        prevShowVideoCallRef.current = showVideoCall;
+    }, [showVideoCall]);
 
     const [showVoiceCall, setShowVoiceCall] = useState(false);
     const [showVideoCall, setShowVideoCall] = useState(false);
@@ -6960,8 +6995,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     character={character}
                     initiator={callInitiator}
                     minimized={callMinimized}
-                    onMinimize={() => setCallMinimized(true)}
-                    onRestore={() => setCallMinimized(false)}
+                    onMinimize={() => { callSessionStore.minimizeCall(); setCallMinimized(true); }}
+                    onRestore={() => { callSessionStore.restoreCall(); setCallMinimized(false); }}
                     onEnd={() => returnFromCall(() => setShowVoiceCall(false))}
                 />,
                 wrapperRef.current.parentElement,
@@ -6972,8 +7007,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     character={character}
                     initiator={callInitiator}
                     minimized={callMinimized}
-                    onMinimize={() => setCallMinimized(true)}
-                    onRestore={() => setCallMinimized(false)}
+                    onMinimize={() => { callSessionStore.minimizeCall(); setCallMinimized(true); }}
+                    onRestore={() => { callSessionStore.restoreCall(); setCallMinimized(false); }}
                     onEnd={() => returnFromCall(() => setShowVideoCall(false))}
                 />,
                 wrapperRef.current.parentElement,
