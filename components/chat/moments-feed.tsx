@@ -11,6 +11,7 @@ import {
     resolveChatScopeUserIdentity,
     type ChatScopeState,
 } from "@/lib/chat-scope-storage";
+import { findChatAltAccount } from "@/lib/chat-alt-account-storage";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { MomentComment, MomentPost } from "@/lib/moments-types";
 import { MomentPostCard } from "./moment-post-card";
@@ -148,10 +149,12 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished }: Mo
     useEffect(() => stopLoadMoreAnchorTracking, [stopLoadMoreAnchorTracking]);
 
     const refreshPosts = useCallback(() => {
-        const contactIds = new Set(loadChatContacts().map(c => c.characterId));
+        const altAccount = findChatAltAccount(chatScope.chatAccountId);
+        const contactIds = new Set(altAccount ? altAccount.friendCharacterIds : loadChatContacts().map(c => c.characterId));
         setPosts(getAllPosts().filter(post => {
             if (post.authorType === "user") {
-                return !chatScope.userIdentityId || !post.userIdentityId || post.userIdentityId === chatScope.userIdentityId;
+                if ((post.chatAccountId || null) !== chatScope.chatAccountId) return false;
+                return Boolean(chatScope.chatAccountId) || !chatScope.userIdentityId || !post.userIdentityId || post.userIdentityId === chatScope.userIdentityId;
             }
             return contactIds.has(post.authorId) && characterMatchesChatScope(post.authorId, chatScope);
         }));
@@ -291,6 +294,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished }: Mo
             postId: target.postId,
             authorType: "user",
             authorId: "user",
+            chatAccountId: chatScope.chatAccountId || undefined,
             content: text,
             replyToCommentId: target.replyTo?.commentId,
             replyToAuthorId: target.replyTo?.authorId,
@@ -301,7 +305,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished }: Mo
         refreshPosts();
         window.dispatchEvent(new CustomEvent("moments-updated"));
         onUserComment(target.postId);
-    }, [activeComposer, closeComposer, composerText, refreshPosts]);
+    }, [activeComposer, chatScope.chatAccountId, closeComposer, composerText, refreshPosts]);
 
     useEffect(() => {
         if (!activeComposer) return;

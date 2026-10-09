@@ -1161,6 +1161,9 @@ type LegacyOverride = {
 // --- Follow-up Config ──────────────────────────────────────────
 
 export type FollowUpConfig = {
+    /** 开启后默认关闭所有角色追发，仅 allowCharacterIds 中的角色例外。 */
+    disableAllCharacters: boolean;
+    allowCharacterIds: string[];
     prompt: string;              // 追发提示词，支持 {{count}} {{delay}} 占位符
     anxietyThreshold: number;    // 触发阈值（默认 50，0-100）
     anxietyFieldName: string;    // 状态值字段名（默认 "焦虑值"）
@@ -1179,6 +1182,8 @@ const DEFAULT_FOLLOW_UP_PROMPT = `你已经在未收到{{user}}回复的情况�
 
 export function getDefaultFollowUpConfig(): FollowUpConfig {
     return {
+        disableAllCharacters: false,
+        allowCharacterIds: [],
         prompt: DEFAULT_FOLLOW_UP_PROMPT,
         anxietyThreshold: 50,
         anxietyFieldName: "焦虑值",
@@ -1201,6 +1206,10 @@ export function loadFollowUpConfig(): FollowUpConfig {
         const parsed = JSON.parse(raw) as Partial<FollowUpConfig>;
         const defaults = getDefaultFollowUpConfig();
         return {
+            disableAllCharacters: parsed.disableAllCharacters === true,
+            allowCharacterIds: Array.isArray(parsed.allowCharacterIds)
+                ? Array.from(new Set(parsed.allowCharacterIds.filter((id): id is string => typeof id === "string" && !!id.trim()).map(id => id.trim())))
+                : defaults.allowCharacterIds,
             prompt: typeof parsed.prompt === "string" && parsed.prompt.trim() ? parsed.prompt : defaults.prompt,
             anxietyThreshold: typeof parsed.anxietyThreshold === "number" ? Math.max(0, Math.min(100, parsed.anxietyThreshold)) : defaults.anxietyThreshold,
             anxietyFieldName: typeof parsed.anxietyFieldName === "string" && parsed.anxietyFieldName.trim() ? parsed.anxietyFieldName : defaults.anxietyFieldName,

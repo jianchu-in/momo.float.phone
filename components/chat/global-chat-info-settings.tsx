@@ -37,6 +37,7 @@ import {
 import { CHAT_SESSION_CSS_EXAMPLE } from "@/lib/css-examples";
 import { fileToUserAvatarDataUrl } from "@/lib/user-avatar-image";
 import { CustomStatusFrame } from "./custom-status-frame";
+import { clearChatOfflineTurns, loadChatOfflineTurns } from "@/lib/chat-offline-storage";
 
 function saveSettings(patch: Record<string, unknown>) {
     saveChatAppSettings({ ...loadChatAppSettings(), ...patch });
@@ -133,6 +134,7 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
     const [visionLimit, setVisionLimit] = useState(() => normalizeVisionImagePromptLimit(initial.globalVisionImagePromptLimit));
     const [status, setStatus] = useState<StatusRegionConfig>(() => getStatusRegionConfig(GLOBAL_CHAT_STATUS_REGION_ID, false));
     const [meetingInvite, setMeetingInvite] = useState<MeetingInviteCardConfig>(() => resolveMeetingInviteCardConfig(initial));
+    const [storyAsOfflineMode, setStoryAsOfflineMode] = useState(initial.storyAsOfflineMode === true);
     const [editingCSS, setEditingCSS] = useState(false);
     const [editingStatus, setEditingStatus] = useState(false);
     const [editingMeetingInvite, setEditingMeetingInvite] = useState(false);
@@ -178,6 +180,21 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
         const next = normalizeVisionImagePromptLimit(value);
         setVisionLimit(next);
         saveSettings({ globalVisionImagePromptLimit: next });
+    };
+
+    const changeStoryAsOfflineMode = (value: boolean) => {
+        if (!value) {
+            const sessionsWithOffline = loadChatSessions().filter(session => loadChatOfflineTurns(session.id).length > 0);
+            if (sessionsWithOffline.length) {
+                const keep = window.confirm(`检测到 ${sessionsWithOffline.length} 个会话仍有旧线下消息。\n\n确定：保留旧消息并恢复旧线下模式\n取消：继续选择是否清空旧消息`);
+                if (!keep) {
+                    const clear = window.confirm("要清空这些旧线下消息吗？摘要也会随旧记录一起删除。此操作不可恢复。\n\n确定：清空\n取消：保留");
+                    if (clear) sessionsWithOffline.forEach(session => clearChatOfflineTurns(session.id));
+                }
+            }
+        }
+        setStoryAsOfflineMode(value);
+        saveSettings({ storyAsOfflineMode: value });
     };
 
     // 全部角色恢复默认：清空每个会话的单独聊天室 CSS，全部回落到全局聊天室 CSS / 主页外观 CSS。
@@ -329,6 +346,11 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
             <div className="page-menu chat-info-menu">
                 <div className="px-4 pb-2 ts-12 text-[var(--c-text)] opacity-65">单独会话设置优先于这里；这里只改变聊天室，不会修改主页用户资料。状态栏仍仅用于私聊。</div>
                 <div className="menu-group">
+                    <div className="menu-item">
+                        <Play size={20} className="text-[var(--c-icon)]" />
+                        <div className="menu-label-group"><span className="menu-label">剧情入口</span><span className="menu-desc">用剧情作为线下模式；旧线下记录进入时可选择迁移方式</span></div>
+                        <Toggle checked={storyAsOfflineMode} onChange={changeStoryAsOfflineMode} />
+                    </div>
                     <div className="menu-item cursor-pointer" role="button" tabIndex={0} onClick={() => avatarInputRef.current?.click()} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") avatarInputRef.current?.click(); }}>
                         <User size={20} className="text-[var(--c-icon)]" />
                         <div className="menu-label-group"><span className="menu-label">用户头像</span><span className="menu-desc">所有私聊和群聊默认使用</span></div>

@@ -14,6 +14,8 @@ import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-h
 import { parseAIResponse } from "./rich-message-parser";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
 import { findUserAvatarChangeIntent, inferAvatarDecisionFromReply } from "./chat-avatar-intent";
+import { loadChatScope } from "./chat-scope-storage";
+import type { Character } from "./character-types";
 
 export const DEFAULT_VISION_IMAGE_PROMPT_LIMIT = 1;
 export const MAX_VISION_IMAGE_PROMPT_LIMIT = 20;
@@ -37,6 +39,8 @@ export type ChatContact = {
 export type ChatSession = {
     id: string;
     contactId: string;
+    /** 独立聊天小号作用域；缺省表示主号。 */
+    chatAccountId?: string;
     lastMessageId?: string;
     lastMessagePreview?: string;
     unreadCount: number;
@@ -366,6 +370,8 @@ export type ChatAppSettings = {
     /** 全局聊天提示音配置（新消息/发送消息/来电/致电/挂断），在“全局聊天信息”里设置 */
     globalChatSounds?: ChatSoundsConfig;
     floatingDockEnabled?: boolean; // 悬浮球贴边半隐藏收拢模式（默认关）
+    /** 用剧情 APP 取代聊天输入栏原“线下模式”入口。 */
+    storyAsOfflineMode?: boolean;
 };
 
 // ── 聊天提示音配置 ────────────────────────────────────────────────
@@ -434,20 +440,24 @@ export function resolveVisionImagePromptLimit(session: Pick<ChatSession, "vision
     return normalizeVisionImagePromptLimit(globalValue ?? session?.visionImagePromptLimit);
 }
 
-/** 聊天内用户头像：私聊可单独覆盖；群聊始终使用全局聊天头像/用户资料头像。 */
+/**
+ * 聊天内用户头像：当前私聊专用头像 > 全局聊天头像 > 用户资料头像。
+ * 私聊专用头像不会进入群聊、朋友圈或其他 APP。
+ */
 export function resolveChatUserAvatar(
     session: Pick<ChatSession, "userAvatarOverride" | "isGroup"> | null | undefined,
     identityAvatar?: string | null,
 ): string {
-    return (!session?.isGroup ? session?.userAvatarOverride : "") || loadChatAppSettings().globalChatUserAvatar || identityAvatar || "";
+    const privateChatAvatar = session?.isGroup ? "" : session?.userAvatarOverride;
+    return privateChatAvatar || loadChatAppSettings().globalChatUserAvatar || identityAvatar || "";
 }
 
-/** 角色头像的会话级覆盖严格限制在当前私聊，其他页面继续读取固定角色资料。 */
+/** 聊天 APP 内角色头像：专用聊天头像 > 角色卡头像；其他 APP 仍直接读取角色卡头像。 */
 export function resolveChatCharacterAvatar(
-    session: Pick<ChatSession, "characterAvatarOverride" | "isGroup"> | null | undefined,
-    characterAvatar?: string | null,
+    character: Pick<Character, "avatar" | "chatAvatar" | "chatAvatarEnabled"> | null | undefined,
 ): string {
-    return (!session?.isGroup ? session?.characterAvatarOverride : "") || characterAvatar || "";
+    if (character?.chatAvatarEnabled && character.chatAvatar) return character.chatAvatar;
+    return character?.avatar || "";
 }
 
 /** 聊天背景：单独会话 > 全局聊天信息，私聊与群聊通用。 */
@@ -826,6 +836,7 @@ const DEFAULT_CHAT_APP_SETTINGS: ChatAppSettings = {
     quickActionEnabled: false,
     enterToSendEnabled: false,
     floatingDockEnabled: false,
+    storyAsOfflineMode: false,
 };
 
 // ── In-Memory Caches (hydrated from IndexedDB on startup) ──────────
@@ -938,9 +949,10 @@ function normalizeChatSessions(sessions: ChatSession[]): NormalizedSessionList {
             continue;
         }
 
-        const existingIndex = privateIndexByContact.get(session.contactId);
+        const scopedContactKey = `${session.chatAccountId || "main"}::${session.contactId}`;
+        const existingIndex = privateIndexByContact.get(scopedContactKey);
         if (existingIndex === undefined) {
-            privateIndexByContact.set(session.contactId, normalized.length);
+            privateIndexByContact.set(scopedContactKey, normalized.length);
             normalized.push(session);
             continue;
         }
@@ -1004,6 +1016,7 @@ function restoreContactsForPrivateSessions(contacts: ChatContact[], sessions: Ch
     const removedByUser = loadRemovedContactIds();
     const privateSessionsWithMessages = sessions.filter(session =>
         !session.isGroup
+        && !session.chatAccountId
         && session.contactId
         && characterIds.has(session.contactId)
         && !removedByUser.has(session.contactId)
@@ -1332,14 +1345,16 @@ export function saveChatSessions(sessions: ChatSession[]) {
     else dbPutSessions(refreshed.items);
 }
 
-export function createOrGetSession(contactId: string): ChatSession {
+export function createOrGetSession(contactId: string, chatAccountId: string | null = loadChatScope().chatAccountId): ChatSession {
     const sessions = loadChatSessions();
-    const existing = sessions.find(s => s.contactId === contactId);
+    const normalizedAccountId = chatAccountId || undefined;
+    const existing = sessions.find(s => s.contactId === contactId && (s.chatAccountId || undefined) === normalizedAccountId);
     if (existing) return existing;
 
     const newSession: ChatSession = {
         id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         contactId,
+        ...(normalizedAccountId ? { chatAccountId: normalizedAccountId } : {}),
         unreadCount: 0,
         updatedAt: new Date().toISOString(),
         isPinned: false,

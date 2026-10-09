@@ -8,6 +8,7 @@ import { onUserPost } from "@/lib/moments-engine";
 import { characterMatchesChatScope, loadChatScope, resolveChatScopeUserIdentity } from "@/lib/chat-scope-storage";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import type { MomentPost } from "@/lib/moments-types";
 
 type Props = {
@@ -167,10 +168,12 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
             .filter(([, v]) => v)
             .map(([k]) => k);
 
+        const currentScope = loadChatScope();
         const post = addMomentPost({
             authorType: "user",
             authorId: "user",
-            userIdentityId: loadChatScope().userIdentityId || resolveChatScopeUserIdentity()?.id,
+            userIdentityId: currentScope.userIdentityId || resolveChatScopeUserIdentity()?.id,
+            chatAccountId: currentScope.chatAccountId || undefined,
             content,
             photoUrl: photoAssetId ? `asset://${photoAssetId}` : undefined,
             photoDescription: photoDesc.trim() || undefined,
@@ -305,8 +308,8 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
                                         onClick={() => handleToggleMention(c.characterId)}
                                     >
                                         <div className="chat-contact-avatar" style={mentionIds.has(c.characterId) ? { outline: "2px solid var(--c-primary, #07C160)", outlineOffset: "2px" } : undefined}>
-                                            {c.char!.avatar ? (
-                                                <img src={c.char!.avatar} alt="" />
+                                            {resolveChatCharacterAvatar(c.char!) ? (
+                                                <img src={resolveChatCharacterAvatar(c.char!)} alt="" />
                                             ) : (
                                                 <ChatFallbackAvatar />
                                             )}
@@ -359,8 +362,8 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
                                         onClick={() => handleToggleChar(c.characterId)}
                                     >
                                         <div className="chat-contact-avatar" style={visibility[c.characterId] ? { outline: "2px solid var(--c-primary, #07C160)", outlineOffset: "2px" } : undefined}>
-                                            {c.char!.avatar ? (
-                                                <img src={c.char!.avatar} alt="" />
+                                            {resolveChatCharacterAvatar(c.char!) ? (
+                                                <img src={resolveChatCharacterAvatar(c.char!)} alt="" />
                                             ) : (
                                                 <ChatFallbackAvatar />
                                             )}

@@ -14,7 +14,8 @@ import {
     deleteMomentCommentThread,
 } from "@/lib/moments-storage";
 import { loadCharacters } from "@/lib/character-storage";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveChatCharacterAvatar } from "@/lib/chat-storage";
+import { loadChatScope, resolveChatAccountUserIdentity } from "@/lib/chat-scope-storage";
 import { buildTwoLevelMomentThreads } from "@/lib/moments-comment-threading";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { splitBilingualText } from "@/lib/bilingual-text";
@@ -100,24 +101,24 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
 
     const chars = loadCharacters();
     // 朋友圈中的用户头像与主页、消息列表共用同一份用户资料头像。
-    const userIdentity = resolveUserIdentity();
+    const userIdentity = resolveChatAccountUserIdentity(post.chatAccountId);
 
     const getCharName = (charId: string): string => {
         return chars.find(c => c.id === charId)?.name ?? "未知";
     };
 
     const getCharAvatar = (charId: string): string | null => {
-        return chars.find(c => c.id === charId)?.avatar ?? null;
+        return resolveChatCharacterAvatar(chars.find(c => c.id === charId)) || null;
     };
 
-    const getAuthorName = (authorType: "user" | "character" | "npc", authorId: string, authorName?: string): string => {
+    const getAuthorName = (authorType: "user" | "character" | "npc", authorId: string, authorName?: string, chatAccountId?: string): string => {
         if (authorType === "npc") return authorName!;
-        return authorType === "user" ? (userIdentity?.name ?? "我") : getCharName(authorId);
+        return authorType === "user" ? (resolveChatAccountUserIdentity(chatAccountId)?.name ?? userIdentity?.name ?? "我") : getCharName(authorId);
     };
 
-    const getAuthorAvatar = (authorType: "user" | "character" | "npc", authorId: string): string | null => {
+    const getAuthorAvatar = (authorType: "user" | "character" | "npc", authorId: string, chatAccountId?: string): string | null => {
         if (authorType === "npc") return null;
-        return authorType === "user" ? (userIdentity?.avatarUrl ?? null) : getCharAvatar(authorId);
+        return authorType === "user" ? (resolveChatAccountUserIdentity(chatAccountId)?.avatarUrl ?? userIdentity?.avatarUrl ?? null) : getCharAvatar(authorId);
     };
 
     const authorName = getAuthorName(post.authorType, post.authorId);
@@ -127,12 +128,13 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const timeAgo = formatTimeAgo(post.createdAt);
 
     // Like handling
-    const isLikedByUser = post.likes.some(l => l.authorType === "user");
+    const currentChatAccountId = loadChatScope().chatAccountId || undefined;
+    const isLikedByUser = post.likes.some(l => l.authorType === "user" && (l.chatAccountId || undefined) === currentChatAccountId);
     const momentsConfig = loadMomentsConfig();
     const defaultTranslationExpanded = momentsConfig.collapseBilingualTranslation === true ? false : true;
 
     const handleLike = () => {
-        toggleMomentLike(post.id, "user", "user");
+        toggleMomentLike(post.id, "user", "user", currentChatAccountId);
         onUpdate();
     };
 
@@ -141,7 +143,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     };
 
     const handleReply = (comment: MomentComment) => {
-        const name = getAuthorName(comment.authorType, comment.authorId, comment.authorName);
+        const name = getAuthorName(comment.authorType, comment.authorId, comment.authorName, comment.chatAccountId);
         onOpenReplyComposer?.(post, comment, name);
     };
 
@@ -254,7 +256,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     }, [post.id]);
 
     // Liked names list
-    const likeNames = post.likes.map(l => getAuthorName(l.authorType, l.authorId, l.authorName));
+    const likeNames = post.likes.map(l => getAuthorName(l.authorType, l.authorId, l.authorName, l.chatAccountId));
     const commentThreads = useMemo(() => buildTwoLevelMomentThreads(comments), [comments]);
     const fallbackPhotoDescription = post.photoDescription && !post.photoUrl
         ? post.photoDescription
@@ -645,8 +647,8 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                     {comments.length > 0 && (
                         <div className="feed-comments flex flex-col gap-1 w-full mt-1">
                             {commentThreads.map(({ root, replies }) => {
-                                const rootName = getAuthorName(root.authorType, root.authorId, root.authorName);
-                                const rootAvatar = getAuthorAvatar(root.authorType, root.authorId);
+                                const rootName = getAuthorName(root.authorType, root.authorId, root.authorName, root.chatAccountId);
+                                const rootAvatar = getAuthorAvatar(root.authorType, root.authorId, root.chatAccountId);
                                 const rootReplyName = root.replyToAuthorId
                                     ? getAuthorName(root.replyToAuthorType || "character", root.replyToAuthorId, root.replyToAuthorName)
                                     : null;
@@ -731,8 +733,8 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                                         {replies.length > 0 && (
                                             <div className="feed-comment-replies flex flex-col gap-1 w-full mt-1 pl-[40px]">
                                                 {replies.map((reply) => {
-                                                    const replyName = getAuthorName(reply.authorType, reply.authorId, reply.authorName);
-                                                    const replyAvatar = getAuthorAvatar(reply.authorType, reply.authorId);
+                                                    const replyName = getAuthorName(reply.authorType, reply.authorId, reply.authorName, reply.chatAccountId);
+                                                    const replyAvatar = getAuthorAvatar(reply.authorType, reply.authorId, reply.chatAccountId);
                                                     const replyTargetName = reply.replyToAuthorId
                                                         ? getAuthorName(reply.replyToAuthorType || "character", reply.replyToAuthorId, reply.replyToAuthorName)
                                                         : null;

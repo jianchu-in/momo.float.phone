@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { loadChatContacts } from "@/lib/chat-storage";
+import { loadChatContacts, resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { characterMatchesChatScope, resolveChatScopeUserIdentity } from "@/lib/chat-scope-storage";
 import { Character } from "@/lib/character-types";
@@ -62,8 +62,8 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                                             onClick={() => toggle(c.characterId)}
                                         >
                                             <div className="chat-contact-avatar" style={isSelected ? { outline: "3px solid var(--c-success)", outlineOffset: "2px" } : undefined}>
-                                                {c.char.avatar ? (
-                                                    <img src={c.char.avatar} alt="" />
+                                                {resolveChatCharacterAvatar(c.char) ? (
+                                                    <img src={resolveChatCharacterAvatar(c.char)} alt="" />
                                                 ) : (
                                                     <ChatFallbackAvatar />
                                                 )}
@@ -102,8 +102,8 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                             {selectedChars.map(c => (
                                 <div key={c.id} className="chat-contact-item">
                                     <div className="chat-contact-avatar">
-                                        {c.avatar ? (
-                                            <img src={c.avatar} alt="" />
+                                        {resolveChatCharacterAvatar(c) ? (
+                                            <img src={resolveChatCharacterAvatar(c)} alt="" />
                                         ) : (
                                             <ChatFallbackAvatar />
                                         )}

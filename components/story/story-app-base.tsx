@@ -68,6 +68,7 @@ import {
   loadStoryGroups,
   loadStoryGlobalSettings,
   loadStoryMessages,
+  mergeStoryBranchesIntoMain,
   loadStorySessions,
   loadStorySessionsForOwner,
   loadStorySchemeRepository,
@@ -553,6 +554,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const dragStartXRef = useRef<number | null>(null);
   const dragDeltaXRef = useRef(0);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [instructionRetryTargetId, setInstructionRetryTargetId] = useState<string | null>(null);
+  const [instructionRetryDraft, setInstructionRetryDraft] = useState("");
   const [contextMenuPoint, setContextMenuPoint] = useState<{ x: number; y: number } | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
@@ -1390,6 +1393,35 @@ export function StoryApp({ onClose }: StoryAppProps) {
       .catch((error) => alert(error instanceof Error ? error.message : "导出失败"));
   }
 
+  function handleExportSelectedStories(sessionIds: string[]) {
+    const selected = new Set(sessionIds);
+    const sessions = loadStorySessionsForOwner(activeOwnerType, activeOwnerId).filter((session) => selected.has(session.id));
+    if (!sessions.length) return;
+    let branchIndex = 0;
+    const chapters = loadStorySessionsForOwner(activeOwnerType, activeOwnerId)
+      .map((session) => {
+        if ((session.branchId || "main") !== "main") branchIndex += 1;
+        return { session, title: storyChapterTitle(session, Math.max(1, branchIndex)) };
+      })
+      .filter(({ session }) => selected.has(session.id));
+    const directory = ["目录", ...chapters.map((chapter) => chapter.title)].join("\n");
+    const sections = chapters.map((chapter) => buildStoryTxt(chapter.session, chapter.title, false));
+    const text = [`《${storyDisplayName}》`, directory, ...sections].join("\n\n\n====================\n\n\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    void downloadFile(blob, `${safeStoryFilename(storyDisplayName)}-所选剧情.txt`)
+      .catch((error) => alert(error instanceof Error ? error.message : "导出失败"));
+  }
+
+  function handleMergeStoryBranches(sessionIds: string[]) {
+    const result = mergeStoryBranchesIntoMain(activeOwnerType, activeOwnerId, sessionIds);
+    if (!result.mergedSessionIds.length) {
+      alert("所选分线都不符合合并条件：只有已继承记忆，或已经结束并写入记忆的分线可以合并。");
+      return;
+    }
+    setStorageVersion((value) => value + 1);
+    alert(`已合并 ${result.mergedSessionIds.length} 条分线、${result.copiedMessageCount} 条剧情消息${result.skippedSessionIds.length ? `；跳过 ${result.skippedSessionIds.length} 条不符合条件的分线` : ""}。`);
+  }
+
   function handleQuickStoryCreate() {
     if (!activeOwnerId || !activeCharacterId) return;
     const now = new Date();
@@ -2034,7 +2066,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     else { fallbackCopy(); }
     setActiveMessageId(null);
   }
-  async function handleStoryRetry(msgId: string) {
+  async function handleStoryRetry(msgId: string, retryInstruction?: string) {
     const msgIndex = messages.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
     const retryMessage = messages[msgIndex];
@@ -2072,6 +2104,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
           inheritRecentMemory: currentSession?.inheritRecentMemory ?? true,
           startedAt: currentSession?.createdAt,
         },
+        retryInstruction,
         onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
         signal: generationRun.controller.signal,
       });
@@ -2164,6 +2197,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
           boundPreset={boundPreset}
           foldTags={foldTagsDraft}
           contextExcludedTags={contextExcludedTagsDraft}
+          customCSS={currentSession.customCSS || ""}
           onClose={() => setSettingsOpen(false)}
           onCharacterChange={handleStoryCharacterChange}
           onGroupSelect={handleStoryGroupSelect}
@@ -2178,7 +2212,9 @@ export function StoryApp({ onClose }: StoryAppProps) {
           onBranchDelete={handleStoryBranchDelete}
           onSessionUpdate={handleStorySessionUpdate}
           onExportSession={handleExportStorySession}
+          onExportSessions={handleExportSelectedStories}
           onExportAll={handleExportAllStories}
+          onMergeBranches={handleMergeStoryBranches}
           onUiPrefsChange={(next) => applySessionUpdates({ uiPrefs: next })}
           onSettingsChange={(next) => applySessionUpdates({ settings: next })}
           onGlobalSettingsChange={(next) => {
@@ -2190,6 +2226,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
             setFoldTagsDraft(foldTags);
             setContextExcludedTagsDraft(contextExcludedTags);
             applySessionUpdates({ foldTags: foldTags.trim() || undefined, contextExcludedTags: contextExcludedTags.trim() || undefined });
+          }}
+          onCustomCSSChange={(css) => {
+            setCustomCssDraft(css);
+            applySessionUpdates({ customCSS: css });
           }}
           onOpenCss={() => {
             setSettingsOpen(false);
@@ -2411,7 +2451,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
                                 <button onClick={() => handleStoryCopy(message.rawContent)} className="story-ctx-btn">复制</button>
                                 <button onClick={() => handleStoryEditStart(message)} className="story-ctx-btn">编辑</button>
                                 {(message.role === "assistant" || message.role === "user") && (
-                                  <button onClick={() => { void handleStoryRetry(message.id); }} className="story-ctx-btn story-ctx-btn-danger">重试</button>
+                                  <>
+                                    <button onClick={() => { void handleStoryRetry(message.id); }} className="story-ctx-btn story-ctx-btn-danger">重试</button>
+                                    <button onClick={() => { setInstructionRetryTargetId(message.id); setInstructionRetryDraft(""); setActiveMessageId(null); }} className="story-ctx-btn">指令重试</button>
+                                  </>
                                 )}
                               </div>
                               <div style={{ display: "flex" }}>
@@ -2626,6 +2669,40 @@ export function StoryApp({ onClose }: StoryAppProps) {
           ) : null}
           </>
           )}
+        </div>
+      ) : null}
+
+      {instructionRetryTargetId ? (
+        <div className="story-dialog-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setInstructionRetryTargetId(null);
+        }}>
+          <section className="story-dialog" role="dialog" aria-modal="true" aria-label="指令重试">
+            <header><strong>指令重试</strong><button type="button" onClick={() => setInstructionRetryTargetId(null)}><XMarkIcon width={16} /></button></header>
+            <p className="story-settings-note">写下希望下一段怎样改变。内容只作为本次重新生成的隐藏提示词，不会显示或保存为剧情消息。</p>
+            <textarea
+              className="story-css-box"
+              style={{ minHeight: 130 }}
+              autoFocus
+              value={instructionRetryDraft}
+              onChange={(event) => setInstructionRetryDraft(event.target.value)}
+              placeholder="例如：从旁观视角描写，减少心理独白，让三位角色平等参与"
+            />
+            <footer>
+              <button type="button" onClick={() => setInstructionRetryTargetId(null)}>取消</button>
+              <button
+                type="button"
+                className="story-settings-primary"
+                disabled={!instructionRetryDraft.trim()}
+                onClick={() => {
+                  const targetId = instructionRetryTargetId;
+                  const instruction = instructionRetryDraft.trim();
+                  setInstructionRetryTargetId(null);
+                  setInstructionRetryDraft("");
+                  void handleStoryRetry(targetId, instruction);
+                }}
+              >重新生成</button>
+            </footer>
+          </section>
         </div>
       ) : null}
 

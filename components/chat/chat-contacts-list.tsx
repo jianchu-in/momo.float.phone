@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, useSyncExternalStore } from "react";
-import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages } from "@/lib/chat-storage";
+import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages, resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import {
     CHAT_SCOPE_UPDATED_EVENT,
     characterMatchesChatScope,
@@ -26,6 +26,7 @@ import { pinyin } from "pinyin-pro";
 import { kvSet } from "@/lib/kv-db";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { addChatAltAccountFriend, findChatAltAccount } from "@/lib/chat-alt-account-storage";
 import {
     DEFAULT_MASCOT_AVATAR,
     getMascotSettingsSnapshot,
@@ -108,7 +109,14 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
     }
 
     const refresh = useCallback(() => {
-        const rawContacts = loadChatContacts();
+        const altAccount = findChatAltAccount(chatScope.chatAccountId);
+        const rawContacts: ChatContact[] = altAccount
+            ? altAccount.friendCharacterIds.map(characterId => ({
+                id: `alt-contact:${altAccount.id}:${characterId}`,
+                characterId,
+                addedAt: altAccount.createdAt,
+            }))
+            : loadChatContacts();
         const enriched = rawContacts.map(c => ({
             ...c,
             char: chars.find(ch => ch.id === c.characterId)
@@ -123,7 +131,7 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
         }
         setLatestPost(map);
 
-        setPendingRequests(getPendingFriendRequests().filter(request => characterMatchesChatScope(request.characterId, chatScope)));
+        setPendingRequests(altAccount ? [] : getPendingFriendRequests().filter(request => characterMatchesChatScope(request.characterId, chatScope)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chatScope, chars]);
 
@@ -300,8 +308,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                             className="minimal-list-item"
                                         >
                                             <div className="minimal-avatar-wrapper">
-                                                {char.avatar ? (
-                                                    <img src={char.avatar} className="w-full h-full object-cover rounded-full" alt="" />
+                                                {resolveChatCharacterAvatar(char) ? (
+                                                    <img src={resolveChatCharacterAvatar(char)} className="w-full h-full object-cover rounded-full" alt="" />
                                                 ) : (
                                                     <ChatFallbackAvatar className="rounded-full" />
                                                 )}
@@ -362,8 +370,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                             onClick={() => setSelectedRequest(req)}
                                         >
                                             <div className="freq-avatar">
-                                                {char?.avatar ? (
-                                                    <img src={char.avatar} alt="" />
+                                                {resolveChatCharacterAvatar(char) ? (
+                                                    <img src={resolveChatCharacterAvatar(char)} alt="" />
                                                 ) : (
                                                     <div className="freq-avatar-fallback">
                                                         {(char?.name || "?")[0]}
@@ -401,8 +409,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                         <div className="modal-dialog freq-dialog" onClick={e => e.stopPropagation()}>
                             {/* Avatar */}
                             <div className="freq-detail-avatar">
-                                {char?.avatar ? (
-                                    <img src={char.avatar} alt="" />
+                                {resolveChatCharacterAvatar(char) ? (
+                                    <img src={resolveChatCharacterAvatar(char)} alt="" />
                                 ) : (
                                     <div className="freq-avatar-fallback" style={{ fontSize: "calc(28px*var(--app-text-scale,1))" }}>
                                         {(char?.name || "?")[0]}
@@ -471,7 +479,7 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                     <button
                                         className="menu-item"
                                         onClick={() => {
-                                            const found = chars.find(c => c.wechatID === addQuery.trim() || c.id === addQuery.trim());
+                                            const found = chars.find(c => (c.wechatID === addQuery.trim() || c.id === addQuery.trim()) && characterMatchesChatScope(c.id, chatScope));
                                             setAddResult(found || null);
                                         }}
                                     >
@@ -521,8 +529,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                             <div className="menu-group">
                                 <div className="menu-item !items-start">
                                     <div className="add-friend-avatar">
-                                        {addResult.avatar ? (
-                                            <img src={addResult.avatar} className="w-full h-full object-cover" alt="" />
+                                        {resolveChatCharacterAvatar(addResult) ? (
+                                            <img src={resolveChatCharacterAvatar(addResult)} className="w-full h-full object-cover" alt="" />
                                         ) : (
                                             <ChatFallbackAvatar />
                                         )}
@@ -557,7 +565,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                             <div className="flex flex-col gap-3">
                                 <button
                                     onClick={() => {
-                                        addChatContact(addResult.id);
+                                        if (chatScope.chatAccountId) addChatAltAccountFriend(chatScope.chatAccountId, addResult.id);
+                                        else addChatContact(addResult.id);
                                         clearRequestsForCharacter(addResult.id);
                                         dispatchFriendRequestUpdated();
                                         const newSession = createOrGetSession(addResult.id);

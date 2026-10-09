@@ -30,7 +30,7 @@ import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
 import { GlobalChatInfoSettings } from "./global-chat-info-settings";
 import { WalletPanel } from "./wallet-panel";
 import { loadMomentsConfig, saveMomentsConfig, DEFAULT_MOMENTS_CONFIG, type MomentsInteractionConfig, getAllPosts } from "@/lib/moments-storage";
-import { loadChatContacts } from "@/lib/chat-storage";
+import { loadChatContacts, resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { triggerImmediatePost } from "@/lib/moments-engine";
 import type { Character } from "@/lib/character-types";
@@ -46,6 +46,7 @@ import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { formatWalletAmount, getWalletBalance, loadWalletState, WALLET_UPDATED_EVENT } from "@/lib/wallet-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import { ChatScopeSwitcher } from "./chat-scope-switcher";
+import { findChatAltAccount } from "@/lib/chat-alt-account-storage";
 import {
     Loader2,
     Bell,
@@ -159,9 +160,14 @@ function isBrowserNotificationGranted(): boolean {
 
 function readScopedUserStats() {
     const scope = loadChatScope();
-    const contactsCount = loadChatContacts().filter(contact => characterMatchesChatScope(contact.characterId, scope)).length;
+    const altAccount = findChatAltAccount(scope.chatAccountId);
+    const contactsCount = (altAccount
+        ? altAccount.friendCharacterIds
+        : loadChatContacts().map(contact => contact.characterId))
+        .filter(characterId => characterMatchesChatScope(characterId, scope)).length;
     const userPostsCount = getAllPosts().filter(post => post.authorType === "user"
-        && (!scope.userIdentityId || !post.userIdentityId || post.userIdentityId === scope.userIdentityId)).length;
+        && (post.chatAccountId || null) === scope.chatAccountId
+        && (Boolean(scope.chatAccountId) || !scope.userIdentityId || !post.userIdentityId || post.userIdentityId === scope.userIdentityId)).length;
     return {
         chats: contactsCount,
         moments: userPostsCount,
@@ -240,9 +246,12 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
         }
         try {
             const avatarUrl = await fileToUserAvatarDataUrl(file);
+            const currentScope = loadChatScope();
+            const altAccount = findChatAltAccount(currentScope.chatAccountId);
+            const targetIdentityId = altAccount?.userIdentityId || currentIdentity.id;
             const identities = loadUserIdentities();
             saveUserIdentities(identities.map(item => (
-                item.id === currentIdentity.id ? { ...item, avatarUrl } : item
+                item.id === targetIdentityId ? { ...item, avatarUrl } : item
             )));
         } catch (error) {
             console.error("更新用户资料头像失败", error);
@@ -620,6 +629,7 @@ function ChatCSSEditor({ onBack }: { onBack: () => void }) {
 function FollowUpSettingsEditor({ onBack }: { onBack: () => void }) {
     const defaults = getDefaultFollowUpConfig();
     const [config, setConfig] = useState<FollowUpConfig>(defaults);
+    const characters = loadCharacters();
 
     useEffect(() => {
         setConfig(loadFollowUpConfig());
@@ -639,6 +649,38 @@ function FollowUpSettingsEditor({ onBack }: { onBack: () => void }) {
     return (
         <PageShell title="追发设置" onBack={onBack} className="absolute inset-0 z-[100]">
             <div className="page-menu profile-settings-menu">
+                <div className="menu-group">
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={MessageSquare} color={CONTENT_APP_ACCENTS.chat} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">关闭角色追发消息</span>
+                            <span className="menu-desc">开启后所有角色默认不再追发</span>
+                        </div>
+                        <Toggle checked={config.disableAllCharacters} onChange={value => updateConfig({ disableAllCharacters: value })} />
+                    </div>
+                    {config.disableAllCharacters && characters.map(character => {
+                        const allowed = config.allowCharacterIds.includes(character.id);
+                        return (
+                            <div className="menu-item" key={character.id}>
+                                <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-[var(--c-input)]">
+                                    {resolveChatCharacterAvatar(character) ? <img src={resolveChatCharacterAvatar(character)} alt="" className="h-full w-full object-cover" /> : <ChatFallbackAvatar />}
+                                </div>
+                                <div className="menu-label-group">
+                                    <span className="menu-label">{character.name || "未命名角色"}</span>
+                                    <span className="menu-desc">{allowed ? "例外：允许追发" : "跟随全局：关闭追发"}</span>
+                                </div>
+                                <Toggle
+                                    checked={allowed}
+                                    onChange={value => updateConfig({
+                                        allowCharacterIds: value
+                                            ? Array.from(new Set([...config.allowCharacterIds, character.id]))
+                                            : config.allowCharacterIds.filter(id => id !== character.id),
+                                    })}
+                                />
+                            </div>
+                        );
+                    })}
+                </div>
                 <p className="menu-group-desc mx-2">
                     延迟计算：焦虑值={config.anxietyThreshold} → {config.anxietyMaxDelay}秒，焦虑值=100 → {config.anxietyMinDelay}秒，中间线性插值。焦虑值&lt;{config.anxietyThreshold}时不追发。
                 </p>
@@ -1162,7 +1204,7 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                     {showAutoPostList && enriched.map(c => (
                         <div key={c.characterId} className="menu-item" style={{ cursor: "default" }}>
                             <div className="chat-contact-avatar" style={{ width: 32, height: 32 }}>
-                                {c.char.avatar ? <img src={c.char.avatar} alt="" /> : <ChatFallbackAvatar />}
+                                {resolveChatCharacterAvatar(c.char) ? <img src={resolveChatCharacterAvatar(c.char)} alt="" /> : <ChatFallbackAvatar />}
                             </div>
                             <div className="menu-label-group">
                                 <span className="menu-label">{c.char.name}</span>
@@ -1202,8 +1244,8 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                                     <div className="chat-contact-avatar"
                                         style={selectedIds.has(c.characterId) ? { outline: "3px solid var(--c-success)", outlineOffset: "2px" } : undefined}
                                     >
-                                        {c.char.avatar ? (
-                                            <img src={c.char.avatar} alt="" />
+                                        {resolveChatCharacterAvatar(c.char) ? (
+                                            <img src={resolveChatCharacterAvatar(c.char)} alt="" />
                                         ) : (
                                             <ChatFallbackAvatar />
                                         )}

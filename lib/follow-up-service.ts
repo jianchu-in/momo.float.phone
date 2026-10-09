@@ -192,6 +192,12 @@ export function stopFollowUpService() {
  *  Purely anxiety-driven: no anxiety field or below threshold → no follow-up. */
 export function scheduleFollowUp(sessionId: string, count: number, stateValues?: StateValue[]) {
     const config = loadFollowUpConfig();
+    const targetSession = loadChatSessions().find(session => session.id === sessionId);
+    if (!targetSession || (config.disableAllCharacters && !config.allowCharacterIds.includes(targetSession.contactId))) {
+        clearFollowUpSchedule(sessionId);
+        cancelFollowUpBailout(sessionId);
+        return;
+    }
 
     if (!stateValues || stateValues.length === 0) {
         console.log(`[FollowUp] No state values, not scheduling.`);
@@ -463,6 +469,8 @@ async function fireFollowUp(sched: { sessionId: string; count: number; delaySec?
         const sessions = loadChatSessions();
         const session = sessions.find(s => s.id === sched.sessionId);
         if (!session) return;
+        const followUpConfig = loadFollowUpConfig();
+        if (followUpConfig.disableAllCharacters && !followUpConfig.allowCharacterIds.includes(session.contactId)) return;
 
         const latestMessages = loadChatMessages(session.id);
 
