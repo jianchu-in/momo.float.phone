@@ -17,6 +17,9 @@ import { suspendKeepAliveForCall, resumeKeepAliveAfterCall } from "@/lib/use-wei
 import { BilingualTextBlock } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import type { Character } from "@/lib/character-types";
+import { DEFAULT_AUTO_CHAT_CONFIG, calculateNextSilenceInterval } from "@/lib/call-auto-chat";
+import { useCallReplyQueue } from "./use-call-reply-queue";
+import { callSessionStore } from "@/lib/call-session-store";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
@@ -86,6 +89,10 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const [inputMode, setInputMode] = useState<"voice" | "text">(() => androidTextInputOnly ? "text" : "voice");
     const [typedText, setTypedText] = useState("");
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
+
+    // ── 煲电话粥 / 自动搭话状态与队列 ──
+    const autoChatCountRef = useRef(0);
+    const autoChatTimerRef = useRef<NodeJS.Timeout | null>(null);
     const [cameraEnabled, setCameraEnabled] = useState(false);
     const [cameraFacingMode, setCameraFacingMode] = useState<"user" | "environment">("user");
     const [cameraError, setCameraError] = useState<string | null>(null);
@@ -449,11 +456,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
             setSubtitles(prev => [...prev, { id: `ai-${Date.now()}`, role: "assistant", text: displayText }]);
 
-            // 缩小为悬浮窗期间收到的回复：只静默记录文字，不播放语音
-            if (minimizedRef.current) {
-                setCallState("IDLE");
-                return;
-            }
+            // 悬浮窗/常驻通话模式：照常播放 TTS，实现后台与跨页面收听
+            /* if (minimizedRef.current) { setCallState("IDLE"); return; } */
 
             setCallState("AI_SPEAKING");
 
@@ -563,13 +567,49 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         }
     }, [androidTextInputOnly, inputMode]);
 
+    // 插话队列：如果在正在思考或说话时用户输入，加入待发送缓冲队列
+    const { enqueue, flushNext, queueCount } = useCallReplyQueue(async (text) => {
+        await runConversationTurn(text);
+    });
+
     const handleTextSubmit = useCallback(() => {
         const text = typedText.trim();
-        if (!text || callState !== "IDLE") return;
+        if (!text) return;
         if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
         setTypedText("");
-        runConversationTurn(text);
-    }, [typedText, callState, runConversationTurn]);
+        if (callState === "IDLE") {
+            runConversationTurn(text);
+        } else {
+            enqueue(text);
+        }
+    }, [typedText, callState, runConversationTurn, enqueue]);
+
+    // IDLE 时处理插话队列 + 煲电话粥定时器
+    useEffect(() => {
+        if (callState === "IDLE") {
+            if (queueCount > 0) {
+                flushNext();
+                return;
+            }
+            if (
+                DEFAULT_AUTO_CHAT_CONFIG.enabled &&
+                autoChatCountRef.current < DEFAULT_AUTO_CHAT_CONFIG.maxTurnsPerCall
+            ) {
+                const interval = calculateNextSilenceInterval(DEFAULT_AUTO_CHAT_CONFIG, autoChatCountRef.current);
+                autoChatTimerRef.current = setTimeout(() => {
+                    if (stateRef.current === "IDLE") {
+                        autoChatCountRef.current += 1;
+                        runConversationTurn();
+                    }
+                }, interval);
+            }
+        } else {
+            if (autoChatTimerRef.current) { clearTimeout(autoChatTimerRef.current); autoChatTimerRef.current = null; }
+        }
+        return () => {
+            if (autoChatTimerRef.current) { clearTimeout(autoChatTimerRef.current); autoChatTimerRef.current = null; }
+        };
+    }, [callState, queueCount, flushNext, runConversationTurn, minimized]);
 
     // 输入框左侧的"重回"键：不发送新内容，直接让对方基于当前上下文重新回复一次
     const handleRegenerate = useCallback(() => {
@@ -629,31 +669,24 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── Render ──────────────────────────────────────
 
-    if (minimized) {
-        return (
-            <button
-                type="button"
-                className="call-mini-window"
-                style={{ backgroundImage: `url(${bgImageResolved || character.avatar || ""})` }}
-                onClick={onRestore}
-                aria-label={`返回与${character.name}的视频通话`}
-                title="点击返回通话"
-            >
-                <span className="call-mini-window-overlay" />
-                <span className="call-mini-window-name">{character.name}</span>
-            </button>
-        );
-    }
+    // minimized=true：通话由 CallLayer 的 CallMiniWindow portal 接管显示，本组件不渲染任何 UI
+    if (minimized) return null;
 
     return (
-        <div className="absolute inset-0 z-[100] flex flex-col bg-black text-white overflow-hidden call-keyboard-shift" style={keyboardOffsetStyle}>
+        <div className="fixed inset-0 z-[9000] flex flex-col bg-black text-white overflow-hidden call-keyboard-shift" style={keyboardOffsetStyle}>
             <CallVolumeControl />
 
-            {onMinimize && callState !== "ENDED" && (
+            {callState !== "ENDED" && (
                 <button
                     type="button"
                     className="call-back-btn"
-                    onClick={onMinimize}
+                    onClick={() => {
+                        if (onMinimize) {
+                            onMinimize();
+                        } else {
+                            callSessionStore.minimizeCall();
+                        }
+                    }}
                     aria-label="缩小通话"
                     title="缩小通话"
                 >
@@ -815,13 +848,18 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                             value={typedText}
                             onChange={e => setTypedText(e.target.value)}
                             className="call-text-input"
-                            placeholder={callState === "IDLE" ? "输入你想说的话..." : "稍等对方说完..."}
-                            disabled={callState !== "IDLE"}
+                            placeholder={
+                                callState === "IDLE"
+                                    ? "输入你想说的话..."
+                                    : queueCount > 0
+                                    ? `已排队 ${queueCount} 条插话，对方说完将发送...`
+                                    : "对方正在说话，输入将进入插话队列..."
+                            }
                         />
                         <button
                             type="submit"
                             className="call-text-send-btn"
-                            disabled={!typedText.trim() || callState !== "IDLE"}
+                            disabled={!typedText.trim()}
                             aria-label="发送"
                         >
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
