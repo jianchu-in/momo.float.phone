@@ -100,8 +100,10 @@ export interface AssemblerInput {
     phoneAppLabel?: string;
     phoneSnapshotSummary?: string;
     phoneLastRefreshAt?: string;
-    characterRelations?: string;          // formatted world-group relationship marker
-    dwellingContext?: string;               // formatted dwelling layout snapshot for cross-app reference
+    /** null = explicitly disable the automatic relationship lookup (used by isolated story branches). */
+    characterRelations?: string | null;   // formatted world-group relationship marker
+    /** null = explicitly disable the automatic dwelling lookup (used by isolated story branches). */
+    dwellingContext?: string | null;      // formatted dwelling layout snapshot for cross-app reference
     dwellingRoom?: string;
     dwellingFurniture?: string;
     dwellingItem?: string;
@@ -413,8 +415,8 @@ function getMarkerContent(
     longTermMemories?: string,
     regexGroups?: RegexConfig[],
     regexCtx?: RegexContext,
-    characterRelations?: string,
-    dwellingContext?: string,
+    characterRelations?: string | null,
+    dwellingContext?: string | null,
 ): string | null {
     switch (identifier) {
         case "charDescription":
@@ -440,10 +442,12 @@ function getMarkerContent(
         case "memoryLongTerm":
             return longTermMemories?.trim() || null;
         case "characterRelations": {
+            if (characterRelations === null) return null;
             const relations = characterRelations?.trim() || formatCharacterRelationsForPrompt(character.id).trim();
             return relations || null;
         }
         case "dwellingContext": {
+            if (dwellingContext === null) return null;
             if (dwellingContext?.trim()) return dwellingContext;
             // Auto-load from in-memory cache if not explicitly provided
             const cached = readDwellingLayoutCache(character.id);

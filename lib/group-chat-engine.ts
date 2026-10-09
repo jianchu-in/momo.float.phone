@@ -49,8 +49,8 @@ import {
     loadPresets,
     loadWorldBooks,
     loadRegexes,
-    resolveUserIdentity,
 } from "./settings-storage";
+import { resolveChatScopeUserIdentity } from "./chat-scope-storage";
 import {
     assembleGroupPromptPayload,
     formatRichMediaForHistory,
@@ -319,7 +319,7 @@ async function buildGroupChatPromptMessages(
         ? []
         : (activeSlot.regexIds || []).map(id => allRegexes.find(r => r.id === id)).filter(Boolean) as typeof allRegexes;
 
-    const userIdentity = resolveUserIdentity(undefined, "group_chat");
+    const userIdentity = resolveChatScopeUserIdentity(undefined, "group_chat");
     const userName = userIdentity?.name ?? "用户";
     const baseAppTags = options?.appTags ?? ["group_chat", "text"];
     // 围观群：追加 spectator tag 激活围观语境条目（tags 子集过滤，老条目不受影响）。
