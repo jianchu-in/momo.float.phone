@@ -712,10 +712,17 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
     }
     setChecking(true);
     setResult(null);
-    const validation = await validateQaGithubConfig(buildConfig());
+    const next = buildConfig();
+    const validation = await validateQaGithubConfig(next);
+    // 验证通过即自动保存：此前「验证」与「保存」是两个独立按钮，大量用户看到绿色 ✓ 后
+    // 直接关闭面板，导致新填的 PAT/分支静默丢失（token 框是密码框，重开也看不出没存上）。
+    if (validation.ok) {
+      saveQaGithubConfig(next);
+      onSaved();
+    }
     setResult(validation);
     setChecking(false);
-  }, [owner, repo, buildConfig]);
+  }, [owner, repo, buildConfig, onSaved]);
 
   const handleSave = useCallback(() => {
     if (!owner.trim() || !repo.trim()) return;
@@ -783,7 +790,7 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
           {result && (
             <div className={`qa-verify ${result.ok ? "is-ok" : "is-fail"}`}>
               {result.ok
-                ? `✓ 已连接 ${result.fullName}（${result.private ? "私有" : "公开"}，默认分支 ${result.defaultBranch}）`
+                ? `✓ 已连接 ${result.fullName}（${result.private ? "私有" : "公开"}，默认分支 ${result.defaultBranch}），配置已自动保存`
                 : `✗ ${result.error}`}
             </div>
           )}

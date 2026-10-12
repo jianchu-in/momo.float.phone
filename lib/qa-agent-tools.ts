@@ -391,9 +391,15 @@ const githubSearchTool: QaTool = {
         if (!config) return "尚未连接 GitHub 仓库。";
         const query = typeof args.query === "string" ? args.query.trim() : "";
         if (!query) return "缺少 query 参数。";
-        const { hits, mode } = await searchQaGithubCode(config, query, options?.signal);
-        if (hits.length === 0) return `没搜到「${query}」（${mode === "path-fallback" ? "按路径匹配，未配 PAT 无法搜文件内容" : "代码搜索"}）。`;
-        const modeNote = mode === "path-fallback" ? "（按文件路径匹配，如需搜文件内容请配置 PAT）" : "（GitHub 代码搜索）";
+        const { hits, mode, degradeReason } = await searchQaGithubCode(config, query, options?.signal);
+        if (hits.length === 0) {
+            return `没搜到「${query}」（${mode === "code-search" ? "代码搜索" : degradeReason ? `路径匹配；${degradeReason}` : "路径匹配，未配 PAT 无法搜文件内容"}）。`;
+        }
+        const modeNote = mode === "code-search"
+            ? "（GitHub 代码搜索）"
+            : degradeReason
+              ? `（按文件路径匹配；${degradeReason}）`
+              : "（按文件路径匹配，如需搜文件内容请配置 PAT）";
         return clip(`搜到 ${hits.length} 个结果${modeNote}：\n${hits.map((h) => h.path).join("\n")}`);
     },
 };

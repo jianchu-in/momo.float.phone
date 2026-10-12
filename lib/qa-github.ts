@@ -328,10 +328,19 @@ export async function getQaGithubIssue(config: QaGithubConfig, number: number, s
 
 export type QaGithubSearchHit = { path: string; snippet?: string };
 
-/** 代码搜索。优先 GitHub 搜索 API；失败或无 PAT 时退化为文件树路径匹配。 */
-export async function searchQaGithubCode(config: QaGithubConfig, query: string, signal?: AbortSignal): Promise<{ hits: QaGithubSearchHit[]; mode: "code-search" | "path-fallback" }> {
+/**
+ * 代码搜索。优先 GitHub 搜索 API；失败或无 PAT 时退化为文件树路径匹配。
+ * degradeReason 记录「为什么退化了」：配了 PAT 却搜索失败（权限不足/401/网络）时，
+ * 上层提示要带上真实原因，不能一律谎报「未配 PAT」。
+ */
+export async function searchQaGithubCode(
+    config: QaGithubConfig,
+    query: string,
+    signal?: AbortSignal,
+): Promise<{ hits: QaGithubSearchHit[]; mode: "code-search" | "path-fallback"; degradeReason?: string }> {
     // GitHub 代码搜索 API 需要认证
     if (config.token) {
+        let degradeReason = "";
         try {
             const q = encodeURIComponent(`${query} repo:${config.owner}/${config.repo}`);
             const response = await ghFetch(config, `/search/code?q=${q}&per_page=20`, signal);
@@ -339,9 +348,22 @@ export async function searchQaGithubCode(config: QaGithubConfig, query: string, 
                 const data = (await response.json()) as { items?: Array<{ path: string }> };
                 return { hits: (data.items || []).map((i) => ({ path: i.path })), mode: "code-search" };
             }
-        } catch {
-            // 落到路径匹配
+            degradeReason =
+                response.status === 401
+                    ? "PAT 无效或已过期（搜索代码接口返回 401）"
+                    : response.status === 403
+                      ? "PAT 权限不足或触发速率限制（搜索代码接口返回 403）"
+                      : `代码搜索接口返回 HTTP ${response.status}`;
+        } catch (error) {
+            degradeReason = `代码搜索请求失败：${error instanceof Error ? error.message.slice(0, 100) : String(error)}`;
         }
+        const { entries } = await getQaGithubTree(config, signal);
+        const lower = query.toLowerCase();
+        const hits = entries
+            .filter((e) => e.type === "blob" && e.path.toLowerCase().includes(lower))
+            .slice(0, 30)
+            .map((e) => ({ path: e.path }));
+        return { hits, mode: "path-fallback", degradeReason };
     }
     const { entries } = await getQaGithubTree(config, signal);
     const lower = query.toLowerCase();
