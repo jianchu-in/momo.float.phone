@@ -119,3 +119,48 @@ export async function testAgentComputer(config: AgentComputerConfig): Promise<Ag
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
 }
+
+/**
+ * 工坊附件上传：任意类型文件（图片/压缩包等）→ base64 → 写入电脑 /uploads/。
+ * write 的 content 是文本通道，二进制必须以 base64 落盘；有 shell 时尝试解码还原
+ * 原始文件并清理 .b64 临时件（容器/内嵌 shell 均带 base64，GNU 的 -d 失败再试 BSD 的 -D）。
+ * fs-only（无 shell）时保留 .b64——小坊读出 base64 文本仍可自行解码使用。
+ * write 对网络抖动重试一次（Workers 偶发 Failed to fetch）。
+ */
+export async function uploadWorkshopFile(file: File): Promise<{ path: string; decoded: boolean }> {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(reader.error ?? new Error("读取文件失败"));
+        reader.readAsDataURL(file);
+    });
+    const commaIndex = dataUrl.indexOf(",");
+    const base64 = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : "";
+    if (!base64) throw new Error("文件内容为空");
+    const safeName = (file.name.replace(/[\/\\\s\u0000-\u001f]+/g, "_").slice(0, 80)) || "file";
+    const finalPath = `/uploads/${Date.now().toString(36)}-${safeName}`;
+    const b64Path = `${finalPath}.b64`;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            await agentComputerRequest("write", WORKSHOP_WORKSPACE, { path: b64Path, content: base64 });
+            lastError = null;
+            break;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    if (lastError) throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    for (const flag of ["-d", "-D"]) {
+        try {
+            const result = await agentComputerRequest<{ exitCode?: number }>("exec", WORKSHOP_WORKSPACE, {
+                command: `base64 ${flag} '${b64Path}' > '${finalPath}'`,
+            });
+            if (result.exitCode === 0) {
+                void agentComputerRequest("delete", WORKSHOP_WORKSPACE, { path: b64Path }).catch(() => { /* 清理失败无碍 */ });
+                return { path: finalPath, decoded: true };
+            }
+        } catch { /* shell 不可用或该写法失败：试下一个 */ }
+    }
+    return { path: b64Path, decoded: false };
+}

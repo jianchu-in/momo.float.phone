@@ -78,6 +78,7 @@ import {
   type QaGithubConfig,
   type QaGithubValidation,
 } from "@/lib/qa-github";
+import { uploadWorkshopFile, isWorkshopComputerEnabled } from "@/lib/agent-computer";
 import "@/lib/qa-error-log";
 
 type PhoneQaAppProps = {
@@ -837,8 +838,14 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const [editFiles, setEditFiles] = useState<QaTextAttachment[]>([]);
   const [editAttachMenuOpen, setEditAttachMenuOpen] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
+  /** 已上传到小坊电脑 /uploads/ 的文件（发送时以路径形式写进消息文本） */
+  const [workshopUploads, setWorkshopUploads] = useState<{ name: string; path: string }[]>([]);
+  const [workshopUploading, setWorkshopUploading] = useState(false);
+  /** 小坊电脑是否已连接（决定「上传文件」入口是否显示） */
+  const [workshopReady, setWorkshopReady] = useState(false);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const workshopFileInputRef = useRef<HTMLInputElement | null>(null);
   const editImageInputRef = useRef<HTMLInputElement | null>(null);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
   const [apiReady, setApiReady] = useState(true);
@@ -857,6 +864,7 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
     setRepoConnected(gh != null);
     setRepoWritable(Boolean(gh?.token));
     setWriteMode(gh?.writeMode ?? "confirm");
+    setWorkshopReady(isWorkshopComputerEnabled());
   }, []);
 
   useEffect(() => {
@@ -928,18 +936,24 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   }, []);
 
   const handleSend = useCallback(() => {
-    const text = input.trim();
-    if ((!text && pendingImages.length === 0 && pendingFiles.length === 0) || snapshot.isGenerating || snapshot.isCompacting) return;
+    let text = input.trim();
+    if ((!text && pendingImages.length === 0 && pendingFiles.length === 0 && workshopUploads.length === 0) || snapshot.isGenerating || snapshot.isCompacting || workshopUploading) return;
+    // 电脑上传的文件以路径形式并入消息文本：小坊用「电脑文件」工具按路径取用
+    if (workshopUploads.length > 0) {
+      const list = workshopUploads.map((f) => `- ${f.name} → ${f.path}`).join("\n");
+      text = `${text ? text + "\n\n" : ""}[已上传到小坊电脑：]\n${list}\n（用「电脑文件」工具按路径读取；二进制文件用 op=read 读 base64 内容自行解码）`;
+    }
     setInput("");
     const images = pendingImages;
     const files = pendingFiles;
     setPendingImages([]);
     setPendingFiles([]);
+    setWorkshopUploads([]);
     setAttachMenuOpen(false);
     stickToBottomRef.current = true;
     requestAnimationFrame(autoGrow);
     void sendQaMessage(text, images.length ? images : undefined, files.length ? files : undefined);
-  }, [input, pendingImages, pendingFiles, snapshot.isGenerating, snapshot.isCompacting, autoGrow]);
+  }, [input, pendingImages, pendingFiles, workshopUploads, workshopUploading, snapshot.isGenerating, snapshot.isCompacting, autoGrow]);
 
   // 附加图片：仅识图已开启的 API 显示入口；读为 dataURL，单张限 4MB
   const handlePickImages = useCallback((files: FileList | null, target: "composer" | "edit") => {
@@ -990,6 +1004,33 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
       };
       reader.readAsText(file);
     }
+  }, [onNotice]);
+
+  // 任意类型文件 → 小坊电脑 /uploads/（图片、压缩包、字体等均可）
+  // 上传是异步的：进行中锁定发送按钮，避免消息发出去了文件还没落盘
+  const handlePickWorkshopFiles = useCallback((files: FileList | null) => {
+    if (!files?.length) return;
+    if (!isWorkshopComputerEnabled()) {
+      onNotice?.("尚未连接小坊电脑：设置 → 角色电脑 里先完成连接。");
+      return;
+    }
+    const list = Array.from(files).slice(0, 4);
+    setWorkshopUploading(true);
+    Promise.allSettled(list.map((file) => uploadWorkshopFile(file).then((res) => {
+      if (file.size > 10 * 1024 * 1024) onNotice?.(`「${file.name}」超过 10MB，较大文件上传可能较慢。`);
+      return { name: file.name, path: res.decoded ? res.path : `${res.path}（base64）` };
+    }))).then((results) => {
+      const okItems: { name: string; path: string }[] = [];
+      let failCount = 0;
+      for (const r of results) {
+        if (r.status === "fulfilled") okItems.push(r.value);
+        else failCount += 1;
+      }
+      setWorkshopUploads((current) => [...current, ...okItems].slice(-4));
+      setWorkshopUploading(false);
+      if (okItems.length) onNotice?.(`已上传 ${okItems.length} 个文件到小坊电脑 /uploads/`);
+      if (failCount) onNotice?.(`${failCount} 个文件上传失败（网络中断或电脑未连接），可重试。`);
+    });
   }, [onNotice]);
 
   const handleRetry = useCallback((assistantMsgId: string) => {
@@ -1189,6 +1230,29 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
               ))}
             </div>
           )}
+          {(workshopUploads.length > 0 || workshopUploading) && (
+            <div className="qa-file-strip">
+              {workshopUploading && (
+                <span className="qa-file-chip" title="正在上传到小坊电脑">
+                  <Loader2 size={13} className="qa-spin" />
+                  <span>上传中…</span>
+                </span>
+              )}
+              {workshopUploads.map((file) => (
+                <span className="qa-file-chip is-removable" key={file.path} title={`已上传到小坊电脑：${file.path}`}>
+                  <Wrench size={13} />
+                  <span>{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setWorkshopUploads((current) => current.filter((candidate) => candidate.path !== file.path))}
+                    aria-label={`移除 ${file.name}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             className="qa-composer-input hide-scrollbar"
@@ -1225,6 +1289,19 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
                 }}
               />
             )}
+            {workshopReady && (
+              <input
+                ref={workshopFileInputRef}
+                type="file"
+                accept="*/*"
+                multiple
+                hidden
+                onChange={(event) => {
+                  handlePickWorkshopFiles(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+            )}
             <div className="qa-attach-menu-wrap">
               <button
                 type="button"
@@ -1245,6 +1322,12 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
                     <button type="button" onClick={() => { imageInputRef.current?.click(); setAttachMenuOpen(false); }}>
                       <ImageIcon size={15} />
                       添加图片
+                    </button>
+                  )}
+                  {workshopReady && (
+                    <button type="button" onClick={() => { workshopFileInputRef.current?.click(); setAttachMenuOpen(false); }}>
+                      <Wrench size={15} />
+                      上传文件到电脑
                     </button>
                   )}
                 </div>
@@ -1289,10 +1372,10 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
                 type="button"
                 className="qa-circle-btn qa-send-btn"
                 onClick={handleSend}
-                disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || snapshot.isCompacting}
-                aria-label={snapshot.isCompacting ? "正在整理上下文" : "发送"}
+                disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0 && workshopUploads.length === 0) || snapshot.isCompacting || workshopUploading}
+                aria-label={workshopUploading ? "正在上传文件" : snapshot.isCompacting ? "正在整理上下文" : "发送"}
               >
-                <ArrowUp size={20} strokeWidth={2.4} />
+                {workshopUploading ? <Loader2 size={16} className="qa-spin" /> : <ArrowUp size={20} strokeWidth={2.4} />}
               </button>
             )}
           </div>
