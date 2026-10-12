@@ -122,9 +122,10 @@ export async function testAgentComputer(config: AgentComputerConfig): Promise<Ag
 
 /**
  * 工坊附件上传：任意类型文件（图片/压缩包等）→ base64 → 写入电脑 /uploads/。
- * write 的 content 是文本通道，二进制必须以 base64 落盘；有 shell 时尝试解码还原
- * 原始文件并清理 .b64 临时件（容器/内嵌 shell 均带 base64，GNU 的 -d 失败再试 BSD 的 -D）。
- * fs-only（无 shell）时保留 .b64——小坊读出 base64 文本仍可自行解码使用。
+ * write 的 content 是文本通道，二进制必须以 base64 落盘；仅容器模式（真 Linux）用 shell
+ * 解码还原原始文件并清理 .b64 临时件（GNU 的 -d 失败再试 BSD 的 -D）。
+ * shell（浏览器内嵌）与 fs-only 模式保留 .b64——内嵌 shell 的重定向会损坏二进制，解码无意义；
+ * 小坊用「电脑解包」工具或 op=read 读出 base64 后在浏览器端处理。
  * write 对网络抖动重试一次（Workers 偶发 Failed to fetch）。
  */
 export async function uploadWorkshopFile(file: File): Promise<{ path: string; decoded: boolean }> {
@@ -151,6 +152,9 @@ export async function uploadWorkshopFile(file: File): Promise<{ path: string; de
         }
     }
     if (lastError) throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    // 只在容器模式（真 Linux）下用 shell 解码还原。浏览器内嵌 shell 的管道/重定向走
+    // UTF-8 文本通道，base64 -d 输出的二进制字节会被改写（实测 0xFF → 0xC3 0xBF），文件必坏。
+    if (!isContainerComputer()) return { path: b64Path, decoded: false };
     for (const flag of ["-d", "-D"]) {
         try {
             const result = await agentComputerRequest<{ exitCode?: number }>("exec", WORKSHOP_WORKSPACE, {

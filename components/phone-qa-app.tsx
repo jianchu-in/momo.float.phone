@@ -941,7 +941,7 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
     // 电脑上传的文件以路径形式并入消息文本：小坊用「电脑文件」工具按路径取用
     if (workshopUploads.length > 0) {
       const list = workshopUploads.map((f) => `- ${f.name} → ${f.path}`).join("\n");
-      text = `${text ? text + "\n\n" : ""}[已上传到小坊电脑：]\n${list}\n（用「电脑文件」工具按路径读取；二进制文件用 op=read 读 base64 内容自行解码）`;
+      text = `${text ? text + "\n\n" : ""}[已上传到小坊电脑：]\n${list}\n（用「电脑文件」工具按路径读取；压缩包用「电脑解包」工具解开；.b64 是二进制的 base64 形式，用 op=read 读取后在本地解码）`;
     }
     setInput("");
     const images = pendingImages;

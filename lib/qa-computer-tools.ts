@@ -3,7 +3,7 @@
 // 未配置时这些工具对模型完全不可见。
 // 小坊固定使用 workshop 工作区，与各角色的电脑相互隔离。
 //
-// 暴露给模型的只有两个工具（电脑文件 + 电脑执行命令），控制提示词体积；
+// 暴露给模型的有三个工具（电脑文件 + 电脑执行命令 + 电脑解包），控制提示词体积；
 // 早期的四个单操作工具保留为隐藏别名（可执行、不进提示词），旧调用不报错。
 
 import {
@@ -11,6 +11,7 @@ import {
     agentComputerRequest,
     isContainerComputer,
 } from "./agent-computer";
+import { extractArchive, base64ToBytes, isTextLikeName } from "./qa-computer-archive";
 
 // 与 qa-agent-tools 的 QaTool 结构保持一致（避免循环依赖，重复声明最小形状）
 type QaComputerTool = {
@@ -143,9 +144,12 @@ const computerExecTool: QaComputerTool = {
             return "在工作机上执行 shell 命令。工作机是真 Linux 容器：bash 完整、可 npm/pip 装软件、网络全功能（curl 不限方法）、"
                 + "硬盘挂载在 /workspace（持久保存）。适合跑脚本、装工具、生成文档等真实任务。";
         }
-        return "在工作机上执行 shell 命令。内嵌 POSIX 工具集：ls/cat/grep/sed/awk/find/sort/wc/xargs、jq/sqlite3/yq、tar/gzip、curl（只读 GET/HEAD）等，"
-            + "支持管道/重定向/循环/函数。不是完整 Linux：没有 ps/top 等系统命令，装不了软件包（npm/pip 不可用），跑不了任意二进制。"
-            + "注意：基础模式的电脑没有 shell（会返回明确提示），此时改用「电脑文件」完成任务。";
+        return "在工作机上执行 shell 命令。内嵌 POSIX 工具集：ls/cat/grep/sed/awk/find/sort/wc/xargs/head/tail/cut/tr、jq、base64/od、diff/md5sum/sha256sum、gzip/gunzip（仅原位压缩/解压）、curl（只读 GET/HEAD）等，"
+            + "支持管道/重定向/循环/函数。重要限制：①没有 tar/unzip/7z/sqlite3/yq，没有 python/node/perl，也装不了任何软件包；"
+            + "②管道与重定向按 UTF-8 文本处理，二进制数据（base64 -d 的输出、gzip -c 的输出等）经重定向会被改写损坏——不要用重定向生成或还原二进制文件；"
+            + "③单次执行总输出超过约 200KB 会被强制中止（生成大文件请改用「电脑文件」write 分段写）；"
+            + "④解压压缩包请改用「电脑解包」工具。"
+            + "基础模式的电脑没有 shell（会返回明确提示），此时改用「电脑文件」完成任务。";
     },
     schemaLines: [
         "  参数：",
@@ -180,7 +184,91 @@ const computerExecTool: QaComputerTool = {
     },
 };
 
-export const QA_COMPUTER_TOOLS = [computerFilesTool, computerExecTool];
+// ── 电脑解包 ──
+// 为什么需要它：shell 模式的工作机没有 tar/unzip，且重定向走 UTF-8 文本通道会把
+// 二进制写坏（详见 qa-computer-archive.ts 头部注释）。解包因此在浏览器端完成：
+// 把电脑上的压缩包（原始或 .b64）整体读回 → 逐条解出 → 文本成员写回电脑 → 二进制列清单。
+
+const READ_CHUNK = 3_000_000; // 单次 read 的字符数上限（约覆盖 2.2MB 原始二进制）
+
+async function readWholeFile(path: string): Promise<string> {
+    const part = await agentComputerRequest<{ content: string; truncated: boolean }>(
+        "read", WORKSHOP_WORKSPACE, { path, maxChars: READ_CHUNK });
+    if (part.truncated) {
+        throw new Error(`${path} 超过单次读取上限（约 2.2MB 原始文件），无法整体取回解包；请让用户上传更小的包`);
+    }
+    return part.content;
+}
+
+const computerUnpackTool: QaComputerTool = {
+    name: "电脑解包",
+    nativeName: "computer_unpack",
+    description:
+        "解压电脑上的压缩包（zip / tar / tar.gz / tgz，原始文件或 .b64 形式均可）。工作机的内嵌 shell 没有解压工具且会损坏二进制，"
+        + "解包由浏览器完成：文本类成员（代码/文档/配置等）自动写回电脑 destDir 下，二进制成员（图片/字体/数据文件等）只列出名称与大小。"
+        + "只想看看压缩包里有什么也用它（不要试图用「电脑执行命令」解压——必失败或产出损坏文件）。",
+    schemaLines: [
+        "  参数：",
+        "    · path (必填) — 压缩包在电脑上的路径",
+        "    · destDir (可选) — 解出的文件写到哪个目录（缺省 /unpacked/<压缩包名>）",
+        '  调用：[执行动作:电脑解包({"path":"/uploads/pkg.zip"})]',
+    ],
+    parameters: {
+        type: "object",
+        properties: {
+            path: { type: "string", description: "压缩包路径（zip/tar/tar.gz/tgz 或其 .b64）" },
+            destDir: { type: "string", description: "解出目录（缺省 /unpacked/<包名>）" },
+        },
+        required: ["path"],
+    },
+    async run(args) {
+        const path = text(args.path, 400);
+        if (!path) return "缺少 path。";
+        if (!/\.(zip|tar|gz|tgz|gzip)(\.b64)?$/i.test(path)) {
+            return `${path} 不是 zip / tar / tar.gz / tgz，无法解包。`;
+        }
+        // 原始二进制按 latin1 逐码位还原字节（read 通道是文本，但每字符码位=字节值）；
+        // .b64 则先拼完再解码。
+        const raw = await readWholeFile(path);
+        const bytes = path.toLowerCase().endsWith(".b64")
+            ? base64ToBytes(raw)
+            : Uint8Array.from(raw, ch => ch.charCodeAt(0) & 0xff);
+        const { entries, unsupported } = await extractArchive(bytes, path);
+        if (!entries.length) {
+            return `解包完成：里面没有可解出的文件${unsupported.length ? `；${unsupported.length} 项不支持：${unsupported.join("、")}` : ""}。`;
+        }
+        const baseName = (path.replace(/\.b64$/i, "").split("/").pop() || "archive")
+            .replace(/\.(zip|tar|tgz|t?gz|gzip)$/i, "") || "archive";
+        const destRoot = text(args.destDir, 400).replace(/\/+$/, "") || `/unpacked/${baseName}`;
+        const textEntries = entries.filter(e => isTextLikeName(e.name));
+        const binEntries = entries.filter(e => !isTextLikeName(e.name));
+        const decoder = new TextDecoder("utf-8", { fatal: false });
+        const lines: string[] = [`解包 ${path}（共 ${entries.length} 个文件）：`];
+        let written = 0;
+        for (const entry of textEntries) {
+            const content = decoder.decode(entry.data);
+            if (content.includes("\uFFFD\uFFFD")) continue; // 连续替换符：内容实为二进制，不写回
+            const dest = `${destRoot}/${entry.name.replace(/^\/+/, "")}`;
+            try {
+                await agentComputerRequest("write", WORKSHOP_WORKSPACE, { path: dest, content });
+                written += 1;
+                lines.push(`  📄 ${dest}（${content.length} 字符）`);
+            } catch (err) {
+                lines.push(`  ✗ ${dest} 写入失败：${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+        if (binEntries.length) {
+            lines.push(`另外 ${binEntries.length} 个二进制成员未写回（文本通道会损坏它们）：`);
+            for (const entry of binEntries.slice(0, 40)) lines.push(`  🖼 ${entry.name}（${entry.data.length} 字节）`);
+            if (binEntries.length > 40) lines.push(`  …等共 ${binEntries.length} 个`);
+        }
+        if (unsupported.length) lines.push(`不支持的项目：${unsupported.join("、")}`);
+        lines.push(`文本成员已写回 ${written}/${textEntries.length} 个到 ${destRoot}/。二进制成员需要取用时：图片可用「电脑文件」send 递给用户（zip 内的暂不可直接 send），或读原包 .b64 后在对话里解码分析。`);
+        return lines.join("\n");
+    },
+};
+
+export const QA_COMPUTER_TOOLS = [computerFilesTool, computerExecTool, computerUnpackTool];
 
 // ── 隐藏别名（可执行、不进提示词）：兼容早期的四个单操作工具名 ──
 
