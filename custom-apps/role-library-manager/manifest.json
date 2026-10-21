@@ -1,0 +1,15 @@
+{
+  "sdkVersion": "1.0",
+  "id": "role.library.manager",
+  "name": "角色库管理",
+  "version": "0.1.0",
+  "author": "个人应用",
+  "description": "私人角色卡收藏与线下剧情操作台：原样保存角色卡、开场管理、剧情存档分线、世界书与正则专属绑定。",
+  "icon": "icon.png",
+  "entry": "index.html",
+  "permissions": [
+    "app.data.read", "app.data.write", "characters.read", "characters.write",
+    "world.read", "world.write", "regex.read", "regex.write",
+    "story.read", "story.write", "ui.toast"
+  ]
+}
