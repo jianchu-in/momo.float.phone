@@ -9,8 +9,16 @@ import {
   writeCustomAppCollection,
 } from "./custom-app-storage";
 import { buildCustomAppChatTags } from "./custom-app-tags";
+import { loadChatScope, sessionMatchesChatScope } from "./chat-scope-storage";
 import { hydrateKvDb } from "./kv-db";
 import { createCharacter, loadCharacters, saveCharacters } from "./character-storage";
+import {
+  createCharacterWorldGroup,
+  getCharacterWorldGroupId,
+  loadCharacterWorldGroups,
+  moveCharacterToWorld,
+  updateCharacterWorldDescription,
+} from "./character-world-storage";
 import {
   addChatContact,
   createOrGetSession,
@@ -65,11 +73,6 @@ import {
   saveRegexes,
   saveWorldBooks,
 } from "./settings-storage";
-import {
-  getCharacterWorldGroupId,
-  loadCharacterWorldGroups,
-  moveCharacterToWorld,
-} from "./character-world-storage";
 import type { ApiConfig, BindingSlot, RegexConfig, RegexRule, VoiceApiConfig, WorldBookConfig, WorldBookEntry } from "./settings-types";
 import { createSTTSession } from "./stt-service";
 import { generateImageFromConfiguredApi } from "./image-generation-service";
@@ -1319,6 +1322,19 @@ export function readCustomAppCharacterWorlds(record: Record<string, unknown>): R
   };
 }
 
+export function createCustomAppCharacterWorld(record: Record<string, unknown>): Record<string, unknown> {
+  const characterId = cleanText(record.characterId, 160);
+  if (characterId && !loadCharacters().some(character => character.id === characterId)) {
+    throw new Error("characters.createWorld 需要有效的 characterId。");
+  }
+  const group = createCharacterWorldGroup(cleanText(record.name, 120) || "新的世界");
+  const description = cleanText(record.description, 20_000);
+  if (description) updateCharacterWorldDescription(group.id, description);
+  if (characterId) moveCharacterToWorld(characterId, group.id);
+  const world = loadCharacterWorldGroups().find(item => item.id === group.id) || group;
+  return { ok: true, world, currentWorldId: characterId ? world.id : null };
+}
+
 export function writeCustomAppCharacterWorld(record: Record<string, unknown>): Record<string, unknown> {
   const characterId = cleanText(record.characterId, 160);
   const worldId = cleanText(record.worldId, 160);
@@ -1436,6 +1452,58 @@ export function writeCustomAppStoryBinding(record: Record<string, unknown>): Rec
     : [...config.characterBindings, nextBinding];
   saveBindingConfig({ ...config, characterBindings });
   return { ok: true, characterId, binding: story };
+}
+
+/**
+ * 角色级默认绑定：对聊天、剧情及其他内容 APP 生效，不属于某一条剧情分线。
+ * story.bindings.* 保留为旧接口；角色库等管理工具应使用 characters.bindings.*。
+ */
+export function readCustomAppCharacterBinding(record: Record<string, unknown>): Record<string, unknown> {
+  const characterId = cleanText(record.characterId, 160);
+  if (!loadCharacters().some(character => character.id === characterId)) {
+    throw new Error("characters.getBindings 需要有效的 characterId。");
+  }
+  const config = loadBindingConfig();
+  const characterBinding = config.characterBindings.find(item => item.characterId === characterId);
+  return {
+    characterId,
+    binding: characterBinding?.defaults ?? {},
+    resolved: resolveBinding(config, characterId),
+  };
+}
+
+export function writeCustomAppCharacterBinding(record: Record<string, unknown>): Record<string, unknown> {
+  const characterId = cleanText(record.characterId, 160);
+  if (!loadCharacters().some(character => character.id === characterId)) {
+    throw new Error("characters.updateBindings 需要有效的 characterId。");
+  }
+  const config = loadBindingConfig();
+  const books = new Set(loadWorldBooks().map(item => item.id));
+  const regexes = new Set(loadRegexes().map(item => item.id));
+  const identities = new Set(loadUserIdentities().map(item => item.id));
+  const current = config.characterBindings.find(item => item.characterId === characterId) || {
+    characterId,
+    defaults: {},
+    appOverrides: {},
+  };
+  const defaults = { ...current.defaults } as BindingSlot;
+  if (Object.prototype.hasOwnProperty.call(record, "worldBookIds")) {
+    defaults.worldBookIds = cleanStringList(record.worldBookIds, 100, 160).filter(id => books.has(id));
+  }
+  if (Object.prototype.hasOwnProperty.call(record, "regexIds")) {
+    defaults.regexIds = cleanStringList(record.regexIds, 100, 160).filter(id => regexes.has(id));
+  }
+  if (Object.prototype.hasOwnProperty.call(record, "userIdentityId")) {
+    const userIdentityId = cleanText(record.userIdentityId, 160);
+    if (userIdentityId && identities.has(userIdentityId)) defaults.userIdentityId = userIdentityId;
+    else delete defaults.userIdentityId;
+  }
+  const nextBinding = { ...current, defaults };
+  const characterBindings = config.characterBindings.some(item => item.characterId === characterId)
+    ? config.characterBindings.map(item => item.characterId === characterId ? nextBinding : item)
+    : [...config.characterBindings, nextBinding];
+  saveBindingConfig({ ...config, characterBindings });
+  return { ok: true, characterId, binding: defaults, resolved: resolveBinding({ ...config, characterBindings }, characterId) };
 }
 
 export function readCustomAppWorld(record: Record<string, unknown>): Record<string, unknown> {
@@ -2043,8 +2111,17 @@ function findReadableSession(record: Record<string, unknown>): ChatSession | nul
   const sessionId = cleanText(record.sessionId, 160);
   const characterId = cleanText(record.characterId, 160);
   const sessions = loadChatSessions();
-  if (sessionId) return sessions.find(session => session.id === sessionId) ?? null;
-  if (characterId) return sessions.find(session => session.contactId === characterId && !session.isGroup) ?? null;
+  const scope = loadChatScope();
+  if (sessionId) {
+    return sessions.find(session => session.id === sessionId && sessionMatchesChatScope(session, scope)) ?? null;
+  }
+  if (characterId) {
+    return sessions.find(session => (
+      session.contactId === characterId
+      && !session.isGroup
+      && sessionMatchesChatScope(session, scope)
+    )) ?? null;
+  }
   return null;
 }
 

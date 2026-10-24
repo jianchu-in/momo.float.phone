@@ -386,6 +386,10 @@ export type StoryCharacterSettings = {
   extraPrompt?: string;
   customPromptEntries?: StoryPromptEntry[];
   enabledPresetPromptIds?: string[];
+  /** 是否在基础绑定预设后追加其他预设的提示条目。 */
+  presetStitchingEnabled?: boolean;
+  /** 附加预设 ID，数组顺序就是缝合顺序；基础绑定预设不写入这里。 */
+  stitchedPresetIds?: string[];
   minChars?: number;
   maxChars?: number;
   userPerspective?: "second" | "third" | "username";
@@ -395,8 +399,12 @@ export type StoryCharacterSettings = {
   activeProseStyleSchemeId?: string;
   /** 当前角色启用的状态栏方案（存于公用方案仓库），仅保存选择。 */
   activeStatusSchemeId?: string;
+  /** 是否把状态栏方案的生成要求加入剧情提示词；缺省为开启。 */
+  statusGenerationEnabled?: boolean;
   /** 当前角色启用的小剧场方案（存于公用方案仓库），仅保存选择。 */
   activeTheaterSchemeId?: string;
+  /** 是否把小剧场方案的生成要求加入剧情提示词；缺省为开启。 */
+  theaterGenerationEnabled?: boolean;
   /** @deprecated 旧版按角色保存的文风方案列表；已迁移进公用方案仓库。 */
   proseStyleSchemes?: StoryProseStyleScheme[];
   /** @deprecated 旧版按角色保存的状态栏方案列表；已迁移进公用方案仓库。 */

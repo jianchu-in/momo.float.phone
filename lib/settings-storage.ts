@@ -2,6 +2,7 @@ import type {
     GenerationParameterKey,
     PresetConfig,
     WorldBookConfig,
+    WorldBookFolder,
     WorldBookEntry,
     RegexConfig,
     RegexRule,
@@ -418,6 +419,26 @@ export function loadWorldBooks(): WorldBookConfig[] {
 export function saveWorldBooks(books: WorldBookConfig[]): void {
     if (typeof window === "undefined") return;
     writeWorldBooksCache(books);
+}
+
+const WORLD_BOOK_FOLDERS_KEY = "settings_worldbook_folders_v1";
+
+export function loadWorldBookFolders(): WorldBookFolder[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const parsed = JSON.parse(kvGet(WORLD_BOOK_FOLDERS_KEY) || "[]") as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter((item): item is WorldBookFolder => Boolean(item && typeof item === "object" && typeof (item as WorldBookFolder).id === "string" && typeof (item as WorldBookFolder).name === "string"))
+            .sort((left, right) => left.order - right.order || left.createdAt - right.createdAt);
+    } catch {
+        return [];
+    }
+}
+
+export function saveWorldBookFolders(folders: WorldBookFolder[]): void {
+    if (typeof window === "undefined") return;
+    kvSet(WORLD_BOOK_FOLDERS_KEY, JSON.stringify(folders));
 }
 
 export function createWorldBook(name: string): WorldBookConfig {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeftIcon, PhotoIcon, PlusIcon, TrashIcon, XMarkIcon } from "@heroicons/react/24/solid";
-import { Maximize2, Play, Download, Upload, Save, FolderOpen } from "lucide-react";
+import { ChevronDown, ChevronUp, Maximize2, Play, Download, Upload, Save, FolderOpen } from "lucide-react";
 import { TextExpandModal } from "@/components/ui/modal";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { StoryPaginationManager, type StoryBranchCreateInput } from "@/components/story/story-pagination-manager";
@@ -35,6 +35,7 @@ type StorySettingsPageProps = {
   /** 公用方案仓库：文风/状态栏/小剧场/快捷输入方案的定义（所有角色共享）。 */
   schemeRepo: StorySchemeRepository;
   boundPreset: PresetConfig | null;
+  availablePresets: PresetConfig[];
   foldTags: string;
   contextExcludedTags: string;
   customCSS: string;
@@ -77,9 +78,11 @@ function normalizeSettings(value: StoryCharacterSettings, repo: StorySchemeRepos
     activeStatusSchemeId: repo.statusSchemes.some((item) => item.id === value.activeStatusSchemeId)
       ? value.activeStatusSchemeId
       : repo.statusSchemes[0].id,
+    statusGenerationEnabled: value.statusGenerationEnabled !== false,
     activeTheaterSchemeId: repo.theaterSchemes.some((item) => item.id === value.activeTheaterSchemeId)
       ? value.activeTheaterSchemeId
       : repo.theaterSchemes[0].id,
+    theaterGenerationEnabled: value.theaterGenerationEnabled !== false,
   };
 }
 
@@ -204,6 +207,85 @@ function ToggleRow({ title, detail, checked, disabled, onChange }: { title: stri
       <span><strong>{title}</strong>{detail ? <small>{detail}</small> : null}</span>
       <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
     </label>
+  );
+}
+
+function PresetStitchingEditor({
+  basePreset,
+  presets,
+  enabled,
+  selectedIds,
+  onChange,
+}: {
+  basePreset: PresetConfig | null;
+  presets: PresetConfig[];
+  enabled: boolean;
+  selectedIds: string[];
+  onChange: (enabled: boolean, selectedIds: string[]) => void;
+}) {
+  const choices = presets.filter((preset) => preset.id !== basePreset?.id);
+  const selected = selectedIds
+    .map((id) => choices.find((preset) => preset.id === id))
+    .filter((preset): preset is PresetConfig => Boolean(preset));
+  const toggle = (id: string) => {
+    onChange(enabled, selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id]);
+  };
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= selectedIds.length) return;
+    const next = [...selectedIds];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(enabled, next);
+  };
+  const enabledPromptCount = (preset: PresetConfig) => preset.prompts.filter((prompt) => {
+    const order = preset.prompt_order?.find((item) => item.identifier === prompt.identifier);
+    return !prompt.marker && (order?.enabled ?? prompt.enabled);
+  }).length;
+
+  return (
+    <div className="story-preset-stitching">
+      <ToggleRow title="启用预设缝合" detail="基础预设保留生成参数，附加预设只按顺序追加启用的提示条目" checked={enabled} onChange={(value) => onChange(value, selectedIds)} />
+      <div className="story-preset-base"><span>基础预设</span><strong>{basePreset?.name || "默认预设"}</strong></div>
+      {enabled ? (
+        <>
+          <div className="story-settings-label-row"><label>选择附加预设</label><span>可多选</span></div>
+          <div className="story-preset-choice-list">
+            {choices.length ? choices.map((preset) => (
+              <label key={preset.id}>
+                <input type="checkbox" checked={selectedIds.includes(preset.id)} onChange={() => toggle(preset.id)} />
+                <span><strong>{preset.name}</strong><small>{enabledPromptCount(preset)} 个启用条目</small></span>
+              </label>
+            )) : <p className="story-settings-empty">没有其他可附加的预设。</p>}
+          </div>
+          {selected.length ? (
+            <div className="story-preset-order-list">
+              <div className="story-settings-label-row"><label>缝合顺序</label><span>从上到下追加</span></div>
+              {selected.map((preset, index) => (
+                <div key={preset.id}>
+                  <span><b>{index + 1}</b><strong>{preset.name}</strong></span>
+                  <span>
+                    <button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label={`上移${preset.name}`}><ChevronUp size={14} /></button>
+                    <button type="button" disabled={index === selected.length - 1} onClick={() => move(index, 1)} aria-label={`下移${preset.name}`}><ChevronDown size={14} /></button>
+                  </span>
+                </div>
+              ))}
+              <details className="story-preset-preview">
+                <summary>预览最终缝合内容</summary>
+                {[basePreset, ...selected].filter((preset): preset is PresetConfig => Boolean(preset)).map((preset, index) => (
+                  <section key={preset.id}>
+                    <strong>{index === 0 ? "基础" : `附加 ${index}`} · {preset.name}</strong>
+                    {preset.prompts.filter((prompt) => {
+                      const order = preset.prompt_order?.find((item) => item.identifier === prompt.identifier);
+                      return !prompt.marker && (order?.enabled ?? prompt.enabled) && prompt.content.trim();
+                    }).map((prompt) => <p key={prompt.identifier}><b>{prompt.name || prompt.identifier}</b>{prompt.content}</p>)}
+                  </section>
+                ))}
+              </details>
+            </div>
+          ) : <p className="story-settings-note">勾选附加预设后，可在这里调整缝合顺序并预览。</p>}
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -663,6 +745,16 @@ export function StorySettingsPage(props: StorySettingsPageProps) {
           <label className="story-settings-field"><textarea value={normalized.extraPrompt || ""} onChange={(event) => patchSettings({ extraPrompt: event.target.value })} placeholder="填写本剧情需要额外遵守的要求" /></label>
         </SettingCard>
 
+        <SettingCard title="预设缝合" hint="把其他预设的提示条目追加到当前角色绑定的基础预设中">
+          <PresetStitchingEditor
+            basePreset={props.boundPreset}
+            presets={props.availablePresets}
+            enabled={normalized.presetStitchingEnabled === true}
+            selectedIds={normalized.stitchedPresetIds || []}
+            onChange={(presetStitchingEnabled, stitchedPresetIds) => patchSettings({ presetStitchingEnabled, stitchedPresetIds })}
+          />
+        </SettingCard>
+
         <SettingCard title="生成设置" hint="检查预设条目与生成设置是否重复">
           <div className="story-generation-three-grid">
             <label className="story-generation-control"><span>用户人称</span><select value={normalized.userPerspective} onChange={(event) => patchSettings({ userPerspective: event.target.value as StoryCharacterSettings["userPerspective"] })}><option value="second">第二人称“你”</option><option value="third">第三人称“TA”</option><option value="username">用户名“{props.userName}”</option></select></label>
@@ -783,8 +875,10 @@ export function StorySettingsPage(props: StorySettingsPageProps) {
           ) : null}
         </SettingCard>
 
-        <SettingCard title="剧情尾部" hint="状态栏与小剧场方案保存在公用仓库，所有角色共享；每个角色单独选择启用哪一套">
+        <SettingCard title="剧情尾部" hint="两个开关只控制后续请求是否要求 AI 生成对应内容，不处理以前已经生成的消息">
+          <ToggleRow title="生成状态栏" detail="关闭后不再把状态栏方案的提示词发送给 AI" checked={normalized.statusGenerationEnabled !== false} onChange={(value) => patchSettings({ statusGenerationEnabled: value })} />
           <SchemeEditor label="状态栏方案" schemes={repo.statusSchemes} activeId={normalized.activeStatusSchemeId!} tag="story_status" contextNote="进入上下文" onChange={(schemes, activeStatusSchemeId) => { patchRepo({ statusSchemes: schemes }); patchSettings({ activeStatusSchemeId }); }} />
+          <ToggleRow title="生成小剧场" detail="关闭后不再把小剧场方案的提示词发送给 AI" checked={normalized.theaterGenerationEnabled !== false} onChange={(value) => patchSettings({ theaterGenerationEnabled: value })} />
           <SchemeEditor label="小剧场方案" schemes={repo.theaterSchemes} activeId={normalized.activeTheaterSchemeId!} tag="story_theater" contextNote="默认不进上下文" onChange={(schemes, activeTheaterSchemeId) => { patchRepo({ theaterSchemes: schemes }); patchSettings({ activeTheaterSchemeId }); }} />
         </SettingCard>
 

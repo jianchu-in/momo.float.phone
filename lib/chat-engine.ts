@@ -1876,6 +1876,7 @@ export async function buildChatPromptMessages(
         includeDirectChatEntries: isOfflineMode,
         includeNativeToolHistory: usesNativeActions,
         excludeOfflineSessionId: options?.excludeOfflineSessionId,
+        chatAccountId: session.chatAccountId || null,
         promptTimestampOptions,
     });
     const promptHistory = applyVisionImagePromptLimit(

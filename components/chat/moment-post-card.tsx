@@ -22,8 +22,9 @@ import { splitBilingualText } from "@/lib/bilingual-text";
 import { retryMomentGeneratedPhoto } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage, hasUserReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
-import { Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil } from "lucide-react";
+import { Bookmark, Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui";
+import { addMomentFavorite } from "@/lib/favorites-storage";
 
 type Props = {
     post: MomentPost;
@@ -65,6 +66,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const [editingComment, setEditingComment] = useState<MomentComment | null>(null);
     const [commentDraft, setCommentDraft] = useState("");
     const [deleteCommentTarget, setDeleteCommentTarget] = useState<MomentComment | null>(null);
+    const [favoriteNotice, setFavoriteNotice] = useState("");
 
     // Resolve asset:// photo URLs from IndexedDB
     const [resolvedPhotoUrl, setResolvedPhotoUrl] = useState<string | null>(null);
@@ -312,6 +314,16 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
             });
     }, [characterId, onUpdate, photoPromptDraft, photoUseReferenceDraft, photoUseUserReferenceDraft, post]);
 
+    const favoritePost = useCallback(async (imageOnly = false) => {
+        try {
+            await addMomentFavorite({ post, imageOnly });
+            setFavoriteNotice(imageOnly ? "已收藏图片" : "已收藏动态");
+        } catch (error) {
+            setFavoriteNotice(error instanceof Error ? error.message : "收藏失败");
+        }
+        window.setTimeout(() => setFavoriteNotice(""), 1600);
+    }, [post]);
+
     return (
         <div data-moment-post-id={post.id} className="feed-post relative border-b-[2.5px] border-[var(--c-card-border)] pb-5 mb-5 w-full bg-transparent px-4 pt-2">
             {/* Header row: avatar + name */}
@@ -343,6 +355,10 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                 </button>
                 {showPostActions && (
                     <div ref={postActionsRef} className="feed-post-action-menu" onClick={event => event.stopPropagation()}>
+                        <button type="button" onClick={() => { setShowPostActions(false); void favoritePost(); }}>
+                            <Bookmark size={14} strokeWidth={1.75} />
+                            <span>收藏动态</span>
+                        </button>
                         <button type="button" onClick={openPostEditor}>
                             <Pencil size={14} strokeWidth={1.75} />
                             <span>编辑动态</span>
@@ -396,6 +412,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                         }}
                         onRegenerate={canRegeneratePhoto ? openPhotoPromptEditor : undefined}
                         regenerating={photoRegenerating}
+                        onFavorite={() => favoritePost(true)}
                     />
                 )}
                 {resolvedPhotoUrl && photoRegenerating && (
@@ -422,6 +439,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
             {showFallbackPreview && fallbackPhotoDescription && (
                 <MediaPreviewOverlay
                     description={fallbackPhotoDescription}
+                    onFavorite={() => favoritePost(true)}
                     onRegenerate={canRetryPhoto ? () => { setShowFallbackPreview(false); openPhotoPromptEditor(); } : undefined}
                     regenerating={photoRegenerating}
                     onClose={() => setShowFallbackPreview(false)}
@@ -826,7 +844,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                     )}
                 </div>
             )}
-
+            {favoriteNotice && <div className="feed-favorite-notice" role="status">{favoriteNotice}</div>}
         </div>
     );
 }

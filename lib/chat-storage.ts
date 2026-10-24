@@ -421,7 +421,7 @@ export function resolveChatSoundConfig(
 
 /** 按 id 从会话缓存取会话（提示音等同步读取路径用；找不到时返回 null）。 */
 export function findChatSessionById(sessionId: string): ChatSession | null {
-    return loadChatSessions().find(s => s.id === sessionId) ?? null;
+    return _sessionsCache.find(s => s.id === sessionId) ?? null;
 }
 
 /** 单条消息工具循环轮数上限（默认 5，夹在 1–20 之间） */
@@ -764,13 +764,29 @@ function getSortedSessionMessages(sessionId: string): ChatMessage[] {
 }
 
 function getNextMessageOrder(sessionId: string): number {
+    const cached = _nextMessageOrderCache.get(sessionId);
+    if (cached !== undefined) {
+        _nextMessageOrderCache.set(sessionId, cached + 1);
+        return cached;
+    }
     let maxOrder = -1;
     for (const msg of _messagesCache) {
         if (msg.sessionId !== sessionId) continue;
         const order = getStableMessageOrder(msg);
         if (order !== null && order > maxOrder) maxOrder = order;
     }
-    return maxOrder + 1;
+    const next = maxOrder + 1;
+    _nextMessageOrderCache.set(sessionId, next + 1);
+    return next;
+}
+
+function rememberMessageOrder(message: ChatMessage): void {
+    const order = getStableMessageOrder(message);
+    if (order === null) return;
+    const next = order + 1;
+    if ((_nextMessageOrderCache.get(message.sessionId) ?? 0) < next) {
+        _nextMessageOrderCache.set(message.sessionId, next);
+    }
 }
 
 function reindexSessionMessageOrders(sessionId: string): void {
@@ -782,6 +798,7 @@ function reindexSessionMessageOrders(sessionId: string): void {
         changed.set(msg.id, { ...msg, order: index });
     });
 
+    _nextMessageOrderCache.set(sessionId, ordered.length);
     if (changed.size === 0) return;
     _messagesCache = _messagesCache.map(msg => changed.get(msg.id) || msg);
     dbPutMessages([...changed.values()]);
@@ -801,6 +818,7 @@ export function reindexSessionMessageOrdersByTime(sessionId: string): void {
         if (msg.order === index) return;
         changed.set(msg.id, { ...msg, order: index });
     });
+    _nextMessageOrderCache.set(sessionId, ordered.length);
 
     if (changed.size > 0) {
         _messagesCache = _messagesCache.map(msg => changed.get(msg.id) || msg);
@@ -819,13 +837,14 @@ export function reindexSessionMessageOrdersByTime(sessionId: string): void {
 }
 
 export function getLastVisibleSessionMessage(sessionId: string): ChatMessage | null {
-    const messages = getSortedSessionMessages(sessionId);
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const msg = messages[i];
-        if (!isSessionPreviewCandidate(msg)) continue;
-        return msg;
+    // 热路径只需要“最后一条”，不应先 filter + sort 分配整份会话消息。
+    // 单次线性扫描也能兼容旧数据缺失 order、同时间戳等排序规则。
+    let last: ChatMessage | null = null;
+    for (const msg of _messagesCache) {
+        if (msg.sessionId !== sessionId || !isSessionPreviewCandidate(msg)) continue;
+        if (!last || compareChatMessages(last, msg) < 0) last = msg;
     }
-    return null;
+    return last;
 }
 
 // ── Storage Keys (settings & follow-up stay in localStorage) ──
@@ -843,6 +862,7 @@ const DEFAULT_CHAT_APP_SETTINGS: ChatAppSettings = {
 let _contactsCache: ChatContact[] = [];
 let _sessionsCache: ChatSession[] = [];
 let _messagesCache: ChatMessage[] = [];
+let _nextMessageOrderCache = new Map<string, number>();
 let _hydrated = false;
 let _hydratePromise: Promise<void> | null = null;
 
@@ -1247,6 +1267,8 @@ export function hydrateChatStorage(): Promise<void> {
     _hydratePromise = initChatDb().then(data => {
         const normalizedToolHistory = normalizeLegacyTextToolHistory(data.messages);
         _messagesCache = normalizedToolHistory.items;
+        _nextMessageOrderCache = new Map();
+        for (const message of _messagesCache) rememberMessageOrder(message);
         if (normalizedToolHistory.changedMessages.length > 0) {
             dbPutMessages(normalizedToolHistory.changedMessages);
         }
@@ -1321,20 +1343,20 @@ export function removeChatContact(characterId: string) {
 
 // ── CRUD for Sessions ─────────────────────────
 export function loadChatSessions(): ChatSession[] {
-    const normalized = normalizeChatSessions(_sessionsCache);
-    const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
-    const refreshed = refreshSessionPreviewMetadata(normalized.items);
-    if (normalized.changed || redirectedMessages > 0 || refreshed.changed) {
-        _sessionsCache = refreshed.items;
-        if (_hydrated && typeof window !== "undefined") dbReplaceSessions(refreshed.items);
-    }
+    // 读取必须保持轻量。完整规范化与预览修复已在水合时执行；消息增删改路径
+    // 会增量维护对应会话。旧实现每次读取都会为每个会话扫描并排序全部消息，
+    // 发送事件、提示词组装和重试会反复触发，记录增多后会阻塞主线程。
     return _sessionsCache;
 }
 
 export function saveChatSessions(sessions: ChatSession[]) {
     const normalized = normalizeChatSessions(sessions);
     const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
-    const refreshed = refreshSessionPreviewMetadata(normalized.items);
+    // Duplicate repair can move messages to the surviving session. Recompute
+    // previews only for that exceptional path; routine saves stay O(session).
+    const refreshed = redirectedMessages > 0
+        ? refreshSessionPreviewMetadata(normalized.items)
+        : { items: normalized.items, changed: false };
     _sessionsCache = refreshed.items;
     if (!_hydrated && typeof window !== "undefined") {
         console.warn("[ChatStorage] saveChatSessions before hydration; using additive write to avoid replacing existing sessions.");
@@ -1368,9 +1390,11 @@ export function createOrGetSession(contactId: string, chatAccountId: string | nu
 export function createGroupSession(groupName: string, participantIds: string[], options?: { isSpectator?: boolean }): ChatSession {
     const sessions = loadChatSessions();
     const isSpectator = options?.isSpectator === true;
+    const chatAccountId = loadChatScope().chatAccountId || undefined;
     const newSession: ChatSession = {
         id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         contactId: `group_${Date.now()}`, // synthetic contactId for group
+        ...(chatAccountId ? { chatAccountId } : {}),
         unreadCount: 0,
         updatedAt: new Date().toISOString(),
         isPinned: false,
@@ -1466,6 +1490,7 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
     }
 
     _messagesCache.push(newMsg);
+    rememberMessageOrder(newMsg);
     dbPutMessage(newMsg);
     resolvePendingAvatarRecommendation(newMsg);
 
@@ -1526,6 +1551,7 @@ export function upsertImportedChatMessage(msg: ChatMessage): { message: ChatMess
     };
 
     _messagesCache.push(newMsg);
+    rememberMessageOrder(newMsg);
     dbPutMessage(newMsg);
 
     // 只有真正可能成为「最后一条可见消息」时才做全量预览刷新：
@@ -1593,6 +1619,7 @@ export async function bulkUpsertImportedMessages(
 
     // concat 而不是 push(...arr)：超大数组（数万条）展开会触发 RangeError。
     _messagesCache = _messagesCache.concat(inserted);
+    for (const message of inserted) rememberMessageOrder(message);
     // 可等待、分块、错误上抛的真实落库；失败时调用方能感知并提示用户，
     // 而不是内存里「导入成功」、重启后数据消失。
     await dbBulkPutMessages(inserted);

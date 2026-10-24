@@ -35,6 +35,7 @@ import {
   cancelCustomAppTask,
   cloneCustomAppVoice,
   createCustomAppNotification,
+  createCustomAppCharacterWorld,
   deleteCustomAppTimelineEvent,
   fetchCustomAppNetwork,
   generateCustomAppGroupText,
@@ -52,6 +53,7 @@ import {
   readCustomAppCalendar,
   readCustomAppChatHistory,
   readCustomAppCharacterRelations,
+  readCustomAppCharacterBinding,
   readCustomAppCharacterState,
   readCustomAppCharacterWorlds,
   readCustomAppCoreMemory,
@@ -85,6 +87,7 @@ import {
   updateCustomAppCard,
   writeCustomAppCalendar,
   writeCustomAppCharacter,
+  writeCustomAppCharacterBinding,
   writeCustomAppHistoryMessage,
   writeCustomAppCharacterState,
   writeCustomAppCharacterWorld,
@@ -95,6 +98,7 @@ import {
 import {
   deleteStoryOpeningArchive,
   listStoryOpeningSets,
+  openIndependentStoryOpening,
   promoteStoryOpeningArchive,
   selectStoryOpening,
   upsertStoryOpeningSet,
@@ -477,7 +481,10 @@ html, body { min-height: 100%; }
       open: function(payload){ return request('characters.open', payload || {}); },
       create: function(payload){ return request('characters.write', Object.assign({}, payload || {}, { operation: 'create' })); },
       update: function(payload){ return request('characters.write', Object.assign({}, payload || {}, { operation: 'update' })); },
+      getBindings: function(payload){ return request('characters.bindings.get', payload || {}); },
+      updateBindings: function(payload){ return request('characters.bindings.update', payload || {}); },
       listWorlds: function(payload){ return request('characters.worlds.read', payload || {}); },
+      createWorld: function(payload){ return request('characters.worlds.create', payload || {}); },
       assignWorld: function(payload){ return request('characters.worlds.write', payload || {}); },
       readState: function(payload){ return request('characters.state.read', payload || {}); },
       writeState: function(payload){ return request('characters.state.write', payload || {}); },
@@ -494,6 +501,7 @@ html, body { min-height: 100%; }
       listOpeningSets: function(payload){ return request('story.openings.list', payload || {}); },
       saveOpeningSet: function(payload){ return request('story.openings.write', payload || {}); },
       selectOpening: function(payload){ return request('story.openings.select', payload || {}); },
+      openIndependent: function(payload){ return request('story.openings.openIndependent', payload || {}); },
       promoteOpeningArchive: function(payload){ return request('story.openings.promote', payload || {}); },
       deleteOpeningArchive: function(payload){ return request('story.openings.deleteArchive', payload || {}); },
       getBindings: function(payload){ return request('story.bindings.get', payload || {}); },
@@ -688,6 +696,7 @@ function bridgeActionNeedsSettingsStorage(action: string): boolean {
   return action === "ai.generate"
     || action.startsWith("world.")
     || action.startsWith("regex.")
+    || action.startsWith("characters.bindings.")
     || action.startsWith("story.bindings.");
 }
 
@@ -1131,9 +1140,9 @@ export function CustomAppRunner({
           calendar: ["read", "list", "write", "create", "update", "delete", "replaceWeek"],
           world: ["read", "list", "get", "write", "create", "update", "delete", "activate"],
           media: ["pick", "save", "put", "get", "revoke", "delete"],
-          characters: ["list", "get", "open", "create", "update", "listWorlds", "assignWorld", "readState", "writeState", "readRelations"],
+          characters: ["list", "get", "create", "update", "getBindings", "updateBindings", "listWorlds", "createWorld", "assignWorld", "open", "readState", "writeState", "readRelations"],
           regex: ["list", "get", "create", "update", "delete"],
-          story: ["listOpeningSets", "saveOpeningSet", "selectOpening", "promoteOpeningArchive", "deleteOpeningArchive", "getBindings", "updateBindings", "open"],
+          story: ["listOpeningSets", "saveOpeningSet", "selectOpening", "openIndependent", "promoteOpeningArchive", "deleteOpeningArchive", "getBindings", "updateBindings", "open"],
           chat: ["getCurrentSession", "readHistory", "sendMessage", "sendCard", "updateCard", "writeHistory", "requestReply", "openConversation", "setContactState"],
           memory: ["readCore", "readLongTerm", "readShortTerm", "search", "add", "addTimeline", "deleteTimeline", "removeTimeline", "suggest"],
           notifications: ["create", "list", "markRead", "markAllRead", "getBadge", "setBadge", "incrementBadge", "clearBadge"],
@@ -1686,6 +1695,18 @@ export function CustomAppRunner({
       requirePermission("characters.write");
       return writeCustomAppCharacter(app, record);
     }
+    if (action === "characters.bindings.get") {
+      requirePermission("characters.read");
+      return readCustomAppCharacterBinding(record);
+    }
+    if (action === "characters.bindings.update") {
+      requirePermission("characters.write");
+      return writeCustomAppCharacterBinding(record);
+    }
+    if (action === "characters.worlds.create") {
+      requirePermission("characters.write");
+      return createCustomAppCharacterWorld(record);
+    }
     if (action === "characters.state.read") {
       requirePermission("characters.state.read");
       return readCustomAppCharacterState(record);
@@ -1732,6 +1753,12 @@ export function CustomAppRunner({
     if (action === "story.openings.select") {
       requirePermission("story.write");
       return selectStoryOpening(app.id, record);
+    }
+    if (action === "story.openings.openIndependent") {
+      requirePermission("story.write");
+      const result = await openIndependentStoryOpening(app.id, record);
+      window.dispatchEvent(new CustomEvent("open-app", { detail: { appId: "story", sessionId: result.sessionId } }));
+      return result;
     }
     if (action === "story.openings.promote") {
       requirePermission("story.write");

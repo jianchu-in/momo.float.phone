@@ -18,8 +18,40 @@ import { formatXiaohongshuShareForPrompt, type ChatSharePayload } from "@/lib/ch
 import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT } from "@/lib/chat-notification-events";
 import { CHAT_SESSIONS_MERGED_EVENT, type ChatSessionsMergedDetail } from "@/lib/chat-session-merge";
 import { getMascotSettingsSnapshot } from "@/lib/mascot-settings";
+import { CHAT_SCOPE_UPDATED_EVENT, loadChatScope, sessionMatchesChatScope, type ChatScopeState } from "@/lib/chat-scope-storage";
 
 type TabKey = "messages" | "contacts" | "feeds" | "me";
+
+function sameGroupMembers(a?: string[], b?: string[]): boolean {
+    const left = [...(a || [])].sort();
+    const right = [...(b || [])].sort();
+    return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+/**
+ * 外部入口可能携带另一个聊天账号的旧 sessionId。当前界面显示哪个账号，
+ * 就只允许进入该账号的会话；私聊/群聊均尽量映射到当前账号下的对应会话。
+ */
+function resolveSessionInCurrentScope(sessionId: string): ChatSession | null {
+    const sessions = loadChatSessions();
+    const requested = sessions.find(item => item.id === sessionId);
+    if (!requested) return null;
+    const scope = loadChatScope();
+    if (sessionMatchesChatScope(requested, scope)) return requested;
+    if (!requested.isGroup) {
+        return sessions.find(item => (
+            !item.isGroup
+            && item.contactId === requested.contactId
+            && sessionMatchesChatScope(item, scope)
+        )) || null;
+    }
+    return sessions.find(item => (
+        item.isGroup
+        && Boolean(item.isSpectator) === Boolean(requested.isSpectator)
+        && sameGroupMembers(item.participantIds, requested.participantIds)
+        && sessionMatchesChatScope(item, scope)
+    )) || null;
+}
 
 export type PhoneChatAppProps = {
     onClose: () => void;
@@ -52,7 +84,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             setDbReady(true);
             // Resolve initial session after hydration
             if (initialSessionId) {
-                const s = loadChatSessions().find(s => s.id === initialSessionId);
+                const s = resolveSessionInCurrentScope(initialSessionId);
                 if (s) setActiveSession(s);
             }
         });
@@ -69,8 +101,8 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             setActiveSession(null);
             return;
         }
-        const s = loadChatSessions().find(s => s.id === initialSessionId);
-        if (s) setActiveSession(s);
+        const s = resolveSessionInCurrentScope(initialSessionId);
+        setActiveSession(s);
     }, [initialSessionId, dbReady]);
 
     // When sharePayload is set, switch to contacts tab (and close any open chat room)
@@ -86,7 +118,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         const handler = (e: Event) => {
             const sessionId = (e as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
             if (!sessionId) return;
-            const session = loadChatSessions().find(s => s.id === sessionId);
+            const session = resolveSessionInCurrentScope(sessionId);
             if (!session) return;
             setActiveMascot(false);
             setActiveSession(session);
@@ -94,6 +126,22 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         };
         window.addEventListener(CHAT_OPEN_SESSION_EVENT, handler);
         return () => window.removeEventListener(CHAT_OPEN_SESSION_EVENT, handler);
+    }, []);
+
+    // 切换主号/小号后，旧账号的聊天室不能继续留在前台或挂载缓存中。
+    useEffect(() => {
+        const handler = (event: Event) => {
+            const scope = (event as CustomEvent<ChatScopeState>).detail || loadChatScope();
+            setActiveSession(current => current && sessionMatchesChatScope(current, scope) ? current : null);
+            setVisitedSessions(current => {
+                const next = new Map(
+                    [...current.entries()].filter(([, session]) => sessionMatchesChatScope(session, scope)),
+                );
+                return next.size === current.size ? current : next;
+            });
+        };
+        window.addEventListener(CHAT_SCOPE_UPDATED_EVENT, handler);
+        return () => window.removeEventListener(CHAT_SCOPE_UPDATED_EVENT, handler);
     }, []);
 
     // 重复会话被合并：被删会话的聊天室缓存一并卸载
@@ -278,7 +326,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                             const sessionId = addContactReturnSessionRef.current;
                             addContactReturnSessionRef.current = null;
                             if (!sessionId) return;
-                            const session = loadChatSessions().find(s => s.id === sessionId);
+                            const session = resolveSessionInCurrentScope(sessionId);
                             if (!session) return;
                             setActiveSession(session);
                             setActiveTab("messages");

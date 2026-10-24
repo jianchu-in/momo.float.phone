@@ -321,6 +321,48 @@ export async function selectStoryOpening(appId: string, input: Record<string, un
   };
 }
 
+/** 从某条开场直接创建一条全新的独立剧情，不改动当前主线与开场存档。 */
+export async function openIndependentStoryOpening(appId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await hydrateKvDb();
+  await hydrateStoryStorage();
+  const set = requireOwnedSet(appId, cleanText(input.id ?? input.openingSetId, 160));
+  const openingId = cleanText(input.openingId, 120);
+  const opening = set.openings.find(item => item.id === openingId);
+  if (!opening) throw new Error("未找到要进入的剧情开场。");
+
+  const main = createOrGetStorySession(set.characterId, {
+    ownerType: "single",
+    ownerId: set.characterId,
+    branchId: "main",
+  });
+  const sessions = loadStorySessionsForOwner("single", set.characterId);
+  const branchOrder = Math.max(0, ...sessions.map(session => session.branchOrder ?? 0)) + 1;
+  const session = createOrGetStorySession(set.characterId, {
+    ownerType: "single",
+    ownerId: set.characterId,
+    branchId: `independent_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    branchName: cleanText(input.branchName, 120) || opening.name,
+    branchOrder,
+    inheritRecentMemory: false,
+    independentStory: true,
+    baseSession: main,
+  });
+  const messages = [openingMessage(opening, session.id)];
+  replaceStoryMessages(session.id, messages);
+  updateSessionPreview(session, messages);
+  const updated = updateStorySession(session.id, {
+    openingSetId: set.id,
+    openingId,
+    openingArchive: false,
+    hiddenFromBranchList: false,
+    independentStory: true,
+    inheritRecentMemory: false,
+    inheritRecentMemoryLocked: true,
+  }) || session;
+  saveStoryLaunchTarget(updated);
+  return { ok: true, openingSetId: set.id, openingId, sessionId: updated.id };
+}
+
 export async function promoteStoryOpeningArchive(appId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
   await hydrateKvDb();
   await hydrateStoryStorage();

@@ -209,6 +209,8 @@ export function loadNativeTimeline(
         userName?: string;
         appId?: import("./settings-types").ContentAppId;
         excludeOfflineSessionId?: string;
+        /** 限定聊天账号；undefined 表示跨账号读取，null 表示只读主号。 */
+        chatAccountId?: string | null;
         timeAware?: boolean;
         promptTimestampOptions?: PromptTimestampOptions;
     }
@@ -222,9 +224,13 @@ export function loadNativeTimeline(
 
     // ── Chat messages ──
     const sessions = loadChatSessions();
+    const matchesChatAccount = (session: { chatAccountId?: string }) => (
+        options?.chatAccountId === undefined
+        || (session.chatAccountId || null) === options.chatAccountId
+    );
     // Include direct chat session AND group sessions where this character participates
-    const session = sessions.find(s => !s.isGroup && s.contactId === characterId);
-    const groupSessions = sessions.filter(s => s.isGroup && s.participantIds?.includes(characterId));
+    const session = sessions.find(s => !s.isGroup && s.contactId === characterId && matchesChatAccount(s));
+    const groupSessions = sessions.filter(s => s.isGroup && s.participantIds?.includes(characterId) && matchesChatAccount(s));
 
     // Process group sessions
     for (const gs of groupSessions) {
@@ -443,8 +449,23 @@ export function loadNativeTimeline(
         if (!canCharacterSeeMomentPost(post, characterId)) continue;
         const isCharPost = post.authorId === characterId;
         const isUserPost = post.authorType === "user";
-        const comments = getVisibleMomentCommentsForCharacter(post, characterId, loadMomentComments(post.id));
-        const likes = getVisibleMomentLikesForCharacter(post, characterId, post.likes);
+        if (
+            isUserPost
+            && options?.chatAccountId !== undefined
+            && (post.chatAccountId || null) !== options.chatAccountId
+        ) continue;
+        const comments = getVisibleMomentCommentsForCharacter(post, characterId, loadMomentComments(post.id))
+            .filter(comment => (
+                comment.authorType !== "user"
+                || options?.chatAccountId === undefined
+                || (comment.chatAccountId || null) === options.chatAccountId
+            ));
+        const likes = getVisibleMomentLikesForCharacter(post, characterId, post.likes)
+            .filter(like => (
+                like.authorType !== "user"
+                || options?.chatAccountId === undefined
+                || (like.chatAccountId || null) === options.chatAccountId
+            ));
         const filteredComments = options?.afterTimestamp
             ? comments.filter(c => c.createdAt > options.afterTimestamp!)
             : comments;
@@ -584,6 +605,7 @@ export function loadNativeTimeline(
     const offlineEntries = loadChatOfflineProjectionEntries(characterId, {
         afterTimestamp: options?.afterTimestamp,
         excludeSessionId: options?.excludeOfflineSessionId,
+        chatAccountId: options?.chatAccountId,
     });
     for (const offlineEntry of offlineEntries) {
         entries.push({
@@ -981,6 +1003,8 @@ export function prepareShortTermContext(
         excludeOfflineSessionId?: string;
         includeNativeToolHistory?: boolean;
         includeDirectChatEntries?: boolean;
+        /** 限定聊天账号；undefined 表示不限制，null 表示主号。 */
+        chatAccountId?: string | null;
         /** 只读取该时间之后的跨应用最近事件；剧情分线用它隔离创建前的短期记忆。 */
         afterTimestamp?: string;
         timeAware?: boolean;
@@ -997,6 +1021,7 @@ export function prepareShortTermContext(
         userName: options?.userName,
         appId: appId as import("./settings-types").ContentAppId,
         excludeOfflineSessionId: options?.excludeOfflineSessionId,
+        chatAccountId: options?.chatAccountId,
         afterTimestamp: options?.afterTimestamp,
         timeAware,
         promptTimestampOptions: options?.promptTimestampOptions,
@@ -1241,6 +1266,7 @@ export function prepareGroupShortTermContext(
         excludeGroupSessionId?: string;
         excludeOfflineSessionId?: string;
         includeNativeToolHistory?: boolean;
+        chatAccountId?: string | null;
         timeAware?: boolean;
         promptTimestampOptions?: PromptTimestampOptions;
     },
@@ -1260,6 +1286,7 @@ export function prepareGroupShortTermContext(
             userName: options?.userName,
             appId: "group_chat",
             excludeOfflineSessionId: options?.excludeOfflineSessionId,
+            chatAccountId: options?.chatAccountId,
             timeAware,
             promptTimestampOptions: options?.promptTimestampOptions,
         });

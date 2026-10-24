@@ -47,6 +47,7 @@ interface MessageBubbleProps {
     onMeetingInviteAction?: (msg: ChatMessage, action: "accept" | "decline") => void;
     displayContent?: string;
     defaultTranslationExpanded?: boolean;
+    onFavoriteMedia?: (msg: ChatMessage) => void | Promise<void>;
 }
 
 /** 聊天插件自定义消息气泡：把裸 DOM 容器交给注册了该 kind 的插件渲染 */
@@ -90,7 +91,7 @@ function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
  * Renders a message bubble based on its mediaType.
  * Falls back to ReactMarkdown for plain text messages.
  */
-export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false, onFavoriteMedia }: MessageBubbleProps) {
     switch (msg.mediaType) {
         case "red_packet":
             return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} onShowDetail={onShowDetail} />;
@@ -105,7 +106,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         case "app_card":
             return <AppCardBubble msg={msg} characterId={characterId} characterName={msg.senderName || charName} />;
         case "image":
-            return <ImageBubble msg={msg} onUpdate={onUpdate} characterId={characterId} />;
+            return <ImageBubble msg={msg} onUpdate={onUpdate} characterId={characterId} onFavorite={onFavoriteMedia} />;
         case "location":
             return <LocationBubble msg={msg} />;
         case "poke":
@@ -1336,10 +1337,12 @@ function ImageBubble({
     msg,
     onUpdate,
     characterId,
+    onFavorite,
 }: {
     msg: ChatMessage;
     onUpdate?: (updated: ChatMessage) => void;
     characterId?: string;
+    onFavorite?: (msg: ChatMessage) => void | Promise<void>;
 }) {
     const d = msg.mediaData;
     const label = d?.label || "照片";
@@ -1429,6 +1432,7 @@ function ImageBubble({
                     imageUrl={resolvedUrl || undefined}
                     description={!resolvedUrl ? label : undefined}
                     saveFilename={resolvedUrl ? ensureExtension(label, "image") : undefined}
+                    onFavorite={onFavorite ? () => onFavorite(msg) : undefined}
                     onRegenerate={canRegenerate ? () => { setShowPreview(false); openPromptEditor(); } : undefined}
                     regenerating={regenerating}
                     onClose={() => setShowPreview(false)}
@@ -1938,6 +1942,7 @@ export function MediaImageWithPreview({
     onError,
     onRegenerate,
     regenerating,
+    onFavorite,
 }: {
     url: string;
     title: string;
@@ -1945,6 +1950,7 @@ export function MediaImageWithPreview({
     onError?: () => void;
     onRegenerate?: () => void;
     regenerating?: boolean;
+    onFavorite?: () => void | Promise<void>;
 }) {
     const [preview, setPreview] = useState(false);
     const saveName = filename || title;
@@ -1960,6 +1966,7 @@ export function MediaImageWithPreview({
                 <MediaPreviewOverlay
                     imageUrl={url}
                     saveFilename={ensureExtension(saveName, "image")}
+                    onFavorite={onFavorite}
                     onRegenerate={onRegenerate ? () => { setPreview(false); onRegenerate(); } : undefined}
                     regenerating={regenerating}
                     onClose={() => setPreview(false)}

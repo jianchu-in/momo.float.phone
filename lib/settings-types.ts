@@ -24,7 +24,17 @@ export type WorldBookEntry = {
 };
 
 export type WorldBookConfig = SettingItemMeta & {
+    /** 仅用于世界书管理页收纳；不参与绑定、触发或提示词组装。 */
+    folderId?: string;
     entries: WorldBookEntry[];
+};
+
+export type WorldBookFolder = {
+    id: string;
+    name: string;
+    order: number;
+    createdAt: number;
+    updatedAt: number;
 };
 
 // --- Preset ---

@@ -206,10 +206,14 @@ function compactProjectionText(text: string, maxLen: number): string {
 
 export function loadChatOfflineProjectionEntries(
     characterId: string,
-    options?: { afterTimestamp?: string; excludeSessionId?: string },
+    options?: { afterTimestamp?: string; excludeSessionId?: string; chatAccountId?: string | null },
 ): ChatOfflineProjectionEntry[] {
     const sessions = loadChatSessions().filter((session) => {
         if (session.id === options?.excludeSessionId) return false;
+        if (
+            options?.chatAccountId !== undefined
+            && (session.chatAccountId || null) !== options.chatAccountId
+        ) return false;
         if (session.isGroup) return session.participantIds?.includes(characterId);
         return session.contactId === characterId;
     });

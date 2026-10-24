@@ -1026,6 +1026,28 @@
         .story-generation-length label { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
         .story-generation-length label > span { font-size: calc(8.5px*var(--app-text-scale,1)); color: var(--c-story-sub,#94a3b8); }
         .story-generation-length .story-char-limit-hint { display: none; }
+        .story-preset-stitching { display: grid; gap: 10px; }
+        .story-preset-base { min-height: 42px; padding: 9px 11px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--c-story-sub,#64748b); background: rgba(148,163,184,.065); font-size: calc(10px*var(--app-text-scale,1)); }
+        .story-preset-base strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-story-heading,#334155); font-size: calc(11px*var(--app-text-scale,1)); }
+        .story-preset-choice-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+        .story-preset-choice-list > label { min-width: 0; padding: 9px; border-radius: 11px; display: flex; align-items: center; gap: 8px; background: rgba(148,163,184,.06); cursor: pointer; }
+        .story-preset-choice-list input { flex: none; accent-color: var(--c-story-accent,#ad8241); }
+        .story-preset-choice-list label > span { min-width: 0; display: grid; gap: 2px; }
+        .story-preset-choice-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-story-heading,#334155); font-size: calc(10.5px*var(--app-text-scale,1)); }
+        .story-preset-choice-list small { color: var(--c-story-sub,#94a3b8); font-size: calc(8.5px*var(--app-text-scale,1)); }
+        .story-preset-order-list { display: grid; gap: 7px; }
+        .story-preset-order-list > div { min-height: 40px; padding: 6px 8px 6px 10px; border: 1px solid rgba(100,116,139,.08); border-radius: 11px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .story-preset-order-list > div > span { min-width: 0; display: flex; align-items: center; gap: 7px; }
+        .story-preset-order-list > div b { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--c-story-accent,#ad8241); background: color-mix(in srgb,var(--c-story-accent,#ad8241) 12%,transparent); font-size: calc(9px*var(--app-text-scale,1)); }
+        .story-preset-order-list > div strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-story-heading,#334155); font-size: calc(10.5px*var(--app-text-scale,1)); }
+        .story-preset-order-list button { width: 30px; height: 30px; border: 0; border-radius: 9px; display: grid; place-items: center; color: var(--c-story-text,#475569); background: rgba(148,163,184,.1); }
+        .story-preset-order-list button:disabled { opacity: .3; }
+        .story-preset-preview { margin-top: 2px; border: 1px solid rgba(100,116,139,.09); border-radius: 12px; overflow: hidden; }
+        .story-preset-preview summary { padding: 10px 11px; cursor: pointer; color: var(--c-story-accent,#9b722f); font-size: calc(10.5px*var(--app-text-scale,1)); font-weight: 700; }
+        .story-preset-preview section { padding: 10px 11px; border-top: 1px solid rgba(100,116,139,.07); }
+        .story-preset-preview section > strong { color: var(--c-story-heading,#334155); font-size: calc(10.5px*var(--app-text-scale,1)); }
+        .story-preset-preview p { margin: 8px 0 0; display: grid; gap: 3px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--c-story-text,#475569); font-size: calc(9.5px*var(--app-text-scale,1)); line-height: 1.55; }
+        .story-preset-preview p b { color: var(--c-story-sub,#64748b); }
         .story-auto-requirements-preview { margin: 10px 0 16px; padding: 9px 11px; border-left: 3px solid var(--c-story-heading,#1e293b); border-radius: 0 11px 11px 0; background: rgba(148,163,184,.06); display: flex; flex-direction: column; gap: 3px; }
         .story-auto-requirements-preview strong { font-size: calc(10.5px*var(--app-text-scale,1)); }
         .story-auto-requirements-preview span { color: var(--c-story-sub,#64748b); font-size: calc(9.5px*var(--app-text-scale,1)); line-height: 1.5; }
@@ -1124,10 +1146,11 @@
         .story-settings-danger { background: rgba(239,68,68,.08); color: #dc2626; }
 
         .story-floating-phone-ball { position: absolute; right: 14px; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 15; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb,var(--c-story-heading,#1e293b) 88%,transparent); color: #fff; box-shadow: 0 8px 25px rgba(15,23,42,.23); display: flex; align-items: center; justify-content: center; }
-        .story-mini-phone-overlay { position: absolute; inset: 0; z-index: 330; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.22); backdrop-filter: blur(5px); }
-        .story-floating-chat-app { position:relative; width:min(390px,94vw); height:min(720px,88vh); overflow:hidden; border:7px solid #171717; border-radius:32px; background:var(--c-page-bg,#f8fafc); box-shadow:0 25px 80px rgba(15,23,42,.32); isolation:isolate; --app-text-scale:.82; --page-header-safe-top:0px; }
+        .story-mini-phone-overlay { position: absolute; inset: 0; z-index: 330; min-height:0; box-sizing:border-box; display: flex; align-items: center; justify-content: center; padding: clamp(6px,2.5vh,20px); overflow:hidden; overscroll-behavior:contain; background: rgba(15,23,42,.22); backdrop-filter: blur(5px); }
+        .story-floating-chat-app { position:relative; width:min(390px,94vw); height:min(720px,calc(100% - 8px)); max-height:calc(100% - 8px); min-height:0; overflow:hidden; border:7px solid #171717; border-radius:32px; background:var(--c-page-bg,#f8fafc); box-shadow:0 25px 80px rgba(15,23,42,.32); isolation:isolate; --app-text-scale:.82; --page-header-safe-top:0px; --safe-area-top:0px; --chat-tabbar-safe-bottom:0px; }
         .story-floating-chat-app>.chat-app { position:absolute!important; inset:0!important; width:100%; height:100%; min-height:0; }
         .story-floating-chat-app .page-header-safe-area { min-height:0!important; height:0!important; }
+        .story-floating-chat-app .chat-input-bar { padding-bottom:8px; }
         /* Chat/Moments panels normally use viewport-fixed overlays. Inside the
            floating app that made their 100vw/100dvh box sit outside the clipped
            phone frame, so the state opened but the panel looked missing. Keep
@@ -1143,7 +1166,7 @@
         .story-online-trace-body b { color:var(--c-story-heading,#1e293b); }
         .story-online-trace-body p { margin:5px 0 0; white-space:pre-wrap; }
         .story-online-trace-body small { display:block; margin-top:5px; color:var(--c-story-sub,#64748b); }
-        .story-mini-phone { position:relative; width: min(286px, 82vw); height: min(520px, 72vh); border: 7px solid #171717; border-radius: 34px; overflow: hidden; display: flex; flex-direction: column; background: #f8fafc; box-shadow: 0 25px 80px rgba(15,23,42,.3); }
+        .story-mini-phone { position:relative; width: min(286px, 82vw); height:min(520px,calc(100% - 8px)); max-height:calc(100% - 8px); min-height:0; border: 7px solid #171717; border-radius: 34px; overflow: hidden; display: flex; flex-direction: column; background: #f8fafc; box-shadow: 0 25px 80px rgba(15,23,42,.3); }
         .story-mini-phone > header { min-height: 54px; display: grid; grid-template-columns: 34px 1fr 58px; align-items: center; padding: 9px 8px 5px; background: #fff; border-bottom: 1px solid #eef2f7; }
         .story-mini-phone > header button { border: 0; background: transparent; display: flex; align-items: center; justify-content: center; }
         .story-mini-phone > header .story-mini-phone-identity { min-width:0; display: flex; align-items: center; justify-content: flex-start; gap: 7px; font-size: 11px; }
@@ -1163,12 +1186,12 @@
         .story-mini-phone-typing i:nth-child(2) { animation-delay: .13s; }
         .story-mini-phone-typing i:nth-child(3) { animation-delay: .26s; }
         @keyframes story-mini-phone-dot { 0%,70%,100% { opacity: .25; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-2px); } }
-        .story-mini-phone-plus-panel.chat-plus-menu{flex:0 0 auto;margin:0;border-radius:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:10px 6px 8px;background:#fff;border-top:1px solid #eef2f7}
+        .story-mini-phone-plus-panel.chat-plus-menu{flex:0 1 auto;max-height:min(132px,35%);overflow-y:auto;margin:0;border-radius:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:10px 6px 8px;background:#fff;border-top:1px solid #eef2f7}
         .story-mini-phone-plus-panel .chat-plus-menu-item{min-width:0;padding:0;border:0;background:transparent;color:#475569;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;font:500 8px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
         .story-mini-phone-plus-panel .chat-plus-icon-box{width:35px;height:35px;border-radius:10px;background:#f1f5f9;color:#334155;box-shadow:0 1px 3px rgba(15,23,42,.06)}
         .story-mini-phone-plus-panel .chat-plus-icon-box svg{width:19px;height:19px}
         .story-mini-phone-plus-panel .chat-plus-menu-item>span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8px;color:#475569}
-        .story-mini-phone-composer { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 7px; padding: 8px 9px calc(8px + env(safe-area-inset-bottom, 0px)); background: #fff; border-top: 1px solid #eef2f7; }
+        .story-mini-phone-composer { position:relative; z-index:2; flex: 0 0 auto; display: flex; align-items: flex-end; gap: 7px; padding: 8px 9px; background: #fff; border-top: 1px solid #eef2f7; }
         .story-mini-phone-composer textarea { flex: 1; min-width: 0; min-height: 31px; max-height: 72px; padding: 7px 9px; box-sizing: border-box; resize: none; border: 1px solid #e2e8f0; border-radius: 13px; outline: 0; background: #f8fafc; color: #334155; font: 400 10px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
         .story-mini-phone-composer button { width: 31px; height: 31px; flex: 0 0 auto; padding: 0; border: 0; border-radius: 50%; background: #1e293b; color: #fff; display: flex; align-items: center; justify-content: center; }
         .story-mini-phone-composer .story-mini-phone-plus-btn{background:#eef2f7;color:#475569}

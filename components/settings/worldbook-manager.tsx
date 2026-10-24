@@ -1,17 +1,19 @@
 "use client";
 
 import { useState, useEffect, useRef, useContext, useCallback } from "react";
-import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2, Replace } from "lucide-react";
+import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, ChevronDown, AlertCircle, Folder, FolderPlus, Pencil, Maximize2, Replace } from "lucide-react";
 import {
     loadWorldBooks,
     saveWorldBooks,
+    loadWorldBookFolders,
+    saveWorldBookFolders,
     createWorldBook,
     parseWorldBookFromJson,
     loadBindingConfig,
     UNSUPPORTED_IMPORT_FORMAT,
 } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
-import type { WorldBookConfig, WorldBookEntry } from "@/lib/settings-types";
+import type { WorldBookConfig, WorldBookEntry, WorldBookFolder } from "@/lib/settings-types";
 import { SettingsContext } from "../phone-settings-app";
 import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
 import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
@@ -19,6 +21,8 @@ import { notifyMascotPageContext } from "@/lib/mascot-events";
 
 export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {}) {
     const [books, setBooks] = useState<WorldBookConfig[]>([]);
+    const [folders, setFolders] = useState<WorldBookFolder[]>([]);
+    const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
     const [activeBookId, setActiveBookId] = useState<string>("");
     const [viewMode, setViewMode] = useState<"list" | "detail">("list");
     const [editingUid, setEditingUid] = useState<string | null>(null);
@@ -34,6 +38,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
     // Initial load
     useEffect(() => {
         const loaded = loadWorldBooks();
+        setFolders(loadWorldBookFolders());
         if (loaded.length > 0) {
             setBooks(loaded);
             setActiveBookId(loaded[0]?.id || "");
@@ -44,6 +49,12 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
     const persist = useCallback((newBooks: WorldBookConfig[]) => {
         setBooks(newBooks);
         saveWorldBooks(newBooks);
+    }, []);
+
+    const persistFolders = useCallback((next: WorldBookFolder[]) => {
+        const normalized = next.map((folder, index) => ({ ...folder, order: index }));
+        setFolders(normalized);
+        saveWorldBookFolders(normalized);
     }, []);
 
     const wbContainerRef = useRef<HTMLDivElement>(null);
@@ -275,6 +286,34 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         persist(books.map(b => b.id === id ? { ...b, ...updates, updatedAt: Date.now() } : b));
     };
 
+    const addFolder = () => {
+        const name = window.prompt("新建世界书分组名称", `世界分组 ${folders.length + 1}`)?.trim();
+        if (!name) return;
+        const now = Date.now();
+        persistFolders([...folders, { id: `worldbook-folder-${now}-${Math.random().toString(36).slice(2, 6)}`, name, order: folders.length, createdAt: now, updatedAt: now }]);
+    };
+
+    const renameFolder = (folder: WorldBookFolder) => {
+        const name = window.prompt("修改世界书分组名称", folder.name)?.trim();
+        if (!name || name === folder.name) return;
+        persistFolders(folders.map((item) => item.id === folder.id ? { ...item, name, updatedAt: Date.now() } : item));
+    };
+
+    const removeFolder = (folder: WorldBookFolder) => {
+        if (!window.confirm(`删除分组“${folder.name}”？分组内的世界书会移到“未分组”，不会删除世界书。`)) return;
+        persist(books.map((book) => book.folderId === folder.id ? { ...book, folderId: undefined, updatedAt: Date.now() } : book));
+        persistFolders(folders.filter((item) => item.id !== folder.id));
+    };
+
+    const toggleFolder = (id: string) => {
+        setCollapsedFolderIds((previous) => {
+            const next = new Set(previous);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
     const removeBook = (id: string) => {
         const remaining = books.filter(b => b.id !== id);
         persist(remaining);
@@ -468,6 +507,44 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         if (editingUid === uid) setEditingUid(null);
     };
 
+    const renderBookCard = (book: WorldBookConfig) => (
+        <div
+            key={book.id}
+            className="ui-config-card min-w-0 cursor-pointer"
+            style={{ aspectRatio: "3 / 2", padding: "12px", justifyContent: "space-between" }}
+            role="button"
+            tabIndex={0}
+            aria-label={`编辑 ${book.name || "世界书"}`}
+            onClick={() => { setActiveBookId(book.id); setViewMode("detail"); }}
+            onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setActiveBookId(book.id);
+                    setViewMode("detail");
+                }
+            }}
+        >
+            <div className="min-w-0 flex flex-col gap-1.5">
+                <div className="min-w-0 flex items-center gap-[6px]">
+                    <BookOpen size={16} className="shrink-0" />
+                    <span className="truncate text-[calc(14.4px*var(--app-text-scale,1))] font-bold leading-tight text-[var(--c-text-title)]">{book.name}</span>
+                </div>
+                <span className="menu-desc truncate">{book.description || `${book.entries?.length || 0} 个条目`}</span>
+            </div>
+            <div className="flex items-end justify-between gap-2">
+                <label className="min-w-0 flex-1" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                    <span className="sr-only">移动到分组</span>
+                    <select className="worldbook-folder-select" value={folders.some((folder) => folder.id === book.folderId) ? book.folderId : ""} onChange={(event) => updateBook(book.id, { folderId: event.target.value || undefined })}>
+                        <option value="">未分组</option>
+                        {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                    </select>
+                </label>
+                <ChevronLeft size={16} className="shrink-0 opacity-40" style={{ transform: "rotate(180deg)" }} />
+            </div>
+        </div>
+    );
+
     if (!isLoaded) return null;
 
     return (
@@ -478,6 +555,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                 <>
                     <div className="flex items-center">
                         <h2 className="m-0 mx-2 ts-28 font-bold italic leading-none text-black">Worldbooks</h2>
+                        <button type="button" className="worldbook-add-folder" onClick={addFolder}><FolderPlus size={15} />新建分组</button>
                     </div>
 
                     {books.length === 0 ? (
@@ -494,38 +572,38 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                             </button>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-2 gap-3">
-                            {books.map(book => (
-                                <div
-                                    key={book.id}
-                                    className="ui-config-card min-w-0 cursor-pointer"
-                                    style={{ aspectRatio: "3 / 2", padding: "12px", justifyContent: "space-between" }}
-                                    role="button"
-                                    tabIndex={0}
-                                    aria-label={`编辑 ${book.name || "世界书"}`}
-                                    onClick={() => { setActiveBookId(book.id); setViewMode("detail"); }}
-                                    onKeyDown={(event) => {
-                                        if (event.target !== event.currentTarget) return;
-                                        if (event.key === "Enter" || event.key === " ") {
-                                            event.preventDefault();
-                                            setActiveBookId(book.id);
-                                            setViewMode("detail");
-                                        }
-                                    }}
-                                >
-                                    <div className="min-w-0 flex flex-col gap-1.5">
-                                        <div className="min-w-0 flex items-center gap-[6px]">
-                                            <BookOpen size={16} className="shrink-0" />
-                                            <span className="truncate text-[calc(14.4px*var(--app-text-scale,1))] font-bold leading-tight text-[var(--c-text-title)]">{book.name}</span>
-                                        </div>
-                                        <span className="menu-desc truncate">{book.description || `${book.entries?.length || 0} 个条目`}</span>
-                                    </div>
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="menu-desc ts-12">条目 {book.entries?.length || 0}</span>
-                                        <ChevronLeft size={16} className="opacity-40" style={{ transform: "rotate(180deg)" }} />
-                                    </div>
-                                </div>
-                            ))}
+                        <div className="worldbook-folder-list">
+                            {folders.map((folder) => {
+                                const folderBooks = books.filter((book) => book.folderId === folder.id);
+                                const collapsed = collapsedFolderIds.has(folder.id);
+                                return (
+                                    <section className="worldbook-folder-section" key={folder.id}>
+                                        <header>
+                                            <button type="button" className="worldbook-folder-toggle" onClick={() => toggleFolder(folder.id)}>
+                                                {collapsed ? <ChevronLeft size={15} /> : <ChevronDown size={15} />}<Folder size={16} /><strong>{folder.name}</strong><span>{folderBooks.length}</span>
+                                            </button>
+                                            <button type="button" onClick={() => renameFolder(folder)} aria-label={`重命名${folder.name}`}><Pencil size={13} /></button>
+                                            <button type="button" onClick={() => removeFolder(folder)} aria-label={`删除${folder.name}`}><Trash2 size={13} /></button>
+                                        </header>
+                                        {!collapsed && (folderBooks.length ? <div className="grid grid-cols-2 gap-3">{folderBooks.map(renderBookCard)}</div> : <p>这个分组还是空的，可在世界书卡片底部选择移入。</p>)}
+                                    </section>
+                                );
+                            })}
+                            {(() => {
+                                const knownIds = new Set(folders.map((folder) => folder.id));
+                                const ungrouped = books.filter((book) => !book.folderId || !knownIds.has(book.folderId));
+                                const collapsed = collapsedFolderIds.has("__ungrouped__");
+                                return (
+                                    <section className="worldbook-folder-section">
+                                        <header>
+                                            <button type="button" className="worldbook-folder-toggle" onClick={() => toggleFolder("__ungrouped__")}>
+                                                {collapsed ? <ChevronLeft size={15} /> : <ChevronDown size={15} />}<BookOpen size={16} /><strong>未分组</strong><span>{ungrouped.length}</span>
+                                            </button>
+                                        </header>
+                                        {!collapsed && (ungrouped.length ? <div className="grid grid-cols-2 gap-3">{ungrouped.map(renderBookCard)}</div> : <p>所有世界书都已经整理进分组。</p>)}
+                                    </section>
+                                );
+                            })()}
                         </div>
                     )}
                 </>

@@ -8,7 +8,7 @@ import {
   resolveBinding,
   resolveUserIdentity,
 } from "./settings-storage";
-import type { ApiConfig, PresetConfig, RegexConfig, WorldBookConfig } from "./settings-types";
+import type { ApiConfig, PresetConfig, Prompt, RegexConfig, WorldBookConfig } from "./settings-types";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { previewMessagesForApi, sendLLMRequest, sendLLMStreamRequest, ChatEngineError } from "./chat-engine";
 import { loadMemoryConfig } from "./memory-storage";
@@ -66,6 +66,58 @@ function selectStoryPresetPrompts(preset: PresetConfig | null, selectedIds?: str
   };
 }
 
+function orderedPresetPrompts(preset: PresetConfig): Prompt[] {
+  if (!preset.prompt_order?.length) return preset.prompts.map((prompt) => ({ ...prompt }));
+  const promptMap = new Map(preset.prompts.map((prompt) => [prompt.identifier, prompt]));
+  const result: Prompt[] = [];
+  const seen = new Set<string>();
+  for (const orderEntry of preset.prompt_order) {
+    const prompt = promptMap.get(orderEntry.identifier);
+    if (!prompt || seen.has(prompt.identifier)) continue;
+    seen.add(prompt.identifier);
+    result.push({ ...prompt, enabled: orderEntry.enabled });
+  }
+  for (const prompt of preset.prompts) {
+    if (!seen.has(prompt.identifier)) result.push({ ...prompt });
+  }
+  return result;
+}
+
+/**
+ * 剧情预设缝合只追加提示条目。模型参数、摘要标签和历史标记仍由基础绑定预设决定，
+ * 避免多个预设的温度、上下文长度或结构标记彼此覆盖。
+ */
+function stitchStoryPreset(base: PresetConfig | null, settings?: StoryCharacterSettings): PresetConfig | null {
+  if (!base || settings?.presetStitchingEnabled !== true) return base;
+  const selectedIds = Array.from(new Set(settings.stitchedPresetIds || [])).filter((id) => id && id !== base.id);
+  if (!selectedIds.length) return base;
+  const presets = loadPresets();
+  const additions = selectedIds
+    .map((id) => presets.find((preset) => preset.id === id))
+    .filter((preset): preset is PresetConfig => Boolean(preset));
+  if (!additions.length) return base;
+
+  const appendedPrompts = additions.flatMap((preset) => orderedPresetPrompts(preset)
+    .filter((prompt) => !prompt.marker)
+    .map((prompt) => ({
+      ...prompt,
+      identifier: `stitched:${preset.id}:${prompt.identifier}`,
+    })));
+  const prompts = [...base.prompts.map((prompt) => ({ ...prompt })), ...appendedPrompts];
+  // 基础预设的排序表可能含有 prompts 数组里不存在的合成标记（例如历史插入点），必须原样保留。
+  const baseOrder = base.prompt_order?.map((entry) => ({ ...entry }))
+    || base.prompts.map((prompt) => ({ identifier: prompt.identifier, enabled: prompt.enabled }));
+  return {
+    ...base,
+    name: [base.name, ...additions.map((preset) => preset.name)].join(" + "),
+    prompts,
+    prompt_order: [
+      ...baseOrder,
+      ...appendedPrompts.map((prompt) => ({ identifier: prompt.identifier, enabled: prompt.enabled })),
+    ],
+  };
+}
+
 function buildStorySettingsPrompt(
   settings: StoryCharacterSettings | undefined,
   userName: string,
@@ -96,8 +148,8 @@ function buildStorySettingsPrompt(
     // 新建方案 prompt 留空时不注入（避免出现“文风方案【xxx】：”这样的空行）
     effective.extraPrompt?.trim() ? `额外要求：${effective.extraPrompt.trim()}` : "",
     ...(effective.customPromptEntries || []).filter((item) => item.enabled && item.content.trim()).map((item) => `专属条目【${item.name || "未命名"}】：${item.content.trim()}`),
-    status?.prompt?.trim() || "",
-    theater?.prompt?.trim() || "",
+    effective.statusGenerationEnabled !== false ? (status?.prompt?.trim() || "") : "",
+    effective.theaterGenerationEnabled !== false ? (theater?.prompt?.trim() || "") : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -235,7 +287,7 @@ export async function generateStoryCompletion(
   }
 
   const { apiConfig, preset: resolvedPreset, regexes, worldBooks, regexSignature, summaryTag } = resolveStoryConfigs(characterId);
-  const preset = selectStoryPresetPrompts(resolvedPreset, options?.settings?.enabledPresetPromptIds);
+  const preset = selectStoryPresetPrompts(stitchStoryPreset(resolvedPreset, options?.settings), options?.settings?.enabledPresetPromptIds);
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
   const llmMessages = await buildStoryPromptMessages(
@@ -458,7 +510,7 @@ export async function previewStoryPromptPayload(
     throw new ChatEngineError(`Character not found: ${characterId}`);
   }
   const { apiConfig, preset: resolvedPreset, regexes, worldBooks } = resolveStoryConfigs(characterId);
-  const preset = selectStoryPresetPrompts(resolvedPreset, options?.settings?.enabledPresetPromptIds);
+  const preset = selectStoryPresetPrompts(stitchStoryPreset(resolvedPreset, options?.settings), options?.settings?.enabledPresetPromptIds);
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
   const llmMessages = await buildStoryPromptMessages(
     characterId,
