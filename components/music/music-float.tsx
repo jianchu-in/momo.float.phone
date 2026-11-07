@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMusicControlsOptional } from "@/lib/music-context";
+import { useListeningPresence, ListeningPlanets } from "./listening-presence";
 
 const DRAG_START_THRESHOLD = 6;
 const SWIPE_DISMISS_EDGE_X = 4;
@@ -162,6 +163,9 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const handlePointerUp = useCallback((e: React.PointerEvent) => finishPointer(e), [finishPointer]);
     const handlePointerCancel = useCallback((e: React.PointerEvent) => finishPointer(e), [finishPointer]);
 
+    const presence = useListeningPresence();
+    const together = presence.room?.status === "joined";
+
     if (!player || !player.currentTrack || hidden || player.floatDismissed) return null;
 
     const track = player.currentTrack;
@@ -172,6 +176,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
             className="music-float"
             {...(expanded ? { "data-expanded": "" } : {})}
             {...(dismissing ? { "data-dismissing": "" } : {})}
+            {...(together ? { "data-together": "" } : {})}
             style={{ left: pos.x, top: pos.y }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
@@ -181,6 +186,7 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
             <div className="music-float-inner">
                 {/* Cover art */}
                 <div className="music-float-cover-wrap" {...(player.isPlaying ? { "data-playing": "" } : {})}>
+                    {together && <ListeningPlanets presence={presence} playing={player.isPlaying} />}
                     <div className="music-float-vinyl-groove music-float-vinyl-groove-1" />
                     <div className="music-float-vinyl-groove music-float-vinyl-groove-2" />
                     <div className="music-float-vinyl-center">

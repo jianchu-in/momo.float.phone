@@ -1,0 +1,54 @@
+.panel { position: absolute; inset: 0; z-index: 120; display: flex; flex-direction: column; overflow: hidden; background: var(--c-page-body-bg, #fff); color: var(--c-text, #1c1c1e); font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.panel button { cursor: pointer; font: inherit; }
+.panel button:disabled { cursor: default; opacity: .45; }
+.panel button:focus-visible, .playlist summary:focus-visible, .status button:focus-visible { outline: 2px solid #fa3658; outline-offset: -3px; }
+.panel :global(.music-app) { flex: 1; min-height: 0; }
+.accessory { flex-shrink: 0; padding: 8px 16px 0; color: var(--c-text, #1c1c1e); background: var(--c-page-body-bg, #fff); }
+.invitation { display: none !important; }
+.invitation img, .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.avatar { display: grid; place-items: center; background: color-mix(in srgb, #fa3658 12%, transparent); color: #fa3658; }
+.invitationCopy { flex: 1; min-width: 0; }
+.invitation :global(.listening-duet) { flex: 0 0 59px; }
+.invitation :global(.listening-duet-photo img) { width: 100%; height: 100%; }
+.invitation strong, .song strong, .playlist strong { display: block; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.invitation small, .song small, .playlist small { display: block; margin-top: 3px; font-size: 12px; opacity: .6; }
+.invitation button { border: 0; background: transparent; color: #ee3153; min-width: 44px; min-height: 44px; font-size: 13px; font-weight: 600; }
+.tabs { display: flex; gap: 18px; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+.tabs button { border: 0; background: transparent; color: inherit; min-height: 44px; padding: 0 2px; opacity: .6; }
+.tabs button[aria-current] { opacity: 1; color: #ee3153; box-shadow: inset 0 -2px #ee3153; }
+.header { display: flex; align-items: center; gap: 10px; padding: max(10px, env(safe-area-inset-top)) 12px 0; }
+.header h2 { font-size: 20px; margin: 0; }
+.header button, .now button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; display: flex; align-items: center; justify-content: center; }
+.library { overflow: auto; flex: 1; padding: 12px 20px 28px; }
+.library h2 { font-size: 28px; letter-spacing: -.7px; margin: 16px 0 24px; }
+.library h3 { font-size: 18px; margin: 24px 0 10px; }
+.playlist { border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+.playlist summary { list-style: none; cursor: pointer; display: flex; gap: 14px; align-items: center; min-height: 72px; }
+.playlist summary::-webkit-details-marker { display: none; }
+.playlist summary > span { flex: 1; }
+.playlist summary > svg:first-child { color: #ee3153; }
+.playlist p, .empty, .note { font-size: 13px; opacity: .65; line-height: 1.7; }
+.song { display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px 0; text-align: left; border: 0; border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent); background: none; color: inherit; }
+.song > span:nth-child(2) { flex: 1; min-width: 0; }
+.songIcon { width: 42px; height: 42px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, currentColor 6%, transparent); color: #ee3153; flex-shrink: 0; }
+.now { display: flex; align-items: center; padding: 6px 12px max(6px, env(safe-area-inset-bottom)); border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+.now > button:first-child { flex: 1; justify-content: flex-start; gap: 12px; text-align: left; }
+.notice { position: absolute; bottom: 85px; left: 16px; right: 16px; padding: 14px; border-radius: 16px; border: 1px solid color-mix(in srgb, currentColor 10%, transparent); color: var(--c-text, #1c1c1e); background: var(--c-page-body-bg, #fff); box-shadow: 0 6px 28px #0002; z-index: 2; }
+.status { position: absolute; top: 78px; right: 12px; z-index: 8; max-width: calc(100% - 24px); display: flex; align-items: center; padding: 3px 4px; border-radius: 26px; color: var(--c-text, #1c1c1e); background: color-mix(in srgb, var(--c-page-body-bg, #fff) 88%, transparent); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid color-mix(in srgb, currentColor 10%, transparent); box-shadow: 0 3px 16px #0001; }
+.status button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+.status img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+.status span { min-width: 0; text-align: left; }
+.status strong { display: block; font-size: 12px; max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.status small { display: block; font-size: 11px; opacity: .6; max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.status { touch-action: none; user-select: none; -webkit-user-select: none; }
+.status img { -webkit-user-drag: none; }
+.panel { --c-text: #1c1c1e; --c-page-body-bg: #fff; }
+.invitation { background: #f5f5f7; }
+.invitation strong { color: var(--c-text); }
+.invitation small { opacity: 1; color: #6e6e73; }
+@media (prefers-color-scheme: dark) {
+    .panel { --c-text: #f5f5f7; --c-page-body-bg: #161618; }
+    .invitation { background: #28282c; }
+    .invitation small { color: #a1a1a6; }
+}

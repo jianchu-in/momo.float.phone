@@ -9,6 +9,8 @@ import { resolveContactCard } from "@/lib/contact-card";
 import { loadCharacters } from "@/lib/character-storage";
 import { CHAT_OPEN_SESSION_EVENT, dispatchOpenAddContact } from "@/lib/chat-notification-events";
 import { ContactCardGenerateFlow } from "@/components/chat/contact-card-generate-flow";
+import { ListeningInviteCard } from "./listening-invite-card";
+import { LyricShareCard } from "@/components/music/lyric-share-card";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
 import { findStickerByName } from "@/lib/sticker-data";
 import { splitBilingualText } from "@/lib/bilingual-text";
@@ -93,6 +95,8 @@ function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
  */
 export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false, onFavoriteMedia }: MessageBubbleProps) {
     switch (msg.mediaType) {
+        case "listening_invite":
+            return <ListeningInviteCard msg={msg} />;
         case "red_packet":
             return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} onShowDetail={onShowDetail} />;
         case "transfer":
@@ -2282,6 +2286,10 @@ function MediaFileBubble({
 function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: string, artist?: string) => void }) {
     const title = msg.mediaData?.musicTitle || "未知歌曲";
     const artist = msg.mediaData?.musicArtist || "";
+    const lyricText = msg.listeningContext?.reference?.text;
+    if (lyricText) {
+        return <LyricShareCard title={title} artist={artist} coverUrl={msg.mediaData?.musicCoverUrl} text={lyricText} onPlay={() => onPlay?.(title, artist || undefined)} />;
+    }
     return (
         <div
             className="chat-music-share-card"

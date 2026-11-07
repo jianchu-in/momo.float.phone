@@ -492,6 +492,15 @@ function isBlacklistEventHistoryMessage(message: ChatMessage): boolean {
         && (message.mediaData?.blacklistEvent === "block" || message.mediaData?.blacklistEvent === "unblock");
 }
 
+/** history 末尾是一起听相关系统通知或卡片 → 允许角色针对新开启的一起听事件作出自然反应，不被续写提示压制。 */
+function isListeningEventHistoryMessage(message: ChatMessage): boolean {
+    if (message.mediaType === "listening_invite") return true;
+    if (message.role === "system" && typeof message.content === "string" && message.content.includes("一起听")) {
+        return true;
+    }
+    return false;
+}
+
 /** 日志分流：工坊（appId === "qa"）经聊天引擎发出的调用（答疑 Agent 原生工具循环）归工坊环，
  *  其余归底层调用日志环。channel 不能硬编码——工坊的 Agent 循环复用 sendLLMToolStreamRequest，
  *  旧逻辑靠 characterName === "工坊" 分流，改成显式字段后必须从 appId 派生，否则工坊记录漏进主环。 */
@@ -527,6 +536,10 @@ export function appendEmptyGenerateGuardMessage(
     // 仿真拉黑事件豁免：末尾是拉黑/解除拉黑事件时，角色必须对此作出反应——
     // 续写压制提示里的「禁止引用或复述系统消息」会把这次知情反应整个压掉
     if (lastHistoryMessage && isBlacklistEventHistoryMessage(lastHistoryMessage)) {
+        return;
+    }
+    // 一起听开启/邀请事件豁免：末尾刚发起或开始一起听，角色应能自然对这首歌或共同聆听作出表达
+    if (lastHistoryMessage && isListeningEventHistoryMessage(lastHistoryMessage)) {
         return;
     }
 

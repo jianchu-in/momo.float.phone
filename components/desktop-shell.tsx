@@ -16,6 +16,7 @@ import { PhonePlaceholderApp } from "@/components/phone-placeholder-app";
 import MusicApp from "@/components/music/music-app";
 import MusicPlayer from "@/components/music/music-player";
 import MusicFloat from "@/components/music/music-float";
+import { ListeningGlow } from "@/components/music/listening-glow";
 import MiniAppWindow from "@/components/music/mini-app-window";
 import { PhoneCalendarApp } from "@/components/calendar-app";
 import { PhoneQaApp } from "@/components/phone-qa-app";
@@ -32,7 +33,10 @@ import ReadingApp from "@/components/reading/reading-app";
 import MapApp from "@/components/map/map-app";
 import { DwellingApp } from "@/components/dwelling/dwelling-app";
 import { MascotFloat } from "@/components/mascot/mascot-float";
+import { PerceptionBootstrap } from "@/components/perception/perception-bootstrap";
 import { MascotPreviewHost } from "@/components/mascot/mascot-preview-host";
+import { CallLayer } from "@/components/chat/call-layer";
+import { FloatingTools } from "@/components/floating-tools";
 import { useMusicControlsOptional } from "@/lib/music-context";
 import { PhoneResourcesApp, type ResourceSubPage } from "@/components/phone-resources-app";
 import { CheckPhoneApp } from "@/components/checkphone/checkphone-app";
@@ -1038,6 +1042,7 @@ const MusicShellOverlays = memo(function MusicShellOverlays({
     <>
       {musicPlayer?.showFullPlayer && musicPlayer.currentTrack && <MusicPlayer />}
       <MusicFloat hidden={activeApp === "music" || musicPlayer?.showFullPlayer} />
+      <ListeningGlow />
     </>
   );
 });
@@ -1070,6 +1075,14 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     syncIconStyles();
     window.addEventListener(CUSTOM_APPS_UPDATED_EVENT, syncIconStyles);
     return () => window.removeEventListener(CUSTOM_APPS_UPDATED_EVENT, syncIconStyles);
+  }, []);
+  useEffect(() => {
+    const onEnded = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { sessionId?: string };
+      if (detail?.sessionId) void requestBackgroundChatReply(detail.sessionId);
+    };
+    window.addEventListener("chat-call-ended", onEnded);
+    return () => window.removeEventListener("chat-call-ended", onEnded);
   }, []);
   const [customAppUpdatePrompt, setCustomAppUpdatePrompt] = useState<PendingCustomAppUpdatePrompt | null>(null);
   const [customAppUpdateBusy, setCustomAppUpdateBusy] = useState(false);
@@ -4837,9 +4850,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               ) : null}
               <DebugPromptPanel />
               <QuickActionFloat />
+              <FloatingTools activeApp={activeApp} chatSession={activeChatSession} />
               <MascotFloat />
               {/* 预览弹窗宿主：独立于桌宠的展开/收起状态，否则桌宠收成小球时弹不出来 */}
               <MascotPreviewHost />
+              <CallLayer />
 
               {/* Widget Picker Bottom Sheet */}
               {showWidgetPicker && (
@@ -5060,6 +5075,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       </section>
       {/* 微信云同步过程可视化：拉取/上传/运行包同步与失败都在这里冒 toast */}
       <WeixinSyncToast />
+      {/* 感知引擎生命周期挂载：随桌面运行开始采样，离开时停止 */}
+      <PerceptionBootstrap />
     </>
   );
 }

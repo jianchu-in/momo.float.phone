@@ -5155,6 +5155,7 @@
 .call-text-input-panel {
   z-index: 14;
   width: 100%;
+  box-sizing: border-box;
   padding: 0 18px 8px;
   flex-shrink: 0;
 }
@@ -5163,11 +5164,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .call-text-input-row .call-text-input-shell {
-  flex: 1;
-  width: auto;
+  flex: 1 1 0%;
+  min-width: 0;
+  width: 0;
+  box-sizing: border-box;
 }
 
 .call-regenerate-btn {
@@ -5268,9 +5273,12 @@
   position: absolute;
   left: 14px;
   right: 14px;
+  width: calc(100% - 28px) !important;
+  max-width: calc(100% - 28px) !important;
+  box-sizing: border-box !important;
   bottom: calc(max(30px, env(safe-area-inset-bottom, 0px)) + 152px);
-  width: auto;
-  padding: 0;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .gcall-video-text-input-panel {
@@ -5286,39 +5294,54 @@
   position: absolute;
   left: 18px;
   right: 18px;
+  width: calc(100% - 36px) !important;
+  max-width: calc(100% - 36px) !important;
+  box-sizing: border-box !important;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 112px);
-  width: auto;
-  padding: 0;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .gcall-root[data-text-input] .gcall-text-input-panel {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  width: calc(100% - 36px) !important;
+  max-width: calc(100% - 36px) !important;
+  box-sizing: border-box !important;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 132px);
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .call-text-input-shell {
-  width: 100%;
   min-height: 42px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px 7px 13px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 7px 10px 7px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
-  background: rgba(20, 20, 24, 0.34);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(20, 20, 24, 0.42);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-sizing: border-box;
 }
 
 .call-text-input {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
   border: 0;
   outline: 0;
   background: transparent;
   color: #fff;
   font-size: calc(13.5px*var(--app-text-scale,1));
   line-height: 1.35;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
 }
 
 .call-text-input::placeholder {
@@ -5332,6 +5355,8 @@
 .call-text-send-btn {
   width: 32px;
   height: 28px;
+  min-width: 32px;
+  flex-shrink: 0;
   border: 0;
   border-radius: 999px;
   display: inline-flex;
@@ -5341,6 +5366,8 @@
   color: rgba(255, 255, 255, 0.88);
   cursor: pointer;
   touch-action: manipulation;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 .call-text-send-btn:disabled {

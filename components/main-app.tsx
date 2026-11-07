@@ -6,6 +6,8 @@ import { ArrowRight } from "lucide-react";
 import { AccountGate } from "@/components/auth/account-gate";
 import { CloudBackupScheduler } from "@/components/cloud-backup-scheduler";
 import { RealityBridgeScheduler } from "@/components/reality-bridge-scheduler";
+import { WidgetScheduler } from "@/components/widget/widget-scheduler";
+import { CheckInScheduler } from "@/components/screenshot/checkin-scheduler";
 import { MediaMaintenanceScheduler } from "@/components/media-maintenance-scheduler";
 import { DesktopShell } from "./desktop-shell";
 import { OfflinePushRevampAnnouncement } from "./offline-push-revamp-announcement";
@@ -320,6 +322,8 @@ export function MainApp() {
             <OfflinePushRevampAnnouncement />
             <CloudBackupScheduler />
             <RealityBridgeScheduler />
+            <WidgetScheduler />
+            <CheckInScheduler />
             <MediaMaintenanceScheduler />
           </MusicProvider>
         </main>
