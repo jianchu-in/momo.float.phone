@@ -7,7 +7,17 @@ exports.handler = async (event, context) => {
   
   try {
     const body = JSON.parse(event.body)
-    const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    const path = body._path || '/chat/completions'
+    
+    // 移除 Float 内部标记字段
+    delete body._path
+    
+    // 根据路径选择不同接口
+    const url = path.includes('/images/generations')
+      ? 'https://api.siliconflow.cn/v1/images/generations'
+      : 'https://api.siliconflow.cn/v1/chat/completions'
+    
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
