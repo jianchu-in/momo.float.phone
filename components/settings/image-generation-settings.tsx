@@ -31,6 +31,13 @@ import {
     NOVELAI_RESOLUTION_OPTIONS,
     NOVELAI_SAMPLER_OPTIONS,
 } from "@/lib/novelai-image-config";
+import {
+    DASHSCOPE_COMMON_MODELS,
+    DASHSCOPE_DEFAULT_BASE_URL,
+    DASHSCOPE_DEFAULT_MODEL,
+    DASHSCOPE_DEFAULT_SIZE,
+    DASHSCOPE_SIZE_OPTIONS,
+} from "@/lib/dashscope-image-config";
 
 const SIZE_OPTIONS = ["auto", "1024x1024", "1024x1536", "1536x1024"];
 const QUALITY_OPTIONS = ["auto", "low", "medium", "high"];
@@ -303,6 +310,25 @@ export function ImageGenerationSettings() {
             },
         });
     }, [naiSettings, persist, settings]);
+
+    // 百炼 DashScope 状态
+    const dsSettings = useMemo(() => {
+        const ds = settings.dashscope;
+        return {
+            apiKey: ds?.apiKey || "",
+            baseUrl: ds?.baseUrl || "",
+            model: ds?.model || DASHSCOPE_DEFAULT_MODEL,
+            size: ds?.size || DASHSCOPE_DEFAULT_SIZE,
+            negativePrompt: ds?.negativePrompt || "",
+            extraPrompt: ds?.extraPrompt || "",
+            promptExtend: ds?.promptExtend === true,
+            watermark: ds?.watermark === true,
+        };
+    }, [settings.dashscope]);
+
+    const updateDashScope = useCallback((patch: Partial<import("@/lib/settings-types").DashScopeImageSettings>) => {
+        persist({ ...settings, dashscope: { ...dsSettings, ...patch } });
+    }, [dsSettings, persist, settings]);
 
     const updateActivePreset = useCallback((patch: Partial<NovelAiPreset>) => {
         const nextPresets = naiSettings.presets.map(p => {
@@ -651,11 +677,12 @@ export function ImageGenerationSettings() {
                     <Select
                         value={settings.provider || "openai"}
                         onChange={(event) => updateSettings({
-                            provider: event.target.value as "openai" | "novelai",
+                            provider: event.target.value as "openai" | "novelai" | "dashscope",
                         })}
                     >
                         <option value="openai">OpenAI 兼容 (通用模型 / DALL-E / Flux / SD 中转等)</option>
                         <option value="novelai">NovelAI 原生接口 (官方 API)</option>
+                        <option value="dashscope">百炼 DashScope 原生接口 (通义万相 / qwen-image)</option>
                     </Select>
                 </div>
 
@@ -976,6 +1003,113 @@ export function ImageGenerationSettings() {
                                     className="rounded border-[var(--c-card-border)]"
                                 />
                                 <span className="text-xs font-medium">启用 SMEA</span>
+                            </label>
+                        </div>
+                    </>
+                ) : settings.provider === "dashscope" ? (
+                    /* --- 百炼 DashScope 配置面板 --- */
+                    <>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">DashScope API Key</label>
+                            <Input
+                                type="password"
+                                value={dsSettings.apiKey}
+                                onChange={(event) => updateDashScope({ apiKey: event.target.value })}
+                                placeholder="sk-..."
+                            />
+                            <span className="menu-desc ml-1">百炼控制台的 API-KEY。请求固定走服务端转发，不会在浏览器直连（百炼未开放 CORS）。</span>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">地域端点 (Base URL)</label>
+                            <Input
+                                type="url"
+                                value={dsSettings.baseUrl}
+                                onChange={(event) => updateDashScope({ baseUrl: event.target.value })}
+                                placeholder={DASHSCOPE_DEFAULT_BASE_URL}
+                            />
+                            <span className="menu-desc ml-1 opacity-70">留空使用北京地域 {DASHSCOPE_DEFAULT_BASE_URL}；新加坡账号填 https://dashscope-intl.aliyuncs.com 。只填域名即可，接口路径由程序拼接。</span>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">模型名</label>
+                            <div className="relative flex-1">
+                                <Input
+                                    type="text"
+                                    value={dsSettings.model}
+                                    onChange={(event) => updateDashScope({ model: event.target.value })}
+                                    placeholder={DASHSCOPE_DEFAULT_MODEL}
+                                    className="w-full pr-9"
+                                />
+                                <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-60" />
+                                <select
+                                    aria-label="选择百炼模型"
+                                    value=""
+                                    onChange={(event) => { if (event.target.value) updateDashScope({ model: event.target.value }); }}
+                                    className="absolute inset-y-0 right-0 w-10 cursor-pointer opacity-0"
+                                >
+                                    <option value="">快速选择模型...</option>
+                                    {DASHSCOPE_COMMON_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+                            <span className="menu-desc ml-1 opacity-70">可手动填写任意在百炼开通的文生图模型名。</span>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">出图尺寸</label>
+                            <Select
+                                value={dsSettings.size}
+                                onChange={(event) => updateDashScope({ size: event.target.value })}
+                            >
+                                {!DASHSCOPE_SIZE_OPTIONS.some(opt => opt.value === dsSettings.size) && (
+                                    <option value={dsSettings.size}>{dsSettings.size}（自定义）</option>
+                                )}
+                                {DASHSCOPE_SIZE_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                            </Select>
+                            <span className="menu-desc ml-1 opacity-70">百炼尺寸格式为「宽*高」星号分隔。不同模型支持的分辨率不同，报错请换尺寸。</span>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">负面提示词 (Negative Prompt)</label>
+                            <Textarea
+                                value={dsSettings.negativePrompt}
+                                onChange={(event) => updateDashScope({ negativePrompt: event.target.value })}
+                                placeholder="lowres, bad anatomy, watermark, text..."
+                                rows={2}
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">补充提示词</label>
+                            <Textarea
+                                value={dsSettings.extraPrompt}
+                                onChange={(event) => updateDashScope({ extraPrompt: event.target.value })}
+                                placeholder="电影感光线，高细节，真实照片风格"
+                                rows={3}
+                            />
+                            <span className="menu-desc ml-1 opacity-70">角色生图时会自动叠加「角色固定外观」与「角色特定锚点」。</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                            <label className="flex min-h-11 items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={dsSettings.promptExtend}
+                                    onChange={(e) => updateDashScope({ promptExtend: e.target.checked })}
+                                    className="rounded border-[var(--c-card-border)]"
+                                />
+                                <span className="text-xs font-medium">提示词智能改写</span>
+                            </label>
+                            <label className="flex min-h-11 items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={dsSettings.watermark}
+                                    onChange={(e) => updateDashScope({ watermark: e.target.checked })}
+                                    className="rounded border-[var(--c-card-border)]"
+                                />
+                                <span className="text-xs font-medium">添加 AI 水印</span>
                             </label>
                         </div>
                     </>

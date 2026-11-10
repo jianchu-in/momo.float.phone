@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { ProxyAgent, type Dispatcher } from "undici";
 import JSZip from "jszip";
 import {
+  DASHSCOPE_DEFAULT_MODEL,
+  DASHSCOPE_SUBMIT_PATH,
+  DASHSCOPE_TASK_PATH,
+  normalizeDashScopeBaseUrl,
+  toDashScopeSize,
+} from "@/lib/dashscope-image-config";
+import {
   NOVELAI_DEFAULT_MODEL,
   getNovelAiResolution,
   isNovelAiNoiseSchedule,
@@ -17,7 +24,7 @@ import {
 export const maxDuration = 120;
 
 type ImageGenerationRequest = {
-  provider?: "openai" | "novelai";
+  provider?: "openai" | "novelai" | "dashscope";
   apiKey?: string;
   baseUrl?: string;
   model?: string;
@@ -34,6 +41,10 @@ type ImageGenerationRequest = {
   qualityToggle?: boolean;
   smea?: boolean;
   smeaDyn?: boolean;
+  // 百炼 DashScope 专属参数
+  negativePrompt?: string;
+  promptExtend?: boolean;
+  watermark?: boolean;
 };
 
 type ExtractedImage =
@@ -297,7 +308,107 @@ async function runNovelAiGeneration(input: ImageGenerationRequest): Promise<{ st
   }
 }
 
+// 百炼 DashScope 文生图：异步任务协议。
+// 提交任务（必须带 X-DashScope-Async: enable）→ 轮询 /api/v1/tasks/{id} → 取 results[].url。
+// 整体受 110s 超时约束，低于本路由 maxDuration = 120；Netlify 侧由心跳流式机制保活。
+async function runDashScopeGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const apiKey = input.apiKey?.trim();
+  const model = input.model?.trim() || DASHSCOPE_DEFAULT_MODEL;
+  const prompt = input.prompt?.trim();
+  if (!apiKey) return { status: 400, body: { error: "缺少 DashScope API Key" } };
+  if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
+
+  const base = normalizeDashScopeBaseUrl(input.baseUrl);
+  const size = toDashScopeSize(input.size);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 110_000);
+
+  try {
+    const submitRes = await externalFetch(`${base}${DASHSCOPE_SUBMIT_PATH}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "X-DashScope-Async": "enable",
+      },
+      body: JSON.stringify({
+        model,
+        input: {
+          prompt,
+          ...(input.negativePrompt?.trim() ? { negative_prompt: input.negativePrompt.trim() } : {}),
+        },
+        parameters: {
+          n: 1,
+          ...(size ? { size } : {}),
+          prompt_extend: input.promptExtend === true,
+          watermark: input.watermark === true,
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!submitRes.ok) {
+      const errText = await submitRes.text().catch(() => "");
+      return { status: 502, body: { error: `百炼任务提交失败 ${submitRes.status}: ${errText.slice(0, 600)}` } };
+    }
+
+    const submitJson = await submitRes.json() as { output?: { task_id?: string } };
+    const taskId = submitJson.output?.task_id;
+    if (!taskId) {
+      return { status: 502, body: { error: `百炼未返回 task_id：${JSON.stringify(submitJson).slice(0, 400)}` } };
+    }
+
+    // 轮询间隔固定 2s。PENDING / RUNNING 继续等，其余终态立即返回。
+    for (;;) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (controller.signal.aborted) {
+        return { status: 504, body: { error: "百炼生图超时（110 秒未完成）" } };
+      }
+
+      const taskRes = await externalFetch(`${base}${DASHSCOPE_TASK_PATH}/${taskId}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+      });
+      const taskJson = await taskRes.json().catch(() => ({})) as {
+        output?: { task_status?: string; results?: Array<{ url?: string }>; code?: string; message?: string };
+        code?: string;
+        message?: string;
+      };
+      if (!taskRes.ok) {
+        return { status: 502, body: { error: `百炼任务查询失败 ${taskRes.status}: ${JSON.stringify(taskJson).slice(0, 400)}` } };
+      }
+
+      const taskStatus = taskJson.output?.task_status;
+      if (taskStatus === "SUCCEEDED") {
+        const url = taskJson.output?.results?.find(item => item.url)?.url;
+        if (!url) return { status: 502, body: { error: "百炼任务成功但没有返回图片地址" } };
+        try {
+          const downloaded = await fetchImageUrl(url);
+          return { status: 200, body: downloaded };
+        } catch {
+          // 与 OpenAI 分支保持一致的降级语义：图已生成，允许前端只补下载，避免重复计费。
+          return { status: 502, body: { error: "图片已生成，但服务端下载失败", generationCompleted: true, imageUrl: url } };
+        }
+      }
+      if (taskStatus === "FAILED" || taskStatus === "CANCELED" || taskStatus === "UNKNOWN") {
+        const detail = taskJson.output?.message || taskJson.message || taskStatus || "未知错误";
+        const code = taskJson.output?.code || taskJson.code;
+        return { status: 502, body: { error: `百炼生图失败${code ? ` (${code})` : ""}: ${detail}` } };
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message.toLowerCase().includes("abort") ? 504 : 502;
+    return { status, body: { error: message } };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function runImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (input.provider === "dashscope") {
+    return runDashScopeGeneration(input);
+  }
   if (input.provider === "novelai") {
     return runNovelAiGeneration(input);
   }

@@ -19,6 +19,7 @@ import {
   normalizeNovelAiScale,
   normalizeNovelAiSteps,
 } from "./novelai-image-config";
+import { DASHSCOPE_DEFAULT_MODEL, DASHSCOPE_DEFAULT_SIZE } from "./dashscope-image-config";
 
 export type ImageGenerationResult = {
   mediaRef: string;
@@ -850,6 +851,100 @@ export async function fetchNovelAiModels(apiKey: string): Promise<string[]> {
   }
 }
 
+// 百炼模式没有参考图/局部重绘链路，只组装「画面描述 + 角色固定外观 + 锚点 + 补充提示词」。
+function buildDashScopePrompt(
+  settings: ImageGenerationSettings,
+  description: string,
+  characterId?: string,
+): string {
+  const reference = characterId ? settings.characterReferences?.[characterId] : undefined;
+  const parts: string[] = [description.trim()];
+  const featurePrompt = reference?.featurePrompt?.trim();
+  if (featurePrompt) parts.push(`【角色固定外观】${featurePrompt}`);
+  const anchorsPrompt = (reference?.anchors || [])
+    .filter(anchor => anchor.enabled !== false && anchor.description.trim())
+    .map(anchor => `${anchor.name || "特征"}：${anchor.description.trim()}`)
+    .join("；");
+  if (anchorsPrompt) parts.push(`【角色特定锚点】${anchorsPrompt}`);
+  const extra = settings.dashscope?.extraPrompt?.trim();
+  const merged = parts.filter(Boolean).join("\n\n");
+  return extra ? `${merged}\n\n${extra}` : merged;
+}
+
+async function generateDashScopeViaServer(params: {
+  settings: ImageGenerationSettings;
+  prompt: string;
+  signal?: AbortSignal;
+}): Promise<ImageGenerationApiResponse> {
+  const { settings, prompt, signal } = params;
+  const ds = settings.dashscope;
+  if (!ds?.apiKey?.trim()) {
+    // 测试生图传入了完整 settings 所以能过；角色生图走绑定解析，若百炼配置被清空会静默返回，
+    // 这里显式抛错，避免「测试可以、角色无反应」却拿不到任何报错。
+    throw new Error("百炼生图配置缺失：未读取到 DashScope API Key，请到「设置 → 生图」重新填写并保存。");
+  }
+
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  if (signal) signal.addEventListener("abort", onOuterAbort, { once: true });
+  // 总超时 180s；服务端内部轮询上限 110s，留出上传/下载余量。
+  const totalTimer = setTimeout(() => controller.abort(), 180_000);
+
+  try {
+    const res = await fetch("/api/image-generation", {
+      method: "POST",
+      // 心跳流式：让托管平台按流式计时，避免百炼 20~60s 的出图时长被 10~26s 缓冲上限掐成 504。
+      headers: { "Content-Type": "application/json", "x-stream-heartbeat": "1" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        provider: "dashscope",
+        apiKey: ds.apiKey,
+        baseUrl: ds.baseUrl,
+        model: ds.model || DASHSCOPE_DEFAULT_MODEL,
+        prompt,
+        size: ds.size || DASHSCOPE_DEFAULT_SIZE,
+        negativePrompt: ds.negativePrompt,
+        promptExtend: ds.promptExtend,
+        watermark: ds.watermark,
+      }),
+    });
+    throwIfAborted(signal);
+
+    type ServerImagePayload = {
+      httpStatus?: number; b64?: string; mimeType?: string; revisedPrompt?: string;
+      error?: string; imageUrl?: string; generationCompleted?: boolean;
+    };
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    let data: ServerImagePayload;
+    if (contentType.includes("text/plain")) {
+      // 心跳字节是空格，真正结果在流末尾的 @@RESULT@@ 之后。
+      const text = await res.text();
+      const marker = "@@RESULT@@";
+      const idx = text.lastIndexOf(marker);
+      if (idx < 0) throw new Error(`百炼生图失败 ${res.status}（流式响应中断，未收到结果）`);
+      data = JSON.parse(text.slice(idx + marker.length)) as ServerImagePayload;
+    } else {
+      data = await res.json().catch(() => ({})) as ServerImagePayload;
+    }
+    throwIfAborted(signal);
+
+    if (data.generationCompleted && data.imageUrl) {
+      const downloaded = await fetchImageUrlAsBase64(data.imageUrl, controller.signal);
+      return { ...downloaded, revisedPrompt: data.revisedPrompt };
+    }
+    if (data.error || !data.b64) throw new Error(data.error || `百炼生图失败 ${data.httpStatus ?? res.status}`);
+    return { b64: data.b64, mimeType: data.mimeType, revisedPrompt: data.revisedPrompt };
+  } catch (error) {
+    if (controller.signal.aborted && !signal?.aborted) {
+      throw new Error("百炼生图超时（180 秒未返回）。");
+    }
+    throw error;
+  } finally {
+    clearTimeout(totalTimer);
+    if (signal) signal.removeEventListener("abort", onOuterAbort);
+  }
+}
+
 export async function generateImageFromConfiguredApi(params: {
   description: string;
   characterId?: string;
@@ -873,6 +968,32 @@ export async function generateImageFromConfiguredApi(params: {
 
   const description = params.description.trim();
   if (!description) return null;
+
+  // 百炼 DashScope 模式：独立配置块，只走服务端转发（浏览器直连会被 CORS 拦住）。
+  if (settings.provider === "dashscope") {
+    if (!settings.dashscope?.apiKey?.trim()) {
+      throw new Error("百炼生图未配置：缺少 DashScope API Key，请到「设置 → 生图」填写百炼配置并保存。");
+    }
+
+    const dashPrompt = buildDashScopePrompt(settings, description, params.characterId);
+    if (!dashPrompt.trim()) return null;
+
+    const data = await generateDashScopeViaServer({ settings, prompt: dashPrompt, signal: params.signal });
+    throwIfAborted(params.signal);
+    const mimeType = data.mimeType || "image/png";
+    const blob = base64ToBlob(data.b64, mimeType);
+    throwIfAborted(params.signal);
+    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    return {
+      mediaRef,
+      dataUrl: `data:${mimeType};base64,${data.b64}`,
+      blob,
+      mimeType,
+      prompt: dashPrompt,
+      usedReferenceImage: false,
+      revisedPrompt: data.revisedPrompt,
+    };
+  }
 
   // NovelAI 模式
   if (settings.provider === "novelai") {
