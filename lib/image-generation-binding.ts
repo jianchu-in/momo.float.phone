@@ -2,11 +2,12 @@ import type { ImageGenerationSettings, OpenAiImagePreset, NovelAiPreset } from "
 
 const OPENAI_PREFIX = "openai:";
 const NOVELAI_PREFIX = "novelai:";
+const DASHSCOPE_PREFIX = "dashscope:";
 
 export type ImageGenerationBindingOption = {
   id: string;
   name: string;
-  provider: "openai" | "novelai";
+  provider: "openai" | "novelai" | "dashscope";
 };
 
 function openAiPresets(settings: ImageGenerationSettings): OpenAiImagePreset[] {
@@ -29,6 +30,13 @@ export function getImageGenerationBindingOptions(settings: ImageGenerationSettin
       name: `NovelAI · ${preset.name || "未命名方案"}`,
       provider: "novelai" as const,
     })),
+    ...(settings.provider === "dashscope" && settings.dashscope?.apiKey
+      ? [{
+          id: `${DASHSCOPE_PREFIX}default`,
+          name: `百炼 · ${settings.dashscope.model || "默认方案"}`,
+          provider: "dashscope" as const,
+        }]
+      : []),
   ];
 }
 
@@ -38,6 +46,10 @@ export function getActiveImageGenerationBindingId(settings: ImageGenerationSetti
     if (activeId && novelAiPresets(settings).some((preset) => preset.id === activeId)) {
       return `${NOVELAI_PREFIX}${activeId}`;
     }
+  }
+
+  if (settings.provider === "dashscope" && settings.dashscope?.apiKey) {
+    return `${DASHSCOPE_PREFIX}default`;
   }
 
   const activeId = settings.activeOpenAiPresetId;
@@ -83,6 +95,10 @@ export function applyImageGenerationBinding(
         activePresetId: preset.id,
       },
     };
+  }
+
+  if (bindingId === `${DASHSCOPE_PREFIX}default`) {
+    return { ...settings, provider: "dashscope" };
   }
 
   return settings;

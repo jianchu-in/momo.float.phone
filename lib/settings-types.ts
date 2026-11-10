@@ -189,7 +189,7 @@ export type VoiceApiConfig = {
 };
 
 // --- Image Generation ---
-export type ImageGenerationProvider = "openai" | "novelai";
+export type ImageGenerationProvider = "openai" | "novelai" | "dashscope";
 
 export type ImageGenerationRequestMode = "server" | "direct";
 
@@ -242,6 +242,23 @@ export type NovelAiSettings = {
     presets: NovelAiPreset[];
 };
 
+export type DashScopeImageSettings = {
+    apiKey: string;
+    /** 地域端点，留空走北京 https://dashscope.aliyuncs.com；新加坡填 dashscope-intl */
+    baseUrl?: string;
+    model: string;
+    /** 百炼尺寸格式，形如 "1024*1024"（星号，非 x） */
+    size: string;
+    /** 负向提示词（可选），下发到 input.negative_prompt */
+    negativePrompt?: string;
+    /** 追加到画面描述后的补充提示词 */
+    extraPrompt: string;
+    /** 提示词智能改写，默认关闭 */
+    promptExtend?: boolean;
+    /** AI 生成水印，默认关闭 */
+    watermark?: boolean;
+};
+
 export type ImageGenerationSettings = {
     enabled: boolean;
     provider?: ImageGenerationProvider;
@@ -257,6 +274,8 @@ export type ImageGenerationSettings = {
     activeOpenAiPresetId?: string;
     // NovelAI 模式配置
     novelai?: NovelAiSettings;
+    // 百炼 DashScope 模式配置
+    dashscope?: DashScopeImageSettings;
     characterReferences: Record<string, {
         assetId?: string;
         updatedAt: number;
