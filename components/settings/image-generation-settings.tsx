@@ -1089,6 +1089,7 @@ export function ImageGenerationSettings() {
                                 placeholder="电影感光线，高细节，真实照片风格"
                                 rows={3}
                             />
+                            <span className="menu-desc ml-1 opacity-70">角色生图时会自动叠加「角色固定外观」与「角色特定锚点」。</span>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 pt-1">

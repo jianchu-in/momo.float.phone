@@ -48,6 +48,8 @@ export function getActiveImageGenerationBindingId(settings: ImageGenerationSetti
     }
   }
 
+  // 必须排在 OpenAI 回退之前：否则 provider 已切百炼、但 activeOpenAiPresetId 仍有值时，
+  // 会返回 openai:<preset>，导致角色生图被解析到 OpenAI 通道。
   if (settings.provider === "dashscope" && settings.dashscope?.apiKey) {
     return `${DASHSCOPE_PREFIX}default`;
   }
@@ -64,6 +66,13 @@ export function applyImageGenerationBinding(
   bindingId: string | undefined,
 ): ImageGenerationSettings {
   if (!bindingId) return settings;
+
+  // 百炼模式下，若绑定里残留的是早前保存的 OpenAI / NovelAI 预设 id，
+  // 那个分支会把 provider 改回去并用顶层 apiKey/baseUrl/model 覆盖，使角色生图
+  // 走错通道（表现为「测试生图正常、角色自动生图失败」）。此时以百炼为准。
+  if (settings.provider === "dashscope" && !bindingId.startsWith(DASHSCOPE_PREFIX)) {
+    return { ...settings, provider: "dashscope" };
+  }
 
   if (bindingId.startsWith(OPENAI_PREFIX)) {
     const presetId = bindingId.slice(OPENAI_PREFIX.length);
@@ -98,6 +107,7 @@ export function applyImageGenerationBinding(
   }
 
   if (bindingId === `${DASHSCOPE_PREFIX}default`) {
+    // 百炼配置整体挂在 settings.dashscope 上（展开已保留），这里只需确认 provider。
     return { ...settings, provider: "dashscope" };
   }
 

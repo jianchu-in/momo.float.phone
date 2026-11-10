@@ -878,7 +878,11 @@ async function generateDashScopeViaServer(params: {
 }): Promise<ImageGenerationApiResponse> {
   const { settings, prompt, signal } = params;
   const ds = settings.dashscope;
-  if (!ds?.apiKey?.trim()) throw new Error("未配置百炼 DashScope API Key。");
+  if (!ds?.apiKey?.trim()) {
+    // 测试生图传入了完整 settings 所以能过；角色生图走绑定解析，若百炼配置被清空会静默返回，
+    // 这里显式抛错，避免「测试可以、角色无反应」却拿不到任何报错。
+    throw new Error("百炼生图配置缺失：未读取到 DashScope API Key，请到「设置 → 生图」重新填写并保存。");
+  }
 
   const controller = new AbortController();
   const onOuterAbort = () => controller.abort();
@@ -967,8 +971,9 @@ export async function generateImageFromConfiguredApi(params: {
 
   // 百炼 DashScope 模式：独立配置块，只走服务端转发（浏览器直连会被 CORS 拦住）。
   if (settings.provider === "dashscope") {
-    const dashApiKey = settings.dashscope?.apiKey?.trim();
-    if (!dashApiKey) return null;
+    if (!settings.dashscope?.apiKey?.trim()) {
+      throw new Error("百炼生图未配置：缺少 DashScope API Key，请到「设置 → 生图」填写百炼配置并保存。");
+    }
 
     const dashPrompt = buildDashScopePrompt(settings, description, params.characterId);
     if (!dashPrompt.trim()) return null;
