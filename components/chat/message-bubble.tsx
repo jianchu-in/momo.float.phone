@@ -21,7 +21,7 @@ import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
-import { Blocks, Maximize2, ReceiptText } from "lucide-react";
+import { Aperture, Blocks, MapPin, Maximize2, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage, hasUserReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
@@ -123,6 +123,8 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
             return <MediaFileBubble msg={msg} onUpdate={onUpdate} characterId={characterId} />;
         case "xiaohongshu_note_share":
             return <XiaohongshuShareBubble msg={msg} />;
+        case "moment_share":
+            return <MomentShareBubble msg={msg} />;
         case "audio":
             return <VoiceMessageBubble msg={msg} characterId={characterId} onUpdate={onUpdate} defaultTranslationExpanded={defaultTranslationExpanded} />;
         case "meeting_invite":
@@ -160,6 +162,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.mediaData?.imageGenerationStatus !== next.msg.mediaData?.imageGenerationStatus) return false;
         if (prev.msg.mediaData?.imageGenerationError !== next.msg.mediaData?.imageGenerationError) return false;
         if (prev.msg.mediaData?.meetingInviteStatus !== next.msg.mediaData?.meetingInviteStatus) return false;
+        if (prev.msg.mediaData?.momentShare !== next.msg.mediaData?.momentShare) return false;
         if (prev.msg.mediaUrl !== next.msg.mediaUrl) return false;
     }
     if (prev.charName !== next.charName) return false;
@@ -2304,6 +2307,51 @@ function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: 
                 <span>音乐</span>
             </div>
         </div>
+    );
+}
+
+function MomentShareBubble({ msg }: { msg: ChatMessage }) {
+    const post = msg.mediaData?.momentShare;
+    const photoRef = msg.mediaUrl;
+    const [localPhoto, setLocalPhoto] = useState<{ ref: string; url: string } | null>(null);
+    const [failedPhoto, setFailedPhoto] = useState<string | undefined>();
+    const needsLookup = Boolean(photoRef?.startsWith("asset://") || (photoRef && isMediaStoreRef(photoRef)));
+    const photo = needsLookup ? (localPhoto?.ref === photoRef ? localPhoto?.url : undefined) : photoRef;
+
+    useEffect(() => {
+        if (!photoRef || !needsLookup) return;
+        let cancelled = false;
+        let objectUrl: string | undefined;
+        const fromMediaStore = isMediaStoreRef(photoRef);
+        const lookup = fromMediaStore
+            ? loadMediaObjectUrl(photoRef)
+            : getChatImageFromIndexedDB(photoRef.slice(8));
+        lookup.then(url => {
+            if (!url) return;
+            if (fromMediaStore && cancelled) URL.revokeObjectURL(url);
+            if (cancelled) return;
+            if (fromMediaStore) objectUrl = url;
+            setLocalPhoto({ ref: photoRef, url });
+        }).catch(() => { /* Fall back to the photo description. */ });
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [needsLookup, photoRef]);
+
+    if (!post) return <TextBubble content={msg.content} />;
+    const date = new Date(post.createdAt);
+    return (
+        <article className="chat-moment-share-card">
+            <header><Aperture size={14} aria-hidden="true" /> 朋友圈分享</header>
+            <strong>{post.authorName}</strong>
+            {post.body && <p>{post.body}</p>}
+            {photo && photo !== failedPhoto
+                ? <MediaImageWithPreview url={photo} title="" filename="朋友圈配图" onError={() => setFailedPhoto(photo)} />
+                : post.photoDescription && <p className="chat-moment-share-photo-description">{post.photoDescription}</p>}
+            {post.location && <small><MapPin size={12} aria-hidden="true" /> {post.location}</small>}
+            {Number.isFinite(date.getTime()) && <time dateTime={post.createdAt}>{date.toLocaleString()}</time>}
+        </article>
     );
 }
 

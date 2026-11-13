@@ -9,7 +9,7 @@ import { getChatImageFromIndexedDB, saveChatImageToIndexedDB } from "./chat-asse
 import { isMediaStoreRef, loadMediaBlob, storeMediaBlob } from "./media-cache-storage";
 
 type EmbeddedMedia = {
-  kind: "media-store" | "image-asset";
+  kind: "media-store" | "image-asset" | "image-asset-url";
   dataUrl: string;
 };
 
@@ -54,6 +54,9 @@ function collectMessageMediaCandidates(messages: ChatMessage[]): Array<{ ref: st
   for (const message of messages) {
     const direct = message.mediaUrl;
     if (direct && isMediaStoreRef(direct)) candidates.set(direct, "media-store");
+    if (message.mediaType === "moment_share" && direct?.startsWith("asset://")) {
+      candidates.set(direct, "image-asset-url");
+    }
     const generated = message.mediaData?.imageGenerationMediaRef;
     if (generated && isMediaStoreRef(generated)) candidates.set(generated, "media-store");
     const imageAsset = message.mediaData?.xiaohongshuImageAssetId;
@@ -97,7 +100,8 @@ export async function createChatRecordExport(session: ChatSession, name: string)
       const stored = await loadMediaBlob(candidate.ref).catch(() => null);
       if (stored) media[candidate.ref] = { kind: candidate.kind, dataUrl: await blobToDataUrl(stored.blob) };
     } else {
-      const dataUrl = await getChatImageFromIndexedDB(candidate.ref).catch(() => null);
+      const assetId = candidate.kind === "image-asset-url" ? candidate.ref.slice(8) : candidate.ref;
+      const dataUrl = await getChatImageFromIndexedDB(assetId).catch(() => null);
       if (dataUrl) media[candidate.ref] = { kind: candidate.kind, dataUrl };
     }
   }
@@ -133,14 +137,14 @@ export async function importChatRecordFile(
     if (!entry || typeof entry !== "object" || typeof entry.dataUrl !== "string") continue;
     const blob = dataUrlToBlob(entry.dataUrl);
     if (!blob) continue;
-    const nextRef = entry.kind === "image-asset"
+    const nextRef = entry.kind === "image-asset" || entry.kind === "image-asset-url"
       ? await saveChatImageToIndexedDB(blob)
       : await storeMediaBlob(
           blob,
           blob.type || "application/octet-stream",
           blob.type.startsWith("image/") ? "image" : blob.type.startsWith("audio/") ? "audio" : blob.type.startsWith("video/") ? "video" : "file",
         );
-    mediaReplacements.set(oldRef, nextRef);
+    mediaReplacements.set(oldRef, entry.kind === "image-asset-url" ? `asset://${nextRef}` : nextRef);
     mediaRestored += 1;
   }
 

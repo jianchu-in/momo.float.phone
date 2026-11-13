@@ -19,6 +19,23 @@ export type XiaohongshuNoteChatSharePayload = {
 
 export type ChatSharePayload = MusicChatSharePayload | XiaohongshuNoteChatSharePayload;
 
+export type MomentShareSnapshot = {
+    authorName: string;
+    body: string;
+    createdAt: string;
+    location?: string;
+    photoDescription?: string;
+};
+
+export function formatMomentShareForPrompt(post: MomentShareSnapshot, hasPhoto: boolean): string {
+    return [
+        `分享了${post.authorName}的朋友圈`,
+        post.body ? `正文：${post.body}` : "",
+        post.location ? `地点：${post.location}` : "",
+        post.photoDescription ? `配图描述：${post.photoDescription}` : hasPhoto ? "附有一张图片" : "",
+    ].filter(Boolean).join("\n");
+}
+
 function compactShareText(value: string | undefined, fallback: string): string {
     const text = (value || "").replace(/\s+/g, " ").trim();
     return text || fallback;

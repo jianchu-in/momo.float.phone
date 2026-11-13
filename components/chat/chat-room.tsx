@@ -213,6 +213,7 @@ const CHAT_VISUAL_MEDIA_TYPES = new Set([
     "location",
     "music_share",
     "xiaohongshu_note_share",
+    "moment_share",
     "app_card",
     "audio",
     "video",
@@ -261,6 +262,7 @@ const CHAT_MEDIA_BUBBLE_TYPES = new Set([
     "location",
     "music_share",
     "xiaohongshu_note_share",
+    "moment_share",
     "app_card",
     "media_file",
 ]);

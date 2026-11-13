@@ -316,6 +316,70 @@
   white-space: nowrap;
 }
 
+.moment-share-dialog .modal-body {
+  width: 100%;
+}
+
+.moment-share-search {
+  width: 100%;
+  border: 1px solid var(--c-border, #ddd);
+  border-radius: 8px;
+  background: var(--c-input);
+  color: var(--c-text);
+  padding: 8px 10px;
+}
+
+.moment-share-dialog .chat-contact-item {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+
+.moment-share-dialog .chat-contact-item[aria-pressed="true"] {
+  background: var(--c-input);
+  outline: 1px solid var(--c-action-blue, #576b95);
+  outline-offset: -1px;
+}
+
+.chat-moment-share-card {
+  display: grid;
+  gap: 6px;
+  width: 236px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border, #ddd);
+  border-radius: 9px;
+  background: var(--c-panel, #fff);
+  color: var(--c-text);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  overflow-wrap: anywhere;
+}
+
+.chat-moment-share-card header,
+.chat-moment-share-card small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-moment-share-card header,
+.chat-moment-share-card small,
+.chat-moment-share-card time,
+.chat-moment-share-photo-description {
+  color: var(--c-icon);
+  font-size: calc(11px * var(--app-text-scale, 1));
+}
+
+.chat-moment-share-card p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat-moment-share-card img {
+  max-height: 160px;
+  object-fit: cover;
+}
+
 /* ── Friend Request ──────────────────────── */
 
 .freq-entry {

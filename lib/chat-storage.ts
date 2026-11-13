@@ -141,6 +141,7 @@ export type ChatMessage = {
         | "payment_request" | "accept_payment_request" | "decline_payment_request"
         | "music" | "music_share" | "music_notify" | "music_not_found"
         | "xiaohongshu_note_share"
+        | "moment_share"
         | "gift"
         | "contact_card"
         | "app_card"
@@ -232,6 +233,7 @@ export type ChatMessage = {
         xiaohongshuImageAssetId?: string;
         xiaohongshuCoverIcon?: string;
         xiaohongshuTone?: string;
+        momentShare?: import("./chat-share").MomentShareSnapshot;
         callDuration?: string;    // 通话时长（如 05:23）
         voiceDuration?: number;   // 语音条时长（秒）
         synthesizedFromText?: string; // 语音条当前音频对应的合成文本
@@ -576,6 +578,7 @@ const MEDIA_PREVIEW_MAP: Record<string, string> = {
     music: "[音乐]",
     music_share: "[音乐分享]",
     xiaohongshu_note_share: "[小红书分享]",
+    moment_share: "[朋友圈分享]",
     app_card: "[应用卡片]",
     tool_notice: "[执行动作]",
     system_instruction: "[系统指令]",

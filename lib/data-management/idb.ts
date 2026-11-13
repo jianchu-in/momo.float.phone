@@ -266,6 +266,7 @@ function filterOldDynamicImages(
     const mediaType = value.mediaType;
     const mediaData = isRecord(value.mediaData) ? value.mediaData : null;
     const isImageMessage = mediaType === "image"
+      || (mediaType === "moment_share" && typeof value.mediaUrl === "string")
       || (mediaType === "media_file" && mediaData?.fileType === "image")
       || (typeof value.mediaUrl === "string" && value.mediaUrl.startsWith("data:image/"));
     const isImageShare = mediaType === "xiaohongshu_note_share"

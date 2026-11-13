@@ -246,6 +246,70 @@ async function main() {
   await click(personal.querySelector('[aria-label="返回"]')); assert.equal(originalBody.scrollTop, 190);
   await unmount();
 
+  // Exercise the real share button and confirm flow from a post with an IndexedDB photo.
+  const shared = [];
+  chatStore.pushChatMessage = message => shared.push({ ...message, id: "shared-" + shared.length, status: "sent", createdAt: "2026-11-13" });
+  chatStore.createOrGetSession = (id, accountId) => sessions.find(session => session.contactId === id && (session.chatAccountId || null) === accountId);
+  chatStore.loadChatMessages = id => shared.filter(message => message.sessionId === id);
+  mock("components/chat/message-bubble.tsx", { BilingualTextBlock: () => null, MediaImageWithPreview: () => null });
+  mock("lib/generated-image-retry.ts", { retryMomentGeneratedPhoto: async () => {} });
+  mock("lib/image-generation-service.ts", { hasCharacterReferenceImage: () => false, hasUserReferenceImage: () => false });
+  mock("lib/favorites-storage.ts", { addMomentFavorite: async () => {} });
+  mock("components/ui/index.ts", { ConfirmDialog: () => null });
+  mock("lib/moments-storage.ts", { loadMomentPosts: () => posts, loadMomentComments: () => [], loadMomentsConfig: () => ({}) });
+  const { MomentPostCard } = originalLoad(path.join(root, "components/chat/moment-post-card.tsx"), module);
+  const sharePost = posts.find(post => post.id === "post-12");
+  await render(React.createElement(MomentPostCard, { post: sharePost, onUpdate() {} }));
+  const openShare = () => click(container.querySelector('[aria-label="分享朋友圈"]'));
+  assert.equal(container.querySelector(".feed-post-comment-btn").nextElementSibling.getAttribute("aria-label"), "分享朋友圈");
+  await openShare();
+  assert.equal(button("发送").disabled, true);
+  await change(container.querySelector('[aria-label="搜索联系人"]'), character.name);
+  await click(button("主号备注"));
+  assert.equal(shared.length, 0, "Selecting a recipient does not send");
+  await click(button("取消"));
+  assert.equal(shared.length, 0);
+  await openShare();
+  await click(button("主号备注"));
+  await click(button("发送"));
+  assert.equal(shared.length, 1);
+  assert.equal(shared[0].sessionId, "main-session");
+  assert.equal(shared[0].mediaType, "moment_share");
+  assert.equal(shared[0].mediaUrl, "asset://photo");
+  assert.equal(shared[0].mediaData.momentShare.body, sharePost.content);
+  assert.match(shared[0].content, /角色原名.*朋友圈/);
+  assert.match(container.textContent, /已分享给 主号备注/);
+
+  await openShare();
+  await click(button("主号备注"));
+  scope = { ...scope, chatAccountId: "alt" };
+  await click(button("发送"));
+  assert.match(container.querySelector('[role="alert"]').textContent, /身份已切换/);
+  assert.equal(shared.length, 1);
+  await click(button("取消"));
+  await openShare();
+  assert.equal(button("主号备注"), undefined);
+  await click(button("小号备注"));
+  await click(button("发送"));
+  assert.equal(shared.length, 2);
+  assert.equal(shared[1].sessionId, "alt-session");
+  await unmount();
+
+  // A standalone chat record export must carry the photo, including its asset:// prefix on import.
+  chatStore.bulkUpsertImportedMessages = async messages => {
+    shared.push(...messages);
+    return { insertedCount: messages.length, skippedCount: 0 };
+  };
+  const transfer = require(path.join(root, "lib/chat-record-transfer.ts"));
+  const exportedShare = await transfer.createChatRecordExport(sessions[0], "主号备注");
+  const encodedShare = JSON.parse(await exportedShare.text());
+  assert.equal(encodedShare.media["asset://photo"].kind, "image-asset-url");
+  encodedShare.media["asset://photo"].dataUrl = "data:image/png;base64,aW1hZ2U=";
+  const importedShare = await transfer.importChatRecordFile(new File([JSON.stringify(encodedShare)], "share.json"), sessions[1]);
+  assert.equal(importedShare.mediaRestored, 1);
+  assert.match(shared.at(-1).mediaUrl, /^asset:\/\/cover-\d+$/);
+  assert.equal(shared.at(-1).mediaData.momentShare.body, sharePost.content);
+
   // Fresh cache proves drafts and profile edits reach persistent IndexedDB.
   const Dexie = require("dexie").default, disk = new Dexie("AiPhoneKvDB"); disk.version(1).stores({ entries: "key" });
   assert.ok(await disk.table("entries").get("ai_phone_story_input_draft_v1_main"));
@@ -255,5 +319,6 @@ async function main() {
   assert.equal(require(path.join(root, "lib/story-input-draft.ts")).loadStoryInputDraft("branch"), "分线草稿");
   assert.equal(require(path.join(root, "lib/character-moments-profile.ts")).loadCharacterMomentsProfile(character.id).signature, "修改后的角色签名");
   console.log("✅ 剧情草稿：收键盘/失焦/退出/切分线/重载恢复与发送清空；联系人名片、账号备注、个人动态分页/更新/封面/签名/评论、消息与通话入口回归通过，无真实 API 调用");
+  console.log("✅ 朋友圈分享：入口、搜索、确认、取消、主小号隔离及聊天记录配图导出导入通过");
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });
