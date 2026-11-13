@@ -44,6 +44,7 @@ import {
     type PromptTimestampOptions,
 } from "./prompt-time";
 import { getNativeTimelineEntryKey } from "./native-timeline-key";
+import { createAbortError } from "./abort-utils";
 import { mergeShortMemoryEntries, applyShortMemoryToChatHistory, hiddenMemoryKeys, isMemoryEntryDeleted } from "./short-term-memory-records";
 export { getNativeTimelineEntryKey } from "./native-timeline-key";
 export { hideNativeTimelineEntries } from "./short-term-memory-records";
@@ -57,7 +58,7 @@ function formatPhotoDirectiveForPrompt(msg: ChatMessage): string {
 export type NativeTimelineEntry = {
     id: string;
     sourceApp: "chat" | "moments" | "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app";
-    sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event"; // chat sub-type: 1:1 vs group chat vs system note
+    sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event" | "moments_signature"; // chat sub-type: 1:1 vs group chat vs system note
     authorType?: "user" | "character" | "npc"; // who authored this entry
     postAuthorType?: "user" | "character"; // for moments: who owns the parent post
     sessionId?: string;
@@ -859,11 +860,13 @@ export function loadNativeTimeline(...args: Parameters<typeof assembleNativeTime
 }
 
 export async function loadNativeTimelineAsync(...args: Parameters<typeof assembleNativeTimeline>): Promise<NativeTimelineEntry[]> {
+    const signal = args[1]?.signal;
+    if (signal?.aborted) throw createAbortError("扫描已停止");
     const iterator = assembleNativeTimeline(...args);
     let step = iterator.next();
     while (!step.done) {
-        if (args[1]?.signal?.aborted) throw new DOMException("扫描已停止", "AbortError");
         await new Promise<void>(resolve => setTimeout(resolve, 0));
+        if (signal?.aborted) throw createAbortError("扫描已停止");
         step = iterator.next();
     }
     return step.value;

@@ -77,6 +77,7 @@ import {
 } from "@/lib/generated-image-retry";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { MomentsFeed } from "./moments-feed";
 import { ChatScreenEffectOverlay, type ActiveScreenEffect } from "./chat-screen-effect";
 import {
     formatChatDiceResultMessage,
@@ -1164,6 +1165,11 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [customPlusActions, setCustomPlusActions] = useState<RegisteredCustomAppChatPlusAction[]>(() => loadCustomAppChatPlusActions());
     const [activeCustomChatPlus, setActiveCustomChatPlus] = useState<ActiveCustomChatPlus | null>(null);
     const [showSettings, setShowSettings] = useState(false);
+    const [showCharacterMoments, setShowCharacterMoments] = useState(false);
+    const avatarClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+    }, []);
     const [showVoiceCall, setShowVoiceCall] = useState(false);
     const [showVideoCall, setShowVideoCall] = useState(false);
     const [callMinimized, setCallMinimized] = useState(false);
@@ -5775,6 +5781,29 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const editingMessage = editingMessageId ? messages.find(m => m.id === editingMessageId) : null;
     const editingSystemInstruction = editingMessage ? isSystemInstructionMessage(editingMessage) : false;
 
+    const renderCharacterAvatar = (className: string) => (
+        <button type="button" className={className} aria-label={`查看${character?.name || "角色"}的朋友圈`}
+            onClick={event => {
+                if (isMultiSelectMode || !character) return;
+                if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+                const open = () => {
+                    avatarClickTimer.current = null;
+                    closeContextMenu();
+                    setShowCharacterMoments(true);
+                };
+                if (event.detail === 0 || offlineMode) open();
+                else avatarClickTimer.current = setTimeout(open, 300);
+            }}
+            onDoubleClick={() => {
+                if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+                avatarClickTimer.current = null;
+                if (character && !offlineMode && !isMultiSelectMode) sendRichMessage("poke", { pokeTarget: character.name });
+            }}
+        >
+            {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+        </button>
+    );
+
     // 群聊通话没有缩小悬浮窗，维持原有的整屏早退渲染
     if (showVoiceCall && session.isGroup && groupCharacters.length > 0) {
         return (
@@ -5930,9 +5959,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                 </div>
                                 <div className="chat-offline-entry" data-role="assistant">
                                     {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
-                                    <div className="chat-offline-avatar" aria-hidden="true">
+                                    {character && !session.isGroup ? renderCharacterAvatar("chat-offline-avatar") : <div className="chat-offline-avatar" aria-hidden="true">
                                         {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} alt="" /> : <ChatFallbackAvatar />}
-                                    </div>
+                                    </div>}
                                     <div className="chat-offline-label-row">
                                         <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
                                         {assistantHasHtmlPreview ? (
@@ -6031,9 +6060,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                     /* 流式预览原地长出：与正式剧情正文同结构（头像/角色名/正文区），
                                        正文用轻量 pre-wrap 渲染（避免每帧 markdown/双语解析），落库时原地换成正式排版 */
                                     <div className="chat-offline-entry" data-role="assistant">
-                                        <div className="chat-offline-avatar" aria-hidden="true">
+                                        {character && !session.isGroup ? renderCharacterAvatar("chat-offline-avatar") : <div className="chat-offline-avatar" aria-hidden="true">
                                             {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} alt="" /> : <ChatFallbackAvatar />}
-                                        </div>
+                                        </div>}
                                         <div className="chat-offline-label-row">
                                             <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
                                         </div>
@@ -6400,28 +6429,17 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                                 </div>
                                             ) : (
                                                 <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                                    {(() => {
-                                                        const senderChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        const senderAvatar = session.isGroup ? senderChar?.avatar : effectiveCharacterAvatar;
-                                                        return (
-                                                            <>
-                                                    <div onDoubleClick={() => {
-                                                        const targetChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
-                                                    }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
-                                                        {resolveChatCharacterAvatar(senderChar) ? (
-                                                            <img src={resolveChatCharacterAvatar(senderChar)} className="w-full h-full object-cover" alt="" />
-                                                        ) : (
-                                                            <ChatFallbackAvatar />
-                                                        )}
-                                                    </div>
-                                                            </>
-                                                        );
-                                                    })()}
+                                                    {character && !session.isGroup
+                                                        ? renderCharacterAvatar("chat-avatar-moments-btn w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden")
+                                                        : (() => {
+                                                            const sender = (msg.senderCharacterId && groupCharMap.get(msg.senderCharacterId)) || character;
+                                                            const avatar = resolveChatCharacterAvatar(sender);
+                                                            return <div onDoubleClick={() => {
+                                                                if (sender) sendRichMessage("poke", { pokeTarget: sender.name });
+                                                            }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
+                                                                {avatar ? <img src={avatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+                                                            </div>;
+                                                        })()}
                                                 </div>
                                             )
                                         )}
@@ -6619,9 +6637,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                 return (
                                     <div key={`stream-seg-${j}`} className="chat-msg-wrapper" data-role="assistant">
                                         <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                            <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
+                                            {character && !session.isGroup ? renderCharacterAvatar("chat-avatar-moments-btn w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden") : <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
                                                 {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
-                                            </div>
+                                            </div>}
                                         </div>
                                         <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
                                             <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
@@ -6749,6 +6767,13 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     onConfirm={handleMultiDeleteConfirmed}
                     onCancel={() => setShowConfirmMultiDelete(false)}
                 />
+            )}
+
+            {showCharacterMoments && character && wrapperRef.current?.parentElement && createPortal(
+                <div className="chat-settings-layer absolute inset-0 z-50 bg-[var(--c-page-body-bg)]">
+                    <MomentsFeed profileCharacterId={character.id} onCloseApp={() => setShowCharacterMoments(false)} />
+                </div>,
+                wrapperRef.current.parentElement
             )}
 
             {/* Settings Panel — portaled outside session-scoped CSS, preserves chat room mount */}

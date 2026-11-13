@@ -1050,10 +1050,14 @@ export function deleteStoryMessage(messageId: string): void {
 export function deleteStoryMessagesFrom(sessionId: string, messageId: string): void {
     const msg = _messagesCache.find(m => m.id === messageId);
     if (!msg) return;
-    const idsToDelete = _messagesCache
-        .filter(m => m.sessionId === sessionId && m.createdAt >= msg.createdAt)
-        .map(m => m.id);
-    _messagesCache = _messagesCache.filter(m => !idsToDelete.includes(m.id));
+    const idsToDelete: string[] = [];
+    _messagesCache = _messagesCache.filter(m => {
+        if (m.sessionId === sessionId && m.createdAt >= msg.createdAt) {
+            idsToDelete.push(m.id);
+            return false;
+        }
+        return true;
+    });
     storyDb.messages.bulkDelete(idsToDelete).catch(() => undefined);
 }
 
@@ -1114,8 +1118,9 @@ export function loadStoryProjectionEntries(
   if (!sessions.length) return [];
   const sessionLabels = new Map(sessions.map(session => [session.id, session.title || session.branchName || ((session.branchId || "main") === "main" ? "主线" : "分线")]));
   const sessionById = new Map(sessions.map(session => [session.id, session]));
-  const messages = sessions.flatMap((session) => loadStoryMessages(session.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const sessionOrder = new Map(sessions.map((session, index) => [session.id, index]));
+  const messages = _messagesCache.filter(message => sessionOrder.has(message.sessionId))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || sessionOrder.get(a.sessionId)! - sessionOrder.get(b.sessionId)!);
   const projections: StoryProjectionEntry[] = [];
 
   for (let i = 0; i < messages.length; i++) {

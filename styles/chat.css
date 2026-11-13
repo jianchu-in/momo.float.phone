@@ -3102,6 +3102,7 @@
 }
 
 /* ── Chat room wrapper ── */
+.chat-avatar-moments-btn { cursor: pointer; touch-action: manipulation; }
 .chat-room-wrapper {
   background-color: var(--c-page-body-bg, #fff);
   transition: opacity 0.15s ease-in-out;

@@ -14,7 +14,7 @@ import { previewMessagesForApi, sendLLMRequestPreferStream, sendLLMStreamRequest
 import { loadMemoryConfig } from "./memory-storage";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
-import { prepareShortTermContext } from "./short-term-assembler";
+import { loadNativeTimelineAsync, prepareShortTermContext } from "./short-term-assembler";
 import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from "./calendar-storage";
 import { getWeekStartIso } from "./calendar-utils";
 import { parseStoryResponse } from "./story-parser";
@@ -24,6 +24,7 @@ import type { ChatMessage } from "./chat-storage";
 import { MacroEngine } from "./macro-engine";
 import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { formatPromptTimestamp } from "./prompt-time";
+import { throwIfAborted } from "./abort-utils";
 
 const DEFAULT_STORY_FOLD_TAGS = "think,thinking,summary,story_status,story_theater";
 const DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS = "think,thinking,story_theater";
@@ -242,6 +243,7 @@ export async function generateStoryCompletion(
   history: StoryMessage[],
   options?: StoryGenerationOptions,
 ): Promise<StoryGenerationResult> {
+  throwIfAborted(options?.signal);
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
     throw new ChatEngineError(`Character not found: ${characterId}`);
@@ -263,7 +265,9 @@ export async function generateStoryCompletion(
     options?.floatingChatContext,
     options?.participantIds,
     options?.storyMemory,
+    options?.signal,
   );
+  throwIfAborted(options?.signal);
   if (options?.retryInstruction?.trim()) {
     llmMessages.push({
       role: "system",
@@ -332,6 +336,7 @@ async function buildStoryPromptMessages(
   floatingChatContext?: string,
   participantIds?: string[],
   storyMemory?: StoryGenerationOptions["storyMemory"],
+  signal?: AbortSignal,
 ): Promise<LLMMessage[]> {
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
@@ -349,6 +354,12 @@ async function buildStoryPromptMessages(
   const memConfig = loadMemoryConfig();
   const independent = Boolean(storyMemory?.independent);
   const timeAware = globalSettings?.timeAware !== false;
+  const afterTimestamp = storyMemory?.inheritRecentMemory === false ? storyMemory.startedAt : undefined;
+  const prepareContext = async (id: string, userName: string) => {
+    const timeline = await loadNativeTimelineAsync(id, { appId: "story", userName, afterTimestamp, timeAware, signal });
+    throwIfAborted(signal);
+    return prepareShortTermContext(id, "story", { userName, history: historyMessages, afterTimestamp, timeAware, timeline });
+  };
   const context = independent
     ? {
       recentBlocks: [],
@@ -356,12 +367,7 @@ async function buildStoryPromptMessages(
       wbActivationContext: historyMessages.slice(-10).map((message) => message.content).join("\n"),
       unifiedRecentItems: [],
     }
-    : prepareShortTermContext(characterId, "story", {
-      userName: userIdentity?.name ?? "用户",
-      history: historyMessages,
-      afterTimestamp: storyMemory?.inheritRecentMemory === false ? storyMemory.startedAt : undefined,
-      timeAware,
-    });
+    : await prepareContext(characterId, userIdentity?.name ?? "用户");
   const { recentBlocks, truncatedHistory, wbActivationContext, unifiedRecentItems } = context;
 
   let memories: Awaited<ReturnType<typeof retrieveMemoriesForPrompt>> | null = null;
@@ -371,6 +377,7 @@ async function buildStoryPromptMessages(
       retrieveMemoriesForPrompt(characterId, wbActivationContext, memConfig).catch(() => null),
       retrieveCoreMemoriesForPrompt(characterId, memConfig).catch(() => null),
     ]);
+    throwIfAborted(signal);
   }
 
   const now = new Date();
@@ -403,12 +410,7 @@ async function buildStoryPromptMessages(
       }
       const localContext = item.id === characterId
         ? context
-        : prepareShortTermContext(item.id, "story", {
-          userName: identity?.name ?? userIdentity?.name ?? "用户",
-          history: historyMessages,
-          afterTimestamp: storyMemory?.inheritRecentMemory === false ? storyMemory.startedAt : undefined,
-          timeAware,
-        });
+        : await prepareContext(item.id, identity?.name ?? userIdentity?.name ?? "用户");
       const [localLongTerm, localCore] = item.id === characterId
         ? [memories, coreMemories]
         : await Promise.all([

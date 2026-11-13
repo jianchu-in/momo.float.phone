@@ -224,6 +224,17 @@ function cancelStoryGenerationRun(sessionId: string): boolean {
   return true;
 }
 
+function waitForStoryGenerationPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    // A background tab can suspend animation frames.
+    const fallback = window.setTimeout(() => { window.cancelAnimationFrame(frame); resolve(); }, 80);
+    const frame = window.requestAnimationFrame(() => {
+      window.clearTimeout(fallback);
+      window.setTimeout(resolve, 0);
+    });
+  });
+}
+
 function isAbortLikeError(error: unknown): boolean {
   if (!error) return false;
   if (error instanceof DOMException && error.name === "AbortError") return true;
@@ -1634,7 +1645,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
 
   async function handleSend(userTextInput: string) {
     const userText = userTextInput.trim();
-    if (!activeSessionId || !userText || isGenerating) return;
+    if (!activeSessionId || !userText || isGenerating || activeStoryGenerationRuns.has(activeSessionId)) return;
     const sessionId = activeSessionId;
     const characterId = activeCharacterId;
 
@@ -1652,6 +1663,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
     const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
 
     try {
+      await waitForStoryGenerationPaint();
+      if (!isCurrentGeneration()) return;
       const historyForGeneration = loadStoryMessages(sessionId);
       const result = await generateStoryCompletion(characterId, historyForGeneration, {
         sessionFoldTags: currentSession?.foldTags,
@@ -1665,7 +1678,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
           inheritRecentMemory: currentSession?.inheritRecentMemory ?? true,
           startedAt: currentSession?.createdAt,
         },
-        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
+        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => { if (isCurrentGeneration()) appendStoryStreamDelta(sessionId, delta); } : undefined,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -1714,8 +1727,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
       }
       setStorageVersion((value) => value + 1);
     } finally {
-      clearStoryStream(sessionId);
       if (finishStoryGenerationRun(sessionId, generationRunId)) {
+        clearStoryStream(sessionId);
         markGenerating(sessionId, false);
       }
     }
@@ -1725,7 +1738,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
   useEffect(() => {
     const session = currentSession;
     const prompt = session?.autoStartPrompt?.trim();
-    if (!ready || !session || !prompt || !activeCharacterId || isGenerating) return;
+    if (!ready || !session || !prompt || !activeCharacterId || isGenerating || activeStoryGenerationRuns.has(session.id)) return;
     if (autoStartedSessionIdsRef.current.has(session.id)) return;
     autoStartedSessionIdsRef.current.add(session.id);
     updateStorySession(session.id, { autoStartPrompt: undefined, autoStartRequestedAt: undefined });
@@ -1757,7 +1770,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
         inheritRecentMemory: session.inheritRecentMemory ?? true,
         startedAt: session.createdAt,
       },
-      onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
+      onDelta: storyGlobalSettings.streamingEnabled ? (delta) => { if (isCurrentGeneration()) appendStoryStreamDelta(sessionId, delta); } : undefined,
       signal: generationRun.controller.signal,
     }).then((result) => {
       if (!isCurrentGeneration()) return;
@@ -1788,8 +1801,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion((value) => value + 1);
     }).finally(() => {
-      clearStoryStream(sessionId);
-      if (finishStoryGenerationRun(sessionId, generationRunId)) markGenerating(sessionId, false);
+      if (finishStoryGenerationRun(sessionId, generationRunId)) {
+        clearStoryStream(sessionId);
+        markGenerating(sessionId, false);
+      }
     });
   }, [activeCharacterId, activeSessionId, currentSession?.autoStartPrompt, ready, storyGlobalSettings.streamingEnabled, storyGlobalSettings.timeAware]);
 
@@ -2010,6 +2025,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     if (!activeSessionId) return;
     const cancelled = cancelStoryGenerationRun(activeSessionId);
     if (!cancelled && !isGenerating) return;
+    clearStoryStream(activeSessionId);
     markGenerating(activeSessionId, false);
   }
 
@@ -2174,6 +2190,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     setActiveMessageId(null);
   }
   async function handleStoryRetry(msgId: string, retryInstruction?: string) {
+    if (!activeSessionId || isGenerating || activeStoryGenerationRuns.has(activeSessionId)) return;
     const msgIndex = messages.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
     const retryMessage = messages[msgIndex];
@@ -2199,6 +2216,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
     const generationRunId = generationRun.runId;
     const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
     try {
+      await waitForStoryGenerationPaint();
+      if (!isCurrentGeneration()) return;
       const result = await generateStoryCompletion(characterId, contextMessages, {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
@@ -2212,7 +2231,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
           startedAt: currentSession?.createdAt,
         },
         retryInstruction,
-        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
+        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => { if (isCurrentGeneration()) appendStoryStreamDelta(sessionId, delta); } : undefined,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -2230,8 +2249,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion(v => v + 1);
     } finally {
-      clearStoryStream(sessionId);
       if (finishStoryGenerationRun(sessionId, generationRunId)) {
+        clearStoryStream(sessionId);
         markGenerating(sessionId, false);
       }
     }

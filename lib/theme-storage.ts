@@ -210,7 +210,7 @@ function createThemeAssetId(type: ThemeAssetType): string {
 async function saveAssetRecord(record: ThemeAssetRecord): Promise<void> {
   const database = await openThemeDb();
   if (!database) {
-    return;
+    throw new Error("无法打开本地图片存储");
   }
 
   try {
