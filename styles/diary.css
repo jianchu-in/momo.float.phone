@@ -133,6 +133,105 @@
   background: transparent;
 }
 
+.personal-notes-links {
+  width: min(100%, 332px);
+  justify-self: center;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.personal-notes-links button,
+.personal-notes-list button {
+  background: #fffdf8;
+  color: #363330;
+  border: 1px solid #e6e0d5;
+  border-radius: 12px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.personal-notes-links button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 10px 12px;
+}
+
+.personal-notes-links svg { flex-shrink: 0; }
+.personal-notes-app .personal-notes-add { margin-left: auto; }
+
+.personal-notes-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 18px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+.personal-notes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.personal-notes-list button {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  padding: 13px 15px;
+  overflow-wrap: anywhere;
+}
+
+.personal-notes-list strong { font-size: calc(15px * var(--app-text-scale, 1)); }
+.personal-notes-list time { color: #70695f; font-size: calc(12px * var(--app-text-scale, 1)); }
+.personal-notes-list button > span {
+  color: #565048;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: pre-line;
+}
+
+.personal-note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.personal-note-editor label {
+  display: grid;
+  gap: 6px;
+}
+
+.personal-note-editor :is(input, textarea) {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #ded7cc;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #363330;
+  font: inherit;
+  font-size: max(16px, calc(16px * var(--app-text-scale, 1)));
+}
+
+.personal-note-content {
+  flex: 1;
+  min-height: 165px;
+  grid-template-rows: auto minmax(125px, 1fr);
+}
+
+.personal-note-content textarea { resize: vertical; }
+.personal-notes-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.personal-notes-error { color: #9a302a; }
+
 .diary-feature-card {
   position: relative;
   width: min(100%, 332px);

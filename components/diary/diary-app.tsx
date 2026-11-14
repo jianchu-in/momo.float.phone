@@ -1,17 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenText, ChevronLeft, StickyNote } from "lucide-react";
+import { BookOpenText, ChevronLeft, NotebookPen, StickyNote } from "lucide-react";
+import { resolveUserIdentity } from "@/lib/settings-storage";
 
 import { DiaryEntriesApp } from "./diary-entries-app";
 import { NoteWallApp } from "./note-wall-app";
+import { PersonalNotesPage } from "./personal-notes-page";
 
 type DiaryAppProps = {
   onClose: () => void;
   onNotice?: (message: string) => void;
 };
 
-type DiaryView = "home" | "entries" | "notewall";
+type DiaryView = "home" | "entries" | "notewall" | "diary" | "memo";
 
 const NOTE_WALL_UI_ENABLED = false;
 
@@ -30,6 +32,11 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
     return <DiaryEntriesApp onBack={() => setView("home")} onNotice={onNotice} />;
   }
 
+  if (view === "diary" || view === "memo") {
+    const identityId = resolveUserIdentity()?.id ?? null;
+    return <PersonalNotesPage key={`${view}:${identityId ?? ""}`} kind={view} identityId={identityId} onBack={() => setView("home")} />;
+  }
+
   return (
     <section className="diary-app">
       <header className="diary-app-header">
@@ -38,7 +45,6 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
         </button>
         <div>
           <h1>手记</h1>
-          <p>记录角色留下的话</p>
         </div>
         <span className="diary-header-spacer" />
       </header>
@@ -56,7 +62,7 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
               <BookOpenText size={20} strokeWidth={1.55} />
             </span>
             <span>
-              <strong>日记</strong>
+              <strong>角色日记</strong>
               <em>角色写下的纸页和片段</em>
             </span>
           </span>
@@ -65,6 +71,11 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
             <span className="diary-feature-weather">SUNNY 24C / HUM 62%</span>
           </span>
         </button>
+
+        <div className="personal-notes-links">
+          <button type="button" onClick={() => setView("diary")}><NotebookPen size={21} strokeWidth={1.55} />我的日记</button>
+          <button type="button" onClick={() => setView("memo")}><StickyNote size={21} strokeWidth={1.55} />备忘录</button>
+        </div>
 
         {NOTE_WALL_UI_ENABLED ? (
           <button type="button" className="diary-feature-card diary-feature-card-primary" onClick={() => setView("notewall")}>
