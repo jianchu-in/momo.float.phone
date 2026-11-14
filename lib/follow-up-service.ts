@@ -19,6 +19,7 @@ import {
 } from "./chat-storage";
 import type { ChatMessage, StateValue } from "./chat-storage";
 import { generateChatCompletion, flattenCompletionResult } from "./chat-engine";
+import { applyListeningRoomReply } from "./listen-together";
 import { armFollowUpBailout, armIdleReconnectBailout, cancelBailoutKey, cancelBailoutPrefix, cancelFollowUpBailout, startBailoutHeartbeat } from "./push-bailout-client";
 import { isWithinPushQuietHours } from "./push-client";
 import {
@@ -244,14 +245,46 @@ export async function requestBackgroundChatReply(sessionId: string): Promise<{ o
         backgroundController = beginBackgroundApiRun(session.id);
         backgroundGeneratingSessions.add(session.id);
         window.dispatchEvent(new CustomEvent("followup-started", { detail: { sessionId: session.id } }));
+
+        if (session.isGroup) {
+            const { generateGroupChatCompletion } = await import("./group-chat-engine");
+            const replies = await generateGroupChatCompletion(
+                session,
+                latestMessages,
+                undefined,
+                { signal: backgroundController.signal },
+            );
+            const listeningRoundId = `background-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            for (const reply of replies) {
+                if (isBackgroundGenerationCancelled(session.id)) return { ok: false, skipped: "cancelled" };
+                const cleanedText = applyListeningRoomReply(reply.responseText, session.id, reply.characterId, listeningRoundId);
+                await saveBackgroundCompletionRounds(
+                    [{ text: cleanedText, rawResponseText: reply.responseText }],
+                    session.id,
+                    0,
+                    undefined,
+                    latestMessages,
+                    { senderCharacterId: reply.characterId, senderName: reply.characterName },
+                );
+            }
+            window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: session.id } }));
+            return { ok: true };
+        }
+
         const rounds = await generateBackgroundCompletionRounds(
             session,
             latestMessages,
-            { appTags: session.isGroup ? undefined : ["chat", "text"], signal: backgroundController.signal },
+            { appTags: ["chat", "text"], signal: backgroundController.signal },
         );
         if (isBackgroundGenerationCancelled(session.id)) return { ok: false, skipped: "cancelled" };
+
+        const processedRounds = rounds.map(r => ({
+            ...r,
+            text: applyListeningRoomReply(r.text, session.id, session.contactId, r.responseBatchId),
+        }));
+
         const { hasVisible, stateValues } = await saveBackgroundCompletionRounds(
-            rounds,
+            processedRounds,
             session.id,
             0,
             undefined,

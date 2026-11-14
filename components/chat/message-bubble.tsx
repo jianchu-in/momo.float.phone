@@ -9,6 +9,8 @@ import { resolveContactCard } from "@/lib/contact-card";
 import { loadCharacters } from "@/lib/character-storage";
 import { CHAT_OPEN_SESSION_EVENT, dispatchOpenAddContact } from "@/lib/chat-notification-events";
 import { ContactCardGenerateFlow } from "@/components/chat/contact-card-generate-flow";
+import { ListeningInviteCard } from "./listening-invite-card";
+import { LyricShareCard } from "@/components/music/lyric-share-card";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
 import { findStickerByName } from "@/lib/sticker-data";
 import { splitBilingualText } from "@/lib/bilingual-text";
@@ -32,8 +34,10 @@ import { toCustomAppIconId } from "@/lib/custom-app-types";
 import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { CHAT_PLUGIN_SLOTS_CHANGED_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
+import { getQuotePreview, normalizeQuotePreviewText } from "@/lib/chat-quote-preview";
 
 interface MessageBubbleProps {
+    quoteSource?: ChatMessage;
     msg: ChatMessage;
     onUpdate?: (updated: ChatMessage) => void;
     charName?: string;
@@ -48,6 +52,7 @@ interface MessageBubbleProps {
     displayContent?: string;
     defaultTranslationExpanded?: boolean;
     onFavoriteMedia?: (msg: ChatMessage) => void | Promise<void>;
+    isIMessage?: boolean;
 }
 
 /** 聊天插件自定义消息气泡：把裸 DOM 容器交给注册了该 kind 的插件渲染 */
@@ -91,8 +96,10 @@ function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
  * Renders a message bubble based on its mediaType.
  * Falls back to ReactMarkdown for plain text messages.
  */
-export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false, onFavoriteMedia }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false, onFavoriteMedia, quoteSource, isIMessage }: MessageBubbleProps) {
     switch (msg.mediaType) {
+        case "listening_invite":
+            return <ListeningInviteCard msg={msg} />;
         case "red_packet":
             return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} onShowDetail={onShowDetail} />;
         case "transfer":
@@ -116,7 +123,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         case "dice":
             return <DiceBubble msg={msg} />;
         case "quote":
-            return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} />;
+            return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} onActionSelect={onActionSelect} quoteSource={quoteSource} isIMessage={isIMessage} />;
         case "music_share":
             return <MusicShareBubble msg={msg} onPlay={onMusicPlay} />;
         case "media_file":
@@ -168,6 +175,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
     if (prev.characterId !== next.characterId) return false;
     if (prev.displayContent !== next.displayContent) return false;
     if (prev.defaultTranslationExpanded !== next.defaultTranslationExpanded) return false;
+    if (prev.isIMessage !== next.isIMessage) return false;
     return true;
 });
 
@@ -711,6 +719,88 @@ export const BilingualTextBlock = memo(function BilingualTextBlock({
 
 function TextBubble({ content, onActionSelect, defaultTranslationExpanded = false }: { content: string; onActionSelect?: (text: string) => void; defaultTranslationExpanded?: boolean }) {
     return <BilingualTextBlock text={content} onActionSelect={onActionSelect} mode="markdown" defaultExpanded={defaultTranslationExpanded} />;
+}
+
+function QuoteBubble({
+    msg,
+    displayContent,
+    defaultTranslationExpanded = false,
+    onActionSelect,
+    quoteSource,
+    isIMessage,
+}: {
+    msg: ChatMessage;
+    displayContent?: string;
+    defaultTranslationExpanded?: boolean;
+    onActionSelect?: (text: string) => void;
+    quoteSource?: ChatMessage;
+    isIMessage?: boolean;
+}) {
+    const rawPreview = quoteSource
+        ? getQuotePreview(quoteSource)
+        : (msg.mediaData?.quotePreview ? normalizeQuotePreviewText(msg.mediaData.quotePreview) : "");
+    const previewText = rawPreview || "消息";
+    const quoteMessageId = msg.mediaData?.quoteMessageId || quoteSource?.id;
+    const role = msg.role === "user" ? "user" : "assistant";
+
+    const handleJumpToSource = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!quoteMessageId) return;
+        const target = document.getElementById(`message-${quoteMessageId}`);
+        if (target) {
+            target.scrollIntoView({ behavior: "smooth", block: "center" });
+            target.setAttribute("data-highlight", "");
+            setTimeout(() => {
+                target.removeAttribute("data-highlight");
+            }, 2000);
+        }
+    };
+
+    if (isIMessage) {
+        return (
+            <div className={`chat-quote-message chat-quote-message-${role}`}>
+                <div className="chat-quote-connector" aria-hidden="true" />
+                <div
+                    className="chat-quote-preview cursor-pointer select-none"
+                    onClick={handleJumpToSource}
+                    role="button"
+                    tabIndex={0}
+                    title="点击定位到原消息"
+                >
+                    {previewText}
+                </div>
+                <div className="chat-quote-reply">
+                    <span className="imessage-bubble-surface" aria-hidden="true" />
+                    <TextBubble
+                        content={displayContent ?? msg.content}
+                        onActionSelect={onActionSelect}
+                        defaultTranslationExpanded={defaultTranslationExpanded}
+                    />
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="chat-quote-classic flex flex-col gap-1.5 min-w-0">
+            <div
+                className="chat-quote-classic-preview cursor-pointer select-none"
+                onClick={handleJumpToSource}
+                role="button"
+                tabIndex={0}
+                title="点击定位到原消息"
+            >
+                {previewText}
+            </div>
+            <div className="chat-quote-classic-body">
+                <TextBubble
+                    content={displayContent ?? msg.content}
+                    onActionSelect={onActionSelect}
+                    defaultTranslationExpanded={defaultTranslationExpanded}
+                />
+            </div>
+        </div>
+    );
 }
 
 // ── Red Packet ─────────────────────────────
@@ -1689,23 +1779,6 @@ function StickerBubble({ msg, characterId }: { msg: ChatMessage; characterId?: s
     );
 }
 
-// ── Quote ─────────────────────────────
-
-function QuoteBubble({ msg, displayContent, defaultTranslationExpanded = false }: { msg: ChatMessage; displayContent?: string; defaultTranslationExpanded?: boolean }) {
-    const d = msg.mediaData;
-    return (
-        <div className="chat-quote-message max-w-full">
-            {d?.quotePreview && (
-                <div className="chat-quote-preview bg-black/[0.06] border-l-[3px] border-l-black/15 px-2.5 py-1.5 ts-12 text-[var(--c-icon)] mb-1.5 rounded-r-[6px] truncate max-w-full">
-                    {d.quotePreview}
-                </div>
-            )}
-            {msg.content && <TextBubble content={displayContent ?? msg.content} defaultTranslationExpanded={defaultTranslationExpanded} />}
-        </div>
-    );
-}
-
-
 // ── Media Detail Modal (red packet / transfer) ─────────────────────────────
 
 interface MediaDetailModalProps {
@@ -2282,6 +2355,10 @@ function MediaFileBubble({
 function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: string, artist?: string) => void }) {
     const title = msg.mediaData?.musicTitle || "未知歌曲";
     const artist = msg.mediaData?.musicArtist || "";
+    const lyricText = msg.listeningContext?.reference?.text;
+    if (lyricText) {
+        return <LyricShareCard title={title} artist={artist} coverUrl={msg.mediaData?.musicCoverUrl} text={lyricText} onPlay={() => onPlay?.(title, artist || undefined)} />;
+    }
     return (
         <div
             className="chat-music-share-card"

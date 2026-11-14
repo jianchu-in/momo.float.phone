@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef, useMemo } from "react";
 import { ChatMessageList } from "./chat-message-list";
 import { ChatContactsList } from "./chat-contacts-list";
 import { MomentsFeed } from "./moments-feed";
@@ -8,7 +8,7 @@ import { ChatRoom } from "./chat-room";
 import { MascotChatRoom } from "./mascot-chat-room";
 import { UserProfilePanel } from "./user-profile-panel";
 import { MessageCircle, Users, Aperture, UserRound } from "lucide-react";
-import { ChatSession, type ChatMessage, loadChatSessions, pushChatMessage, hydrateChatStorage, markChatSessionRead, setActiveChatSessionId } from "@/lib/chat-storage";
+import { ChatSession, type ChatMessage, loadChatSessions, pushChatMessage, hydrateChatStorage, markChatSessionRead, setActiveChatSessionId, loadChatAppSettings, CHAT_APP_SETTINGS_UPDATED_EVENT } from "@/lib/chat-storage";
 import type { MomentPost } from "@/lib/moments-types";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 import { loadCharacters } from "@/lib/character-storage";
@@ -74,6 +74,16 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     // Chat app-level custom CSS (affects all chat pages, lower priority than per-session CSS)
     const [chatAppCSS, setChatAppCSS] = useState(() =>
         typeof window !== "undefined" ? kvGet("chat-app-custom-css") || "" : ""
+    );
+    const [chatAppSettingsRev, setChatAppSettingsRev] = useState(0);
+    useEffect(() => {
+        const onSettings = () => setChatAppSettingsRev(v => v + 1);
+        window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, onSettings);
+        return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, onSettings);
+    }, []);
+    const isIMessage = useMemo(
+        () => loadChatAppSettings().globalChatUiStyle === "imessage",
+        [chatAppSettingsRev]
     );
     // Cache all visited sessions so their ChatRoom stays mounted (hidden)
     const [visitedSessions, setVisitedSessions] = useState<Map<string, ChatSession>>(new Map());
@@ -347,7 +357,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             </div>
 
             {/* Bottom Navigation Bar — hide when inside a chat room */}
-            <nav className="chat-tab-bar chat-bottom-glass-bar" data-ui="nav" style={{ display: activeSession || activeMascot || hideTabBar || contactProfileOpen ? "none" : undefined }}>
+            <nav className={`chat-tab-bar ${isIMessage ? "chat-bottom-glass-bar" : ""}`} data-ui="nav" style={{ display: activeSession || activeMascot || hideTabBar || contactProfileOpen ? "none" : undefined }}>
                 <button
                     className={`chat-tab ${activeTab === "messages" ? "chat-tab-active" : ""}`}
                     onClick={() => setActiveTab("messages")}

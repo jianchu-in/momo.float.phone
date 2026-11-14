@@ -3153,7 +3153,7 @@ export function XiaohongshuApp({ onClose, onNotice, visible = true, onIdle, onBu
                     <div className="xhs-publish-placeholder">
                       <ImagePlus size={42} strokeWidth={1.5} color="#bbb" />
                       <div className="xhs-placeholder-actions">
-                        <button type="button" onClick={() => fileRef.current?.click()}>上传图片 (支持多张)</button>
+                        <button type="button" onClick={() => fileRef.current?.click()}>上传图片</button>
                         <button type="button" onClick={() => setDraft(prev => ({ ...prev, image: { ...prev.image, description: "" } }))}>描述图片</button>
                       </div>
                     </div>

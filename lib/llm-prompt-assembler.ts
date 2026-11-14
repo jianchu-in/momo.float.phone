@@ -1,5 +1,7 @@
 // lib/llm-prompt-assembler.ts
 
+import { listeningRoomPrompt, CHARACTER_LISTENING_INVITE_PROTOCOL } from "./listen-together";
+import { MUSIC_LISTENING_INSTRUCTION } from "./music-listening";
 import { Character } from "./character-types";
 import { ChatMessage } from "./chat-storage";
 import type { StateValue } from "./chat-storage";
@@ -543,7 +545,7 @@ function pushChronologicalShortTermBlocks(params: {
         prevRole = promptRole;
         prevWasHistory = true;
 
-        let body = stripStateAndInnerForPrompt(msg.content);
+        let body = typeof stripStateAndInnerForPrompt === "function" ? stripStateAndInnerForPrompt(msg.content) : (msg.content || "");
         let imageUrl: string | undefined;
 
         if (msg.mediaType) {
@@ -552,7 +554,9 @@ function pushChronologicalShortTermBlocks(params: {
                 body = formatDirectVisionBody(msg, resolvedUserName, characterName);
                 imageUrl = visionImageUrl;
             } else {
-                body = formatRichMediaForHistory(msg, resolvedUserName, characterName);
+                body = typeof formatRichMediaForHistory === "function"
+                    ? formatRichMediaForHistory(msg, resolvedUserName, characterName)
+                    : (msg.content || "");
             }
         }
 
@@ -1003,7 +1007,7 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
             const showTs = ts && !(ts === prevTs && promptRole === prevRole);
             prevTs = ts;
             prevRole = promptRole;
-            let body = stripStateAndInnerForPrompt(msg.content);
+            let body = typeof stripStateAndInnerForPrompt === "function" ? stripStateAndInnerForPrompt(msg.content) : (msg.content || "");
             let imageUrl: string | undefined;
 
             // Format rich-media messages as bracket markers so the AI sees them in context
@@ -1013,7 +1017,9 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                     body = formatDirectVisionBody(msg, resolvedUserName, character?.name || "对方");
                     imageUrl = visionImageUrl;
                 } else {
-                    body = formatRichMediaForHistory(msg, resolvedUserName, character?.name || "对方");
+                    body = typeof formatRichMediaForHistory === "function"
+                        ? formatRichMediaForHistory(msg, resolvedUserName, character?.name || "对方")
+                        : (msg.content || "");
                 }
             }
 
@@ -1141,6 +1147,17 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         }
     }
 
+    if (appId === "chat" && activeTags.includes("text") && history.at(-1)?.sessionId) {
+        finalPayload.push({ role: "system", content: CHARACTER_LISTENING_INVITE_PROTOCOL, _debugMeta: { marker: "character_listening_invite" } });
+    }
+    const together = appId === "chat" ? (typeof listeningRoomPrompt === "function" ? listeningRoomPrompt(character.id, history.at(-1)?.sessionId) : "") : "";
+    if (together || history.some(message => (message as any).listeningContext || message.mediaType === "music_share" || message.mediaType === "music")) {
+        finalPayload.push({ role: "system", content: MUSIC_LISTENING_INSTRUCTION, _debugMeta: { marker: "music_listening" } });
+    }
+    if (appId === "chat" && together) {
+        finalPayload.push({ role: "system", content: together, _debugMeta: { marker: "listen_together" } });
+    }
+
     return finalPayload;
 }
 
@@ -1170,13 +1187,21 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
                 ? `[礼物:${giftName}:${d.recipientName}]`
                 : `[礼物:${giftName}]`;
         }
+        case "listening_invite": {
+            const invite = d?.listeningInvite;
+            const songDesc = invite?.title ? `《${invite.title}》${invite.artist ? " · " + invite.artist : ""}` : "";
+            const actionDesc = invite?.response === "accepted" ? "已接受" : invite?.response === "declined" ? "已婉拒" : "等待回应";
+            return `[一起听邀请${songDesc ? ":" + songDesc : ""} (${actionDesc})]`;
+        }
         case "payment_request":
-            return formatShoppingPaymentRequestHistory({
-                amount: d?.amount,
-                amountLabel: d?.paymentRequestAmountLabel,
-                items: d?.paymentRequestItems,
-                itemsText: d?.paymentRequestItemsText,
-            });
+            return typeof formatShoppingPaymentRequestHistory === "function"
+                ? formatShoppingPaymentRequestHistory({
+                    amount: d?.amount,
+                    amountLabel: d?.paymentRequestAmountLabel,
+                    items: d?.paymentRequestItems,
+                    itemsText: d?.paymentRequestItemsText,
+                })
+                : "[代付请求]";
         case "contact_card":
             return `[名片:${d?.contactCardName || d?.label || "联系人"}]`;
         case "app_card": {
@@ -1199,7 +1224,7 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
         case "location":
             return `[位置:${d?.label ?? "位置"}]`;
         case "group_admin_notice":
-            return d?.adminAction
+            return d?.adminAction && typeof buildGroupAdminBracketText === "function"
                 ? buildGroupAdminBracketText(d.adminAction, d.adminActorName || charName, d.adminTargetName || "", d.adminMuteMinutes)
                 : msg.content;
         case "poke": {
@@ -1222,12 +1247,14 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
             return `[音乐分享:${mTitle}]`;
         }
         case "xiaohongshu_note_share":
-            return formatXiaohongshuShareForPrompt({
-                author: d?.xiaohongshuAuthor,
-                title: d?.xiaohongshuTitle,
-                body: d?.xiaohongshuBody,
-                description: d?.xiaohongshuDescription,
-            });
+            return typeof formatXiaohongshuShareForPrompt === "function"
+                ? formatXiaohongshuShareForPrompt({
+                    author: d?.xiaohongshuAuthor,
+                    title: d?.xiaohongshuTitle,
+                    body: d?.xiaohongshuBody,
+                    description: d?.xiaohongshuDescription,
+                })
+                : "[小红书分享]";
         case "accept_red_packet":
             if (isGroup && d?.claimer && d?.owner) return `[${d.claimer}领取了${d.owner}的红包]`;
             return "[领取红包]";
@@ -1254,7 +1281,13 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
 // ── Chat Timestamp Formatting ──────────────────────────────
 
 export function formatChatTimestamp(isoStr: string, options?: PromptTimestampOptions): string {
-    return formatPromptTimestamp(isoStr, options);
+    if (typeof formatPromptTimestamp === "function") {
+        return formatPromptTimestamp(isoStr, options);
+    }
+    const date = new Date(isoStr);
+    if (isNaN(date.getTime())) return "";
+    const pad = (n: number) => n < 10 ? `0${n}` : `${n}`;
+    return `(${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())})`;
 }
 
 // ── State Value Lookup ──────────────────────────────

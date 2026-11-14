@@ -244,6 +244,8 @@ export type NovelAiSettings = {
 
 export type ImageGenerationSettings = {
     enabled: boolean;
+    /** 纯用相册模式：角色发图仅从相册（如 Memories）中调用，未命中时不调用生图 API */
+    albumOnlyMode?: boolean;
     provider?: ImageGenerationProvider;
     requestMode: ImageGenerationRequestMode;
     // OpenAI 模式配置（旧字段保留用于兼容迁移）
@@ -338,6 +340,7 @@ export type BindingSlot = {
     userIdentityId?: string;
     worldBookIds?: string[];
     regexIds?: string[];
+    worldBookMode?: "replace" | "inherit";
 };
 
 // Character binding: character defaults + per-app overrides

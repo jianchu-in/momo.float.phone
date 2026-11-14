@@ -643,6 +643,22 @@ export function ImageGenerationSettings() {
                         <Toggle checked={settings.enabled} onChange={(enabled) => updateSettings({ enabled })} className="settings-toggle-control" />
                     </span>
                 </div>
+                <div className="menu-item border-t border-[var(--c-card-border)]">
+                    <span className="card-icon" style={{ "--icon-color": "#10B981" } as CSSProperties}>
+                        <Camera size={22} strokeWidth={1.75} />
+                    </span>
+                    <span className="settings-tools-menu-copy">
+                        <span className="menu-label appearance-menu-item-label">纯用相册模式</span>
+                        <span className="menu-desc settings-tools-menu-desc">角色发图仅从相册（如 Memories 相册）中检索调用；相册无合适照片时绝不调用外部生图 API，完全不消耗额度。</span>
+                    </span>
+                    <span className="menu-right settings-tools-menu-toggle">
+                        <Toggle
+                            checked={Boolean(settings.albumOnlyMode)}
+                            onChange={(albumOnlyMode) => updateSettings({ albumOnlyMode })}
+                            className="settings-toggle-control"
+                        />
+                    </span>
+                </div>
             </div>
 
             <div className="menu-group p-4 flex flex-col gap-4">

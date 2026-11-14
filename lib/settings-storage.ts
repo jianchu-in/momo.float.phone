@@ -708,6 +708,7 @@ export const DEFAULT_NOVELAI_PRESET: import("./settings-types").NovelAiPreset = 
 
 export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     enabled: false,
+    albumOnlyMode: false,
     provider: "openai",
     requestMode: "direct",
     apiKey: "",
@@ -876,6 +877,7 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
     return {
         ...DEFAULT_IMAGE_GENERATION_SETTINGS,
         ...(settings || {}),
+        albumOnlyMode: settings?.albumOnlyMode === true,
         provider,
         requestMode: activeOpenAiPreset.requestMode,
         apiKey: activeOpenAiPreset.apiKey,

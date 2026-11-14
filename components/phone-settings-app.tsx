@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
+import { Activity, CalendarDays, Camera, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, LayoutTemplate, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload, Zap } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 import { changeAccountPassword } from "@/lib/account-client";
+import { changeFloatingTool } from "@/lib/floating-tools";
 import { ApiSettings } from "./settings/api-settings";
 import { VoiceSettings } from "./settings/voice-settings";
 import { ImageGenerationSettings } from "./settings/image-generation-settings";
@@ -21,6 +22,11 @@ import { CloudServicesPage } from "./settings/cloud-services-setup";
 import { ToolboxSettings } from "./settings/toolbox-settings";
 import { ModerationCenter } from "./settings/moderation-center";
 import { AgentComputerSettings } from "./settings/agent-computer-settings";
+import { PerceptionSettings } from "./perception/perception-settings";
+import { DeviceActionSettings } from "./device-action/device-action-settings";
+import { SystemCalendarSettings } from "./system-calendar/system-calendar-settings";
+import { ScreenshotSettings } from "./screenshot/screenshot-settings";
+import { WidgetSettings } from "./widget/widget-settings";
 import { fetchIsAdmin } from "@/lib/moderation-client";
 import { PageShell } from "./ui/page-shell";
 import { CardGrid, FeaturedCard, type CardItem, type FeaturedCardItem } from "./ui/card-grid";
@@ -57,6 +63,11 @@ type SubPage =
     | "toolbox"
     | "agentComputer"
     | "moderation"
+    | "perception"
+    | "deviceAction"
+    | "systemCalendar"
+    | "widget"
+    | "screenshot"
     | "about";
 
 const SETTINGS_MENU = [
@@ -72,6 +83,11 @@ const SETTINGS_MENU = [
     { id: "weixin", icon: MessageSquare, label: "微信接入", desc: "iLink Bot", iconColor: CONTENT_APP_ACCENTS.chat , glass: "weixin" },
     { id: "toolbox", icon: Wrench, label: "聊天工具箱", desc: "外部工具调用", iconColor: BINDING_ACCENTS.voice , glass: "toolbox" },
     { id: "agentComputer", icon: Laptop, label: "角色电脑", desc: "云端小电脑（自部署）", iconColor: BINDING_ACCENTS.memory , glass: "agent-computer" },
+    { id: "deviceAction", icon: Zap, label: "操作设备", desc: "硬件动作控制", iconColor: "#f59e0b", glass: "" },
+    { id: "perception", icon: Activity, label: "设备感知", desc: "真机电量与步数", iconColor: "#8b5cf6", glass: "" },
+    { id: "systemCalendar", icon: CalendarDays, label: "系统日历", desc: "真机日程同步", iconColor: CONTENT_APP_ACCENTS.calendar, glass: "" },
+    { id: "widget", icon: LayoutTemplate, label: "桌面小组件", desc: "真机桌面留话", iconColor: "#0ea5e9", glass: "" },
+    { id: "screenshot", icon: Camera, label: "截屏查岗", desc: "悬浮球与查岗", iconColor: CONTENT_APP_ACCENTS.moments, glass: "" },
     { id: "identity", icon: UserCircle, label: "用户身份", desc: "个人信息", iconColor: BINDING_ACCENTS.identity , glass: "identity" },
     { id: "about", icon: Info, label: "关于与声明", desc: "版本与协议", iconColor: BINDING_ACCENTS.memory , glass: "about" },
 ] as const;
@@ -112,6 +128,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [timeAware, setTimeAware] = useState(true);
     const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
+    const [floatingToolsEnabled, setFloatingToolsEnabled] = useState(false);
     const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
     const [floatingDockSheetOpen, setFloatingDockSheetOpen] = useState(false);
     const [keepAlive, setKeepAlive] = useState(false);
@@ -228,15 +245,30 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     }, [onNotice]);
 
     const handlePromptViewerChange = useCallback((next: boolean) => {
-        setPromptViewerEnabled(next);
-        saveChatAppSettings({ ...loadChatAppSettings(), promptViewerEnabled: next });
+        const updated = changeFloatingTool(loadChatAppSettings(), "promptViewerEnabled", next);
+        saveChatAppSettings(updated);
+        setPromptViewerEnabled(updated.promptViewerEnabled === true);
+        setQuickActionEnabled(updated.quickActionEnabled === true);
+        setFloatingToolsEnabled(updated.floatingToolsEnabled === true);
         onNotice(next ? "已开启提示词查看器" : "已关闭提示词查看器");
     }, [onNotice]);
 
     const handleQuickActionChange = useCallback((next: boolean) => {
-        setQuickActionEnabled(next);
-        saveChatAppSettings({ ...loadChatAppSettings(), quickActionEnabled: next });
+        const updated = changeFloatingTool(loadChatAppSettings(), "quickActionEnabled", next);
+        saveChatAppSettings(updated);
+        setPromptViewerEnabled(updated.promptViewerEnabled === true);
+        setQuickActionEnabled(updated.quickActionEnabled === true);
+        setFloatingToolsEnabled(updated.floatingToolsEnabled === true);
         onNotice(next ? "已开启快捷操作" : "已关闭快捷操作");
+    }, [onNotice]);
+
+    const handleFloatingToolsChange = useCallback((next: boolean) => {
+        const updated = changeFloatingTool(loadChatAppSettings(), "floatingToolsEnabled", next);
+        saveChatAppSettings(updated);
+        setPromptViewerEnabled(updated.promptViewerEnabled === true);
+        setQuickActionEnabled(updated.quickActionEnabled === true);
+        setFloatingToolsEnabled(updated.floatingToolsEnabled === true);
+        onNotice(next ? "已开启悬浮工具" : "已关闭悬浮工具");
     }, [onNotice]);
 
     const handleFloatingDockChange = useCallback((next: boolean) => {
@@ -296,6 +328,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onClick: () => setCurrentPage("binding"),
     };
 
+    const deviceActionItem = SETTINGS_MENU.find(i => i.id === "deviceAction")!;
+    const deviceActionFeaturedItem: FeaturedCardItem = {
+        id: deviceActionItem.id,
+        icon: deviceActionItem.icon,
+        label: deviceActionItem.label,
+        desc: "真机硬件联动控制：手电筒、音量与亮度",
+        iconColor: deviceActionItem.iconColor,
+        onClick: () => setCurrentPage("deviceAction"),
+    };
+
     const renderSubPage = () => {
         switch (currentPage) {
             case "api":
@@ -324,6 +366,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <AgentComputerSettings onNotice={onNotice} />;
             case "moderation":
                 return <ModerationCenter onNotice={onNotice} />;
+            case "perception":
+                return <PerceptionSettings />;
+            case "deviceAction":
+                return <DeviceActionSettings />;
+            case "systemCalendar":
+                return <SystemCalendarSettings />;
+            case "widget":
+                return <WidgetSettings />;
+            case "screenshot":
+                return <ScreenshotSettings />;
             case "identity":
                 return <UserIdentitySettings />;
             case "about":
@@ -353,6 +405,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         setTimeAware(settings.timeAware !== false);
         setPromptViewerEnabled(settings.promptViewerEnabled === true);
         setQuickActionEnabled(settings.quickActionEnabled === true);
+        setFloatingToolsEnabled(settings.floatingToolsEnabled === true);
         setFloatingDockEnabled(settings.floatingDockEnabled === true);
         setKeepAlive(loadKeepAlive());
     }, []);
@@ -426,6 +479,15 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                             </div>
                             <div className="mt-[10px]">
                                 <FeaturedCard item={agentComputerFeaturedItem} />
+                            </div>
+                        </div>
+                        <div className="settings-hardware-section">
+                            <h3 className="settings-menu-section-title">Hardware & Reality</h3>
+                            <div className="mt-[10px] flex flex-col gap-3">
+                                <FeaturedCard item={deviceActionFeaturedItem} />
+                                <CardGrid
+                                    items={SETTINGS_MENU.filter(item => ["perception", "systemCalendar", "widget", "screenshot"].includes(item.id)).map(makeCardItem)}
+                                />
                             </div>
                         </div>
                         <div className="settings-realtime-section">
@@ -508,6 +570,20 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                     </span>
                                     <span className="menu-right settings-tools-menu-toggle">
                                         <Toggle checked={quickActionEnabled} onChange={handleQuickActionChange} className="settings-toggle-control" />
+                                    </span>
+                                </div>
+                                <div className="menu-item settings-tools-menu-item">
+                                    <span className="card-icon card-icon-glass" style={quickActionIconStyle}>
+                                        <span aria-hidden="true" style={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: 10, background: "linear-gradient(145deg, #a6adba, #555f71)", boxShadow: "inset 0 1px 0 #ffffff80" }}>
+                                            <span style={{ width: 19, height: 19, borderRadius: "50%", border: "3px solid #ffffff55", background: "#ffffffe0", backgroundClip: "padding-box" }} />
+                                        </span>
+                                    </span>
+                                    <span className="settings-tools-menu-copy">
+                                        <span className="menu-label appearance-menu-item-label">悬浮工具</span>
+                                        <span className="menu-desc settings-tools-menu-desc">合并提示词与快捷操作，可拖动贴边</span>
+                                    </span>
+                                    <span className="menu-right settings-tools-menu-toggle">
+                                        <Toggle checked={floatingToolsEnabled} ariaLabel="悬浮工具" onChange={handleFloatingToolsChange} className="settings-toggle-control" />
                                     </span>
                                 </div>
                             </div>

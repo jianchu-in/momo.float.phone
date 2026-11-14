@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
-import { BookOpen, Check, ChevronDown, Code2, FlaskConical, ImageIcon, Loader2, RefreshCw, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { BookOpen, Camera, Check, ChevronDown, Code2, FlaskConical, ImageIcon, Loader2, RefreshCw, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import {
     getFloatingDockState,
@@ -110,6 +110,13 @@ export function QuickActionFloat() {
             if (prev && nextCharacters.some(character => character.id === prev)) return prev;
             return nextCharacters[0]?.id || "";
         });
+    }, []);
+
+    const toggleAlbumOnlyMode = useCallback(() => {
+        const cur = loadImageGenerationSettings();
+        const next = { ...cur, albumOnlyMode: !cur.albumOnlyMode };
+        saveImageGenerationSettings(next);
+        setImageSettings(next);
     }, []);
 
     useEffect(() => {
@@ -812,6 +819,23 @@ export function QuickActionFloat() {
                                 {imageStatus && <p className="quick-action-model-status" data-success={imageStatus.success ? "" : undefined}>{imageStatus.message}</p>}
                                 {imagePreview?.key === activeImageId && <img src={imagePreview.url} alt="生图 API 测试结果" style={{ width: "100%", maxHeight: 180, objectFit: "contain", borderRadius: 12 }} />}
                             </div>
+                            <button
+                                type="button"
+                                className="quick-action-option"
+                                data-selected={Boolean(imageSettings.albumOnlyMode)}
+                                onClick={toggleAlbumOnlyMode}
+                                style={{ marginTop: 8, justifyContent: "space-between" }}
+                            >
+                                <div style={{ display: "flex", flexDirection: "column", gap: "2px", textAlign: "left" }}>
+                                    <span style={{ fontWeight: 600, display: "flex", items: "center", gap: "6px" }}>
+                                        <Camera size={15} /> 纯用相册模式
+                                    </span>
+                                    <span style={{ fontSize: "11px", opacity: 0.7 }}>
+                                        {imageSettings.albumOnlyMode ? "仅使用相册图片，不消耗外部生图 API" : "未命中相册时自动回退生图"}
+                                    </span>
+                                </div>
+                                {imageSettings.albumOnlyMode ? <Check size={15} /> : null}
+                            </button>
                         </section>
 
                         <section className="quick-action-section" data-disabled={characterDisabled ? "" : undefined}>
