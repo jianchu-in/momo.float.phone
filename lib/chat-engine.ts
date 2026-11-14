@@ -39,7 +39,7 @@ import {
     resolveUserIdentity,
 } from "./settings-storage";
 import { resolveChatAccountUserIdentity } from "./chat-scope-storage";
-import { buildChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
+import { buildChineseThinkingPrompt, resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
 import { assemblePromptPayload, applyOutputRegex, type LLMMessage, type LLMContentPart } from "./llm-prompt-assembler";
 import { MacroEngine, postProcessTrim } from "./macro-engine";
 import { getStatusRegionConfig, resolveStatusRegionSection, resolveStatusRegionExampleLine, resolveStatusRegionComposition, resolveStatusRegionFullExample } from "./chat-status-region";
@@ -1887,7 +1887,8 @@ export async function buildChatPromptMessages(
     if (preset && promptProfile) {
         preset = applyCustomPromptProfileToPreset(preset, promptProfile);
     }
-    const chineseThinkingEnabled = session.chineseThinkingPromptEnabled === true
+    const chineseThinking = resolveChineseThinkingPrompt(session, loadChatAppSettings());
+    const chineseThinkingEnabled = chineseThinking.enabled
         && resolvedAppId === "chat" && !options?.appTags?.includes("offline") && !promptProfile;
     preset = withChineseThinkingPrompt(preset, chineseThinkingEnabled);
 
@@ -2044,7 +2045,7 @@ export async function buildChatPromptMessages(
     if (chineseThinkingEnabled) {
         llmMessages.push({ role: "system", content: buildChineseThinkingPrompt(
             userIdentity?.name || "你", preset?.online_thinking_tag?.trim() || "thinking", [character.name],
-            session.chineseThinkingPromptLength,
+            chineseThinking.length,
         ) });
     }
     const avatarChangeIntent = !session.isGroup

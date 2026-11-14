@@ -8,7 +8,7 @@ import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse, type ParsedMessagePart } from "@/lib/rich-message-parser";
 import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
-import { withChineseThinkingPrompt } from "@/lib/chinese-thinking-prompt";
+import { resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "@/lib/chinese-thinking-prompt";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent } from "./message-bubble";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
@@ -1153,6 +1153,12 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [editingOfflineTarget, setEditingOfflineTarget] = useState<OfflineActionTarget | null>(null);
     const [editingOfflineContent, setEditingOfflineContent] = useState("");
     const [regexRevision, setRegexRevision] = useState(0);
+    const [globalThinkingEnabled, setGlobalThinkingEnabled] = useState(() => loadChatAppSettings().globalChineseThinkingPromptEnabled === true);
+    useEffect(() => {
+        const sync = () => setGlobalThinkingEnabled(loadChatAppSettings().globalChineseThinkingPromptEnabled === true);
+        window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
+        return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
+    }, []);
     // Whether there are unsent user messages waiting for AI generation
     const [pendingGenerate, setPendingGenerate] = useState(false);
     // 生成期间又来了一次回复请求（如拉黑/解除拉黑事件）且被判定为忙碌丢弃：
@@ -1687,7 +1693,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         const presets = loadPresets();
         const preset = withChineseThinkingPrompt(
             presets.find(item => item.id === slot.presetId) || presets.find(item => item.builtIn) || null,
-            session.chineseThinkingPromptEnabled === true,
+            resolveChineseThinkingPrompt(session, { globalChineseThinkingPromptEnabled: globalThinkingEnabled }).enabled,
         );
         const withThoughtCompat = (tag: string): string[] => (tag === "thinking" ? ["thinking", "thought", "think"] : [tag]);
         return {
@@ -1701,7 +1707,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             // 预设「剔除文本」：引擎最终会删，预览阶段同步删，避免闪现（字面量删除，成本极低）
             stripTexts: (preset?.strip_texts || []).filter(Boolean),
         };
-    }, [regexRevision, session.contactId, session.isGroup, session.chineseThinkingPromptEnabled]);
+    }, [regexRevision, session.contactId, session.isGroup, session.chineseThinkingPromptEnabled, globalThinkingEnabled]);
 
     const displayRegexMacroEngine = useMemo(() => {
         const charName = session.isGroup

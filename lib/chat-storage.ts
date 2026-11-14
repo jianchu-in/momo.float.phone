@@ -371,6 +371,8 @@ export type ChatAppSettings = {
     meetingInviteCard?: MeetingInviteCardConfig;
     /** 私聊默认传入的最近图片数量；单独会话设置优先 */
     globalVisionImagePromptLimit?: number;
+    globalChineseThinkingPromptEnabled?: boolean;
+    globalChineseThinkingPromptLength?: ChineseThinkingPromptLength;
     timeAware?: boolean; // When true, inject timestamps into prompt so AI knows message timing (default: true)
     promptViewerEnabled?: boolean; // When true, show the floating prompt viewer entry
     quickActionEnabled?: boolean; // When true, show the floating quick action entry

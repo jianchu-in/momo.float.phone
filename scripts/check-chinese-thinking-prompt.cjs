@@ -36,10 +36,11 @@ async function main() {
     const session = { id: "session", contactId: "char", chatAccountId: "alt", chineseThinkingPromptEnabled: false };
     const coverIntent = load("lib/chat-moments-cover-intent.ts", {});
     const history = [{ id: "user-message", sessionId: session.id, role: "user", content: "你好", createdAt: "2026-11-02" }];
+    const globalSettings = {};
     const shortTerm = { recentBlocks: [], truncatedHistory: history, wbActivationContext: "", unifiedRecentItems: [] };
     const deps = {
         "./chinese-thinking-prompt": helper,
-        "./chat-storage": { loadChatSessions: () => [session], loadChatAppSettings: () => ({}), resolveVisionImagePromptLimit: () => 0,
+        "./chat-storage": { loadChatSessions: () => [session], loadChatAppSettings: () => globalSettings, resolveVisionImagePromptLimit: () => 0,
             normalizeVisionImagePromptLimit: value => value || 0, resolveMeetingInviteCardConfig: () => ({ contract: "" }) },
         "./character-storage": { loadCharacters: () => [{ id: "char", name: "角色甲" }] },
         "./settings-storage": {
@@ -160,11 +161,21 @@ async function main() {
     assert.equal(hasPrompt(await engine.buildChatPromptMessages(session, history, { appId: "story" })), false);
     assert.equal(hasPrompt(await engine.buildChatPromptMessages(session, history, { promptProfile: { output: "json" } })), false);
 
+    globalSettings.globalChineseThinkingPromptEnabled = true;
+    globalSettings.globalChineseThinkingPromptLength = 500;
+    session.chineseThinkingPromptEnabled = false;
+    assert.match((await engine.buildChatPromptMessages(session, history)).llmMessages.find(message => message.content.includes("【内置中文思考展示提示词】")).content, /约500字/);
+    assert.equal(hasPrompt(await engine.buildChatPromptMessages(session, history, { appTags: ["chat", "offline"] })), false);
     const group = load("lib/group-chat-engine.ts", { ...deps, "./chat-engine": { ...engine, applyVisionImagePromptLimit: messages => messages } },
         "\nexport const testBuild = buildGroupChatPromptMessages;");
     session.isGroup = true;
     session.participantIds = ["char"];
-    assert.equal(hasPrompt(await group.testBuild(session, history)), true);
+    const groupGlobal = await group.testBuild(session, history);
+    assert.equal(hasPrompt(groupGlobal), true);
+    assert.match(groupGlobal.llmMessages.find(message => message.content.includes("【内置中文思考展示提示词】")).content, /约500字/);
+    globalSettings.globalChineseThinkingPromptEnabled = false;
+    assert.equal(hasPrompt(await group.testBuild(session, history)), false);
+    session.chineseThinkingPromptEnabled = true;
     for (const length of [100, 300, 500]) {
         session.chineseThinkingPromptLength = length;
         const selected = await group.testBuild({ ...session, chineseThinkingPromptLength: 100 }, history);

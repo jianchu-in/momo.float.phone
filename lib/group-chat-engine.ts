@@ -51,7 +51,7 @@ import {
     loadRegexes,
 } from "./settings-storage";
 import { resolveChatAccountUserIdentity } from "./chat-scope-storage";
-import { buildChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
+import { buildChineseThinkingPrompt, resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
 import {
     assembleGroupPromptPayload,
     formatRichMediaForHistory,
@@ -330,7 +330,8 @@ async function buildGroupChatPromptMessages(
         ? [...baseAppTags, "spectator"]
         : baseAppTags;
     const isOfflineMode = activeAppTags.includes("offline");
-    const chineseThinkingEnabled = session.chineseThinkingPromptEnabled === true && !isOfflineMode && !promptProfile
+    const chineseThinking = resolveChineseThinkingPrompt(session, loadChatAppSettings());
+    const chineseThinkingEnabled = chineseThinking.enabled && !isOfflineMode && !promptProfile
         && activeAppTags.includes("group_chat");
     preset = withChineseThinkingPrompt(preset, chineseThinkingEnabled);
 
@@ -512,7 +513,7 @@ async function buildGroupChatPromptMessages(
     if (chineseThinkingEnabled) {
         llmMessages.push({ role: "system", content: buildChineseThinkingPrompt(
             userName, preset?.online_thinking_tag?.trim() || "thinking", memberNames,
-            session.chineseThinkingPromptLength,
+            chineseThinking.length,
         ) });
     }
     if (promptProfile?.output === "plain_text") {

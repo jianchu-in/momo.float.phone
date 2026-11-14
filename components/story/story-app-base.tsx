@@ -54,6 +54,7 @@ import { StoryAppearanceVariables } from "./story-appearance-variables";
 import { isStoryReadingPanelVisible, storyStageAppearanceClass, storyChromeAttributes, storyMessageAppearanceAttributes, type StoryAppearancePrefs } from "@/lib/story-appearance";
 import { Avatar } from "@/components/ui/primitives";
 import { StoryHtmlRenderer, type StoryVoiceSegment } from "@/components/ui/story-html-renderer";
+import { StoryPaginationManager } from "@/components/story/story-pagination-manager";
 import { StorySettingsPage, STORY_DEFAULT_STATUS_RENDER, STORY_DEFAULT_THEATER_RENDER } from "@/components/story/story-settings-page";
 import { loadCharacters } from "@/lib/character-storage";
 import { maybeRunSummarization } from "@/lib/memory-summarizer";
@@ -338,6 +339,7 @@ const StoryComposer = memo(function StoryComposer({
   quickInputEnabled,
   quickInputOptions,
   quickInputCursor,
+  shortcuts,
 }: {
   sessionId: string;
   isGenerating: boolean;
@@ -359,9 +361,29 @@ const StoryComposer = memo(function StoryComposer({
   quickInputEnabled: boolean;
   quickInputOptions: string[];
   quickInputCursor: "left" | "middle" | "right";
+  shortcuts: {
+    streaming: boolean; timeAware: boolean;
+    onStreaming: () => void; onTimeAware: () => void; onVoice: () => void; onCatalog: () => void;
+    statusId: string; theaterId: string;
+    status: StorySchemeRepository["statusSchemes"]; theater: StorySchemeRepository["theaterSchemes"];
+    onStatus: (id: string) => void; onTheater: (id: string) => void;
+    onResize: (height: number) => void;
+  };
 }) {
   const { draft, setDraft, flush } = useStoryInputDraft(sessionId);
   const [quickPanelOpen, setQuickPanelOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsRef = useRef<HTMLDivElement>(null);
+  const { onResize } = shortcuts;
+  useLayoutEffect(() => {
+    const node = shortcutsRef.current;
+    if (!shortcutsOpen || !node) return;
+    const measure = () => onResize(node.offsetHeight);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    return () => { observer?.disconnect(); onResize(0); };
+  }, [shortcutsOpen, onResize]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastAppendIdRef = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -508,6 +530,10 @@ const StoryComposer = memo(function StoryComposer({
           </button>
         </>
       ) : null}
+      <button type="button" className="story-composer-plus" data-story-action="shortcuts" aria-label="剧情快捷操作"
+        aria-expanded={shortcutsOpen} onClick={() => setShortcutsOpen(open => !open)}>
+        <PlusIcon width={18} height={18} aria-hidden="true" />
+      </button>
       <textarea
         ref={textareaRef}
         rows={1}
@@ -539,6 +565,20 @@ const StoryComposer = memo(function StoryComposer({
       >
         {isGenerating ? <StopIcon width={17} height={17} /> : <PaperAirplaneIcon width={17} height={17} className="story-send-icon" />}
       </button>
+      {shortcutsOpen && <div className="story-composer-shortcuts" ref={shortcutsRef} role="group" aria-label="剧情快捷操作">
+        <button type="button" aria-pressed={shortcuts.streaming} onClick={shortcuts.onStreaming}>通用流式输出</button>
+        <button type="button" aria-pressed={shortcuts.timeAware} onClick={shortcuts.onTimeAware}>时间感知</button>
+        <button type="button" onClick={() => { setShortcutsOpen(false); shortcuts.onCatalog(); }}>剧情目录</button>
+        <button type="button" aria-pressed={voiceEnabled} onClick={shortcuts.onVoice}>剧情语音</button>
+        <label>状态栏方案<select value={shortcuts.statusId} onChange={event => shortcuts.onStatus(event.target.value)}>
+          <option value="">停止生成</option>
+          {shortcuts.status.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
+        </select></label>
+        <label>小剧场方案<select value={shortcuts.theaterId} onChange={event => shortcuts.onTheater(event.target.value)}>
+          <option value="">停止生成</option>
+          {shortcuts.theater.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
+        </select></label>
+      </div>}
     </div>
   );
 });
@@ -550,6 +590,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [schemeRepoVersion, setSchemeRepoVersion] = useState(0);
   const [storyGlobalSettings, setStoryGlobalSettings] = useState<StoryGlobalSettings>({ interruptProactiveDuringStory: false, streamingEnabled: false, timeAware: true });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [composerCatalogOpen, setComposerCatalogOpen] = useState(false);
+  const [composerShortcutHeight, setComposerShortcutHeight] = useState(0);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   const [floatingPhoneViewportStyle, setFloatingPhoneViewportStyle] = useState<CSSProperties | undefined>(undefined);
   const [floatingPhoneTab, setFloatingPhoneTab] = useState<FloatingPhoneTab>("chat");
@@ -2303,19 +2345,29 @@ export function StoryApp({ onClose }: StoryAppProps) {
   if (!currentCharacter || !currentSession) return null;
 
   const sessionScope = `.story-session-${currentSession.id}`;
+  const updateStoryGlobal = (next: StoryGlobalSettings) => {
+    saveStoryGlobalSettings(next);
+    setStoryGlobalSettings(next);
+  };
+  const pagination = {
+    characters, activeCharacterId, activeGroupId, groups: storyGroups, activeSessionId, userName: userIdentity?.name || "用户",
+    onCharacterChange: handleStoryCharacterChange, onGroupSelect: handleStoryGroupSelect, onGroupCreate: handleStoryGroupCreate,
+    onGroupRename: (groupId: string, name: string) => {
+      updateStoryGroup(groupId, { name });
+      setStorageVersion(value => value + 1);
+    },
+    onGroupDelete: handleStoryGroupDelete, onSessionSelect: handleStorySessionSelect, onBranchCreate: handleStoryBranchCreate,
+    onBranchDelete: handleStoryBranchDelete, onSessionUpdate: handleStorySessionUpdate, onExportSession: handleExportStorySession,
+    onExportSessions: handleExportSelectedStories, onExportAll: handleExportAllStories, onMergeBranches: handleMergeStoryBranches,
+  };
 
   if (settingsOpen) {
     return (
       <div className={`story-app-shell story-session-${currentSession.id}`} data-story-theme={uiPrefs.theme || "paper"} style={storyShellStyle}>
         {customFontFace ? <style>{customFontFace}</style> : null}
         <StorySettingsPage
-          characters={characters}
-          activeCharacterId={activeCharacterId}
-          activeGroupId={activeGroupId}
-          groups={storyGroups}
+          {...pagination}
           ownerSessions={ownerSessions}
-          activeSessionId={activeSessionId}
-          userName={userIdentity?.name || "用户"}
           uiPrefs={uiPrefs}
           settings={storySettings}
           globalSettings={storyGlobalSettings}
@@ -2325,28 +2377,9 @@ export function StoryApp({ onClose }: StoryAppProps) {
           contextExcludedTags={contextExcludedTagsDraft}
           customCSS={currentSession.customCSS || ""}
           onClose={() => setSettingsOpen(false)}
-          onCharacterChange={handleStoryCharacterChange}
-          onGroupSelect={handleStoryGroupSelect}
-          onGroupCreate={handleStoryGroupCreate}
-          onGroupRename={(groupId, name) => {
-            updateStoryGroup(groupId, { name });
-            setStorageVersion((value) => value + 1);
-          }}
-          onGroupDelete={handleStoryGroupDelete}
-          onSessionSelect={handleStorySessionSelect}
-          onBranchCreate={handleStoryBranchCreate}
-          onBranchDelete={handleStoryBranchDelete}
-          onSessionUpdate={handleStorySessionUpdate}
-          onExportSession={handleExportStorySession}
-          onExportSessions={handleExportSelectedStories}
-          onExportAll={handleExportAllStories}
-          onMergeBranches={handleMergeStoryBranches}
           onUiPrefsChange={(next) => applySessionUpdates({ uiPrefs: next })}
           onSettingsChange={(next) => applySessionUpdates({ settings: next })}
-          onGlobalSettingsChange={(next) => {
-            saveStoryGlobalSettings(next);
-            setStoryGlobalSettings(next);
-          }}
+          onGlobalSettingsChange={updateStoryGlobal}
           onSchemeRepoChange={saveStorySchemeRepository}
           onTagsChange={(foldTags, contextExcludedTags) => {
             setFoldTagsDraft(foldTags);
@@ -2381,7 +2414,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       data-story-theme={uiPrefs.theme || "paper"}
       data-story-reading-panel={readingPanelVisible ? "shown" : "hidden"}
       {...storyChromeAttributes(uiPrefs)}
-      style={storyShellStyle}
+      style={{ ...storyShellStyle, "--story-composer-shortcut-height": `${composerShortcutHeight}px` } as CSSProperties}
       onTouchStart={(event) => handleTouchStart(event.touches[0]?.clientX || 0)}
       onTouchMove={(event) => handleTouchMove(event.touches[0]?.clientX || 0)}
       onTouchEnd={handleTouchEnd}
@@ -2684,7 +2717,23 @@ export function StoryApp({ onClose }: StoryAppProps) {
         quickInputEnabled={Boolean(uiPrefs.quickInputEnabled)}
         quickInputOptions={quickInputOptions}
         quickInputCursor={quickInputCursor}
+        shortcuts={{
+          streaming: storyGlobalSettings.streamingEnabled,
+          timeAware: storyGlobalSettings.timeAware,
+          onStreaming: () => updateStoryGlobal({ ...storyGlobalSettings, streamingEnabled: !storyGlobalSettings.streamingEnabled }),
+          onTimeAware: () => updateStoryGlobal({ ...storyGlobalSettings, timeAware: !storyGlobalSettings.timeAware }),
+          onVoice: () => applySessionUpdates({ uiPrefs: { voiceEnabled: !uiPrefs.voiceEnabled } }),
+          onCatalog: () => setComposerCatalogOpen(true),
+          statusId: storySettings.statusGenerationEnabled === false ? "" : activeStatusScheme?.id || "",
+          theaterId: storySettings.theaterGenerationEnabled === false ? "" : activeTheaterScheme?.id || "",
+          status: schemeRepo.statusSchemes,
+          theater: schemeRepo.theaterSchemes,
+          onStatus: id => applySessionUpdates({ settings: { ...storySettings, statusGenerationEnabled: Boolean(id), activeStatusSchemeId: id || storySettings.activeStatusSchemeId } }),
+          onTheater: id => applySessionUpdates({ settings: { ...storySettings, theaterGenerationEnabled: Boolean(id), activeTheaterSchemeId: id || storySettings.activeTheaterSchemeId } }),
+          onResize: setComposerShortcutHeight,
+        }}
       />}
+      {composerCatalogOpen && <StoryPaginationManager {...pagination} sessions={ownerSessions} onCloseCatalog={() => setComposerCatalogOpen(false)} />}
 
       {storySettings.floatingPhoneEnabled ? (
         <button className="story-floating-phone-ball" type="button" onClick={() => { setFloatingChatVersion((value) => value + 1); setFloatingPhoneTab("chat"); setFloatingPlusOpen(false); setFloatingPhoneOpen(true); }} aria-label="打开悬浮小手机"><MiniPhoneIcon size={18} /></button>

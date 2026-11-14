@@ -2448,6 +2448,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const [synthesizing, setSynthesizing] = useState(false);
     const [synthError, setSynthError] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const objectUrlRef = useRef<string | null>(null);
     const mountedRef = useRef(true);
     useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
     const text = msg.mediaData?.label || "语音消息";
@@ -2457,7 +2458,8 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const needsResynthesis = msg.role !== "user" && synthesizedFromText !== speechText;
     const duration = msg.mediaData?.voiceDuration || Math.max(2, Math.ceil(speechText.length / 4));
 
-    const playSrc = (src: string) => {
+    const playSrc = (src: string, stored = false) => {
+        objectUrlRef.current = stored ? src : null;
         // 必须用 <audio> 元素:iOS 静音拨键会掐掉 Web Audio 的输出(表现为全线
         // 无声),媒体元素不受影响。元素属于宿主页面,锁屏媒体卡片指向站点本身,
         // 点了只会回到 App;播完清 src 让卡片立即撤下。
@@ -2467,6 +2469,8 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
         const finalize = () => {
             if (audioRef.current === audio) audioRef.current = null;
             try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch { /* ignore */ }
+            if (stored) URL.revokeObjectURL(src);
+            if (objectUrlRef.current === src) objectUrlRef.current = null;
             setPlaying(false);
         };
         audio.onended = finalize;
@@ -2476,23 +2480,41 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
 
     // 点击才合成（不再挂载即合成）：已有音频直接播；没有就现场合成一次，
     // 合成结果已在任务内落库，之后任何时候点都是直接播放，不再消耗额度。
-    const handlePlay = () => {
+    const handlePlay = async () => {
         if (synthesizing) return;
         if (playing && audioRef.current) {
             const active = audioRef.current;
             audioRef.current = null;
             try { active.pause(); active.removeAttribute("src"); active.load(); } catch { /* ignore */ }
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = null;
             setPlaying(false);
             return;
         }
-        if (msg.mediaUrl && !needsResynthesis) {
-            playSrc(msg.mediaUrl);
+        if (msg.mediaUrl && (!needsResynthesis || msg.role === "user" || !characterId)) {
+            const stored = isMediaStoreRef(msg.mediaUrl);
+            if (!stored && !msg.mediaUrl.startsWith("asset://")) {
+                playSrc(msg.mediaUrl);
+                return;
+            }
+            setSynthesizing(true);
+            try {
+                const src = stored ? await loadMediaObjectUrl(msg.mediaUrl)
+                    : await getChatImageFromIndexedDB(msg.mediaUrl.slice(8));
+                if (!mountedRef.current) {
+                    if (stored && src) URL.revokeObjectURL(src);
+                    return;
+                }
+                if (src) playSrc(src, stored);
+                else setSynthError("原语音文件已不可用");
+            } catch {
+                if (mountedRef.current) setSynthError("语音读取失败");
+            } finally {
+                if (mountedRef.current) setSynthesizing(false);
+            }
             return;
         }
-        if (msg.role === "user" || !characterId) {
-            if (msg.mediaUrl) playSrc(msg.mediaUrl);
-            return;
-        }
+        if (msg.role === "user" || !characterId) return;
         setSynthesizing(true);
         setSynthError(null);
         synthesizeVoiceForMessage(msg.id, characterId, speechText)
@@ -2511,7 +2533,10 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
             });
     };
 
-    useEffect(() => () => { audioRef.current?.pause(); }, []);
+    useEffect(() => () => {
+        audioRef.current?.pause();
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    }, []);
 
     // Wave bars — slightly irregular heights so the idle state already looks intentional.
     const barCount = Math.min(Math.max(4, Math.round(duration / 2)), 9);
