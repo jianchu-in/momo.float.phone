@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenText, ChevronLeft, NotebookPen, StickyNote } from "lucide-react";
+import { BookOpenText, ChevronLeft, Eye, NotebookPen, StickyNote } from "lucide-react";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 
 import { DiaryEntriesApp } from "./diary-entries-app";
 import { NoteWallApp } from "./note-wall-app";
+import { PersonalNoteReactionHistory } from "./personal-note-actions";
 import { PersonalNotesPage } from "./personal-notes-page";
 
 type DiaryAppProps = {
@@ -13,7 +14,7 @@ type DiaryAppProps = {
   onNotice?: (message: string) => void;
 };
 
-type DiaryView = "home" | "entries" | "notewall" | "diary" | "memo";
+type DiaryView = "home" | "entries" | "notewall" | "diary" | "memo" | "reactions";
 
 const NOTE_WALL_UI_ENABLED = false;
 
@@ -32,9 +33,13 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
     return <DiaryEntriesApp onBack={() => setView("home")} onNotice={onNotice} />;
   }
 
+  if (view === "reactions") {
+    return <PersonalNoteReactionHistory identityId={resolveUserIdentity()?.id ?? null} onBack={() => setView("home")} />;
+  }
+
   if (view === "diary" || view === "memo") {
     const identityId = resolveUserIdentity()?.id ?? null;
-    return <PersonalNotesPage key={`${view}:${identityId ?? ""}`} kind={view} identityId={identityId} onBack={() => setView("home")} />;
+    return <PersonalNotesPage key={`${view}:${identityId ?? ""}`} kind={view} identityId={identityId} onBack={() => setView("home")} onNotice={onNotice} />;
   }
 
   return (
@@ -76,6 +81,10 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
           <button type="button" onClick={() => setView("diary")}><NotebookPen size={21} strokeWidth={1.55} />我的日记</button>
           <button type="button" onClick={() => setView("memo")}><StickyNote size={21} strokeWidth={1.55} />备忘录</button>
         </div>
+
+        <button type="button" className="note-reaction-home-link" onClick={() => setView("reactions")}>
+          <Eye size={19} strokeWidth={1.65} />他的偷看观后感
+        </button>
 
         {NOTE_WALL_UI_ENABLED ? (
           <button type="button" className="diary-feature-card diary-feature-card-primary" onClick={() => setView("notewall")}>

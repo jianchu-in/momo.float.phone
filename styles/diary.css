@@ -4187,3 +4187,179 @@
   border: 1px solid #ded6c7;
   border-radius: 2px;
 }
+
+.note-reaction-home-link,
+.personal-note-list-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  border: 1px solid #dcdacf;
+  border-radius: 3px;
+  background: #f2f0e7;
+  color: #4a453c;
+  cursor: pointer;
+}
+
+.note-reaction-home-link {
+  width: min(100%, 332px);
+  justify-self: center;
+  margin-top: -12px;
+}
+
+.personal-note-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.personal-note-list-actions button { flex: 1; padding: 0 8px; }
+.personal-note-list-actions button:disabled { opacity: 0.5; cursor: default; }
+.personal-note-editor-actions { margin: 0; padding: 0 20px 10px; }
+.personal-note-editor-actions small { flex-basis: 100%; color: #675d50; }
+
+.note-action-overlay {
+  z-index: 95;
+  background: rgba(33, 31, 32, 0.27);
+  padding: 20px 14px;
+}
+
+.note-action-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 424px);
+  max-height: 100%;
+  min-height: 0;
+  background: #faf7ee;
+  color: #322e28;
+  border: 1px solid #e8e0d1;
+  border-radius: 15px;
+  overflow: hidden;
+  box-shadow: 0 20px 52px #211b3142, 0 2px 6px #302a311a;
+}
+
+.note-action-header,
+.note-action-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.note-action-header { border-bottom: 1px solid #ded7c6; }
+.note-action-header h2 { font-size: calc(17px * var(--app-text-scale, 1)); margin: 0; font-weight: 600; }
+.note-action-header .diary-icon-btn { color: #665d51; }
+.note-action-footer { border-top: 1px solid #ded7c6; color: #685e52; font-size: 13px; }
+.note-action-footer .diary-entry-confirm-btn { display: inline-flex; align-items: center; justify-content: center; width: auto; margin: 0 0 0 auto; min-width: 74px; gap: 5px; padding: 7px 10px; }
+.note-action-footer .diary-entry-confirm-btn svg { flex: none; }
+.note-action-back { background: transparent; border: 0; color: #57495e; cursor: pointer; padding: 8px 0; }
+
+.note-action-body,
+.note-reaction-writing {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.note-action-body { display: grid; gap: 12px; padding: 14px 16px; }
+.note-action-selection { min-width: 0; margin: 0; padding: 0; border: 0; }
+.note-action-selection legend, .note-action-field { font-size: 13px; font-weight: 600; color: #5c5145; }
+.note-action-tabs { display: flex; gap: 6px; margin-top: 7px; }
+.note-action-tabs button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid #ded7c6;
+  border-radius: 20px;
+  background: #fffcf5;
+  color: inherit;
+  cursor: pointer;
+}
+.note-action-tabs button[aria-pressed="true"] { background: #eee9f0; border-color: #9c8baa; color: #504159; }
+.note-action-notes { display: grid; gap: 5px; max-height: 178px; overflow: auto; padding-block: 7px; }
+.note-action-check { display: flex; align-items: center; gap: 7px; min-height: 32px; }
+.note-action-check input { flex: none; width: 16px; height: 16px; accent-color: #715983; }
+.note-action-check span { overflow-wrap: anywhere; }
+.note-action-check time { margin-left: auto; color: #6c6050; font-size: 12px; }
+.note-action-date time { margin-left: 0; font-weight: 600; }
+.note-action-date-items { padding-left: 18px; }
+.note-action-date-title { display: block; padding: 0 0 6px 26px; overflow-wrap: anywhere; color: #5c5145; font-size: 13px; }
+.note-action-remember { color: #554264; font-size: 13px; }
+.note-action-field { display: grid; gap: 6px; }
+.note-action-field :is(input, textarea) {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #d9d0bf;
+  border-radius: 6px;
+  background: #fffdf7;
+  color: #322e28;
+  font-size: 16px;
+}
+.note-action-field textarea { resize: vertical; }
+.note-action-characters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-height: 125px; overflow: auto; }
+.note-action-characters button {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px;
+  background: #fffdf7;
+  border: 1px solid #ded7c6;
+  border-radius: 7px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.note-action-characters button > span:last-child { overflow-wrap: anywhere; }
+.note-action-characters button[aria-pressed="true"] { border-color: #8c739f; background: #eee9f0; }
+.note-action-characters .chat-contact-avatar { width: 28px; height: 28px; flex: none; }
+.note-action-error { color: #8c302a; font-size: 13px; margin: 5px 16px 10px; }
+.note-reaction-paper {
+  background: linear-gradient(150deg, #f3edf5 0, #faf6eb 47%, #fffdf3 100%);
+  border-color: #ddd0df;
+}
+.note-reaction-heading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px 10px;
+}
+.note-reaction-heading h2 { margin: 0; color: #47374f; font: 400 calc(26px * var(--app-text-scale, 1)) "NoteWall Ximai", var(--app-font-family); }
+.note-reaction-heading time { color: #74677a; font-size: 12px; }
+.note-reaction-eye { display: grid; place-items: center; width: 41px; height: 41px; border: 1px solid #d5c7dc; border-radius: 50%; color: #624c72; background: #f6eff6; flex: none; }
+.note-reaction-context {
+  margin: 0 18px;
+  padding: 7px 10px;
+  border-left: 2px solid #b3a1bd;
+  color: #65566b;
+  background: #674e800b;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  max-height: 125px;
+  overflow: auto;
+  flex: none;
+}
+.note-reaction-context p { margin: 0 0 4px; white-space: pre-wrap; }
+.note-reaction-context summary { cursor: pointer; }
+.note-reaction-context ul { margin: 4px 0 0; padding-left: 20px; }
+.note-reaction-context time { color: #68596e; }
+.note-reaction-writing {
+  padding: 16px 20px 22px;
+  min-height: min(110px, 19vh);
+  max-height: 46vh;
+  color: #3a2d3e;
+  font: 400 calc(21px * var(--app-text-scale, 1)) / 1.72 "NoteWall Ximai", var(--app-font-family);
+  overflow-wrap: anywhere;
+}
+.note-reaction-writing p { white-space: pre-wrap; display: inline; margin: 0; }
+.note-reaction-writing small { display: block; margin-top: 6px; color: #76657c; font: 12px var(--app-font-family); }
+.note-reaction-soft { color: #72677a; }
+.note-reaction-caret { display: inline-block; width: 1px; height: 0.9em; margin-left: 3px; background: #735b83; }
+.note-reaction-history .diary-entry-main { padding-top: 20px; }
+.note-reaction-history .diary-entry-card-text { white-space: pre-line; overflow-wrap: anywhere; }

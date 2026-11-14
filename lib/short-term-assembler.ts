@@ -58,7 +58,7 @@ function formatPhotoDirectiveForPrompt(msg: ChatMessage): string {
 export type NativeTimelineEntry = {
     id: string;
     sourceApp: "chat" | "moments" | "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app";
-    sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event" | "moments_signature" | "moments_cover"; // chat sub-type: 1:1 vs group chat vs system note
+    sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event" | "moments_signature" | "moments_cover" | "personal_note_reaction"; // chat sub-type: 1:1 vs group chat vs system note
     authorType?: "user" | "character" | "npc"; // who authored this entry
     postAuthorType?: "user" | "character"; // for moments: who owns the parent post
     sessionId?: string;
@@ -1095,7 +1095,7 @@ export function prepareShortTermContext(
         raw.push({ tag: "recent_game", order: FEATURE_ORDER.game, entries: gameEventEntries });
     }
 
-    const diaryEntries = timeline.filter(e => e.sourceApp === "diary" && e.sourceDetail === "diary_entry");
+    const diaryEntries = timeline.filter(e => e.sourceApp === "diary" && (e.sourceDetail === "diary_entry" || e.sourceDetail === "personal_note_reaction"));
     if (diaryEntries.length > 0) {
         raw.push({ tag: "recent_diary", order: FEATURE_ORDER.diary_entry, entries: diaryEntries });
     }
@@ -1311,6 +1311,7 @@ export function prepareGroupShortTermContext(
         });
         timeline = filterTimelineByAllowedSources(mergeShortMemoryEntries(characterId, timeline), allowed);
         for (const entry of timeline) {
+            if (entry.sourceDetail === "personal_note_reaction") continue;
             if (entry.sourceApp === "chat" && entry.sourceDetail === "group" && entry.groupSessionId === options?.excludeGroupSessionId
                 && (!entry.memorySupplement || currentHistoryKeys.has(`${entry.groupSessionId}\u0000${entry.id}`))) {
                 continue;

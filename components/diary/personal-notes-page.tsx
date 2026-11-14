@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BookOpenText, ChevronLeft, Plus, StickyNote, Trash2, X } from "lucide-react";
+import { BookOpenText, ChevronLeft, Eye, Plus, Send, StickyNote, Trash2, X } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { formatIsoDate } from "@/lib/calendar-utils";
 import { loadDiaryEntryFontAssetId, loadDiaryEntryFontScale } from "@/lib/diary-entry-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
+import { PersonalNoteActionDialog, type NoteAction } from "./personal-note-actions";
 import { useDiaryPaperFont } from "./use-diary-paper-font";
 import {
   DEFAULT_MEMO_STYLE,
@@ -152,10 +153,11 @@ function MemoEditor({ draft, onChange, busy }: {
   );
 }
 
-export function PersonalNotesPage({ kind, identityId, onBack }: {
+export function PersonalNotesPage({ kind, identityId, onBack, onNotice }: {
   kind: PersonalNoteKind;
   identityId: string | null;
   onBack: () => void;
+  onNotice?: (notice: string) => void;
 }) {
   const isDiary = kind === "diary";
   const title = isDiary ? "我的日记" : "备忘录";
@@ -166,6 +168,7 @@ export function PersonalNotesPage({ kind, identityId, onBack }: {
   const [notes, setNotes] = useState<PersonalNote[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [action, setAction] = useState<NoteAction | null>(null);
   const [confirm, setConfirm] = useState<"delete" | "discard" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -223,15 +226,16 @@ export function PersonalNotesPage({ kind, identityId, onBack }: {
   }, [editorOpen]);
 
   const existing = notes.find(note => note.id === draft?.id);
+  const hasEdits = draft && (draft.title !== (existing?.title ?? "") || draft.body !== (existing?.body ?? "")
+    || (existing && draft.date !== existing.date)
+    || (existing && JSON.stringify(draft.memoStyle ?? DEFAULT_MEMO_STYLE) !== JSON.stringify(existing.memoStyle ?? DEFAULT_MEMO_STYLE)));
   const back = () => {
     if (saving.current || confirm) return;
     if (!draft) {
       onBack();
       return;
     }
-    if (draft.title !== (existing?.title ?? "") || draft.body !== (existing?.body ?? "")
-      || (existing && draft.date !== existing.date)
-      || (existing && JSON.stringify(draft.memoStyle ?? DEFAULT_MEMO_STYLE) !== JSON.stringify(existing.memoStyle ?? DEFAULT_MEMO_STYLE))) {
+    if (hasEdits) {
       setConfirm("discard");
       return;
     }
@@ -276,7 +280,7 @@ export function PersonalNotesPage({ kind, identityId, onBack }: {
 
   return (
     <section className={`diary-app diary-entry-app personal-notes-app ${isDiary ? "personal-diary-app" : "personal-memo-app"}`} style={fontStyle}>
-      <header className="diary-app-header" inert={editorOpen}>
+      <header className="diary-app-header" inert={editorOpen || Boolean(action)}>
         <button type="button" className="diary-icon-btn" onClick={onBack} aria-label="返回"><ChevronLeft size={20} /></button>
         <div><h1>{title}</h1></div>
         {loaded && <button type="button" className="diary-icon-btn personal-notes-add" onClick={create} aria-label={`新建${itemName}`}>
@@ -284,24 +288,30 @@ export function PersonalNotesPage({ kind, identityId, onBack }: {
         </button>}
       </header>
 
-      <main className="diary-entry-main personal-notes-main" inert={editorOpen}>
+      <main className="diary-entry-main personal-notes-main" inert={editorOpen || Boolean(action)}>
         {!draft && error ? <p className="personal-notes-error" role="alert">{error}</p> : loaded && (
-          notes.length ? <div className="diary-entry-list">
-            {notes.map(note => {
-              const style = note.memoStyle ?? DEFAULT_MEMO_STYLE;
-              const date = isDiary ? note.date : formatIsoDate(new Date(note.updatedAt));
-              const preview = note.body.trim().replace(/\s+/g, " ");
-              return <button type="button" key={note.id} className="diary-entry-card" onClick={() => open(note)}>
-                {!isDiary && <span className="personal-memo-preview personal-note-paper-pattern" data-paper={style.paper} aria-hidden="true" />}
-                <strong>{note.title || preview.slice(0, 32)}</strong>
-                {preview && <span className="diary-entry-card-text">{preview}</span>}
-                <span className="diary-entry-card-meta">
-                  {!isDiary && style.mode === "todo" && <span>{style.checked.length}/{note.body.split("\n").filter(line => line.trim()).length} 项完成</span>}
-                  <time dateTime={date}>{date}</time>
-                </span>
-              </button>;
-            })}
-          </div> : <div className="diary-entry-empty">
+          notes.length ? <>
+            <div className="personal-note-list-actions">
+              <button type="button" onClick={() => setAction({ mode: "share", kind })}><Send size={15} /> 发给角色</button>
+              <button type="button" onClick={() => setAction({ mode: "peek", kind })}><Eye size={17} /> 让角色偷看</button>
+            </div>
+            <div className="diary-entry-list">
+              {notes.map(note => {
+                const style = note.memoStyle ?? DEFAULT_MEMO_STYLE;
+                const date = isDiary ? note.date : formatIsoDate(new Date(note.updatedAt));
+                const preview = note.body.trim().replace(/\s+/g, " ");
+                return <button type="button" key={note.id} className="diary-entry-card" onClick={() => open(note)}>
+                  {!isDiary && <span className="personal-memo-preview personal-note-paper-pattern" data-paper={style.paper} aria-hidden="true" />}
+                  <strong>{note.title || preview.slice(0, 32)}</strong>
+                  {preview && <span className="diary-entry-card-text">{preview}</span>}
+                  <span className="diary-entry-card-meta">
+                    {!isDiary && style.mode === "todo" && <span>{style.checked.length}/{note.body.split("\n").filter(line => line.trim()).length} 项完成</span>}
+                    <time dateTime={date}>{date}</time>
+                  </span>
+                </button>;
+              })}
+            </div>
+          </> : <div className="diary-entry-empty">
             <Icon size={34} strokeWidth={1.5} />
             <h2>{`还没有${itemName}`}</h2>
             <button type="button" onClick={create}>{`新建${itemName}`}</button>
@@ -311,7 +321,7 @@ export function PersonalNotesPage({ kind, identityId, onBack }: {
 
       {draft && <div ref={overlay} className="nw-modal-backdrop personal-note-overlay" onClick={back}>
         <form className="diary-entry-detail-paper personal-note-editor" role="dialog" aria-modal="true" aria-label={`${existing ? "编辑" : "新建"}${itemName}`}
-          onClick={event => event.stopPropagation()} onSubmit={save} inert={Boolean(confirm)}
+          onClick={event => event.stopPropagation()} onSubmit={save} inert={Boolean(confirm || action)}
           onKeyDown={event => {
             if (event.key === "Escape" && !event.nativeEvent.isComposing) {
               event.stopPropagation();
@@ -335,12 +345,22 @@ export function PersonalNotesPage({ kind, identityId, onBack }: {
             ) : <MemoEditor draft={draft} busy={busy} onChange={setDraft} />}
             {error && <p className="personal-notes-error" role="alert">{error}</p>}
           </div>
+          {existing && <div className="personal-note-list-actions personal-note-editor-actions">
+            <button type="button" onClick={() => setAction({ mode: "share", selectedId: existing.id, kind })} disabled={busy || Boolean(hasEdits)}><Send size={15} /> 发给角色</button>
+            <button type="button" onClick={() => setAction({ mode: "peek", selectedId: existing.id, kind })} disabled={busy || Boolean(hasEdits)}><Eye size={17} /> 让角色偷看</button>
+            {hasEdits && <small>保存后可发送或生成心声</small>}
+          </div>}
           <footer className="personal-notes-actions">
             {existing && <button type="button" className="personal-note-delete" onClick={() => setConfirm("delete")} disabled={busy}><Trash2 size={15} /> 删除</button>}
             <button type="submit" className="diary-entry-confirm-btn" disabled={busy || !canSave}>{busy ? "处理中…" : "保存"}</button>
           </footer>
         </form>
       </div>}
+
+      {action && <PersonalNoteActionDialog action={action} identityId={identityId} onClose={() => {
+        setAction(null);
+        if (editorOpen) requestAnimationFrame(() => closeButton.current?.focus({ preventScroll: true }));
+      }} onNotice={onNotice} />}
 
       {confirm && <ConfirmDialog
         title={confirm === "delete" ? `删除这条${itemName}？` : "放弃本次编辑？"}
