@@ -382,6 +382,8 @@ export type ChatAppSettings = {
     maxToolRounds?: number; // 单条消息的工具循环轮数上限（默认 5；每轮=一次模型请求，轮内调用条数不限）
     /** 全局聊天提示音配置（新消息/发送消息/来电/致电/挂断），在“全局聊天信息”里设置 */
     globalChatSounds?: ChatSoundsConfig;
+    roleplayDiscussionEnabled?: boolean;
+    combinedFloatingTools?: boolean;
     floatingDockEnabled?: boolean; // 悬浮球贴边半隐藏收拢模式（默认关）
     /** 用剧情 APP 取代聊天输入栏原“线下模式”入口。 */
     storyAsOfflineMode?: boolean;

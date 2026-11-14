@@ -107,6 +107,7 @@ import { parseAIResponse } from "@/lib/rich-message-parser";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { MomentsFeed } from "@/components/chat/moments-feed";
 import { PhoneChatApp } from "@/components/chat/phone-chat-app";
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { StoryFloatingPhoneWindow } from "./story-floating-phone-window";
 import { GiftPickerModal } from "@/components/chat/gift-picker-modal";
 import { TransferTargetModal } from "@/components/chat/transfer-target-modal";
@@ -687,6 +688,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
   );
   const independentFloatingShell = currentSession?.independentStory === true;
   const storyDisplayName = activeGroup?.name || currentCharacter?.name || "剧情";
+  useMascotScene("story", currentSession ? `剧情 · ${storyDisplayName}` : "剧情", {
+    sessionId: currentSession?.id || "",
+    characterId: currentCharacter?.id || "",
+  });
   const storyAvatar = ownerMainSession?.storyAvatar || currentCharacter?.avatar || "";
   const uiPrefs = currentSession?.uiPrefs || {};
   // Preview geometry stays inside the editor so canceling cannot shift the reading position.

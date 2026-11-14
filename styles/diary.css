@@ -4363,3 +4363,27 @@
 .note-reaction-caret { display: inline-block; width: 1px; height: 0.9em; margin-left: 3px; background: #735b83; }
 .note-reaction-history .diary-entry-main { padding-top: 20px; }
 .note-reaction-history .diary-entry-card-text { white-space: pre-line; overflow-wrap: anywhere; }
+
+.personal-note-timer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.personal-note-timer-panel p { margin: 0; color: var(--c-text-secondary, #635b52); font-size: 13px; }
+.personal-note-timer-panel fieldset {
+  display: grid;
+  gap: 10px;
+  border: 1px solid currentColor;
+  border-radius: 12px;
+  padding: 12px;
+  min-width: 0;
+}
+.personal-note-timer-panel select, .personal-note-timer-panel input[type="number"] {
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  padding: 6px 8px;
+  color: inherit;
+}
+.personal-note-timer-panel input[type="number"] { width: 88px; }
+.personal-note-timer-characters { display: flex; gap: 10px 18px; flex-wrap: wrap; }

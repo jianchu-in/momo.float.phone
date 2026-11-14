@@ -1,5 +1,6 @@
 "use client";
 
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { Bot, ChevronLeft, Clock3, NotebookPen, Trash2, WandSparkles, X } from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
@@ -568,6 +569,9 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
     () => (activeCharacterId ? books.find(book => book.characterId === activeCharacterId) ?? null : null),
     [activeCharacterId, books],
   );
+  useMascotScene("diary", activeBook ? `角色日记 · ${characters.find(character => character.id === activeBook.characterId)?.name || "角色"}` : "角色日记", {
+    characterId: activeBook?.characterId || "", entryId: activeEntry?.id || "",
+  });
   const activeBookBusy = Boolean(activeBook && generatingCharacterIds.includes(activeBook.characterId));
 
   return (

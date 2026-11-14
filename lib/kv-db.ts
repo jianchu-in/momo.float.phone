@@ -237,3 +237,29 @@ export function kvKeysWithPrefix(prefix: string): string[] {
 export function kvEntries(): Array<{ key: string; value: string }> {
     return Array.from(_cache.entries()).map(([key, value]) => ({ key, value }));
 }
+
+// 后台手记调度需跨标签页检查已保存的内容和抢占任务。
+export async function kvReadPersisted(key: string): Promise<string | null> {
+    return (await kvDb.entries.get(key))?.value ?? null;
+}
+
+export async function kvClaim(key: string): Promise<boolean> {
+    return kvDb.transaction("rw", kvDb.entries, async () => {
+        if (await kvDb.entries.get(key)) return false;
+        await kvDb.entries.add({ key, value: "1" });
+        return true;
+    });
+}
+
+export async function kvRemoveClaims(prefix: string): Promise<void> {
+    await kvDb.entries.where("key").startsWith(prefix).delete();
+}
+
+export async function kvUpdatePersisted(key: string, update: (value: string | null) => string): Promise<void> {
+    await kvDb.transaction("rw", kvDb.entries, async () => {
+        const current = await kvDb.entries.get(key);
+        const value = update(current?.value ?? _cache.get(key) ?? null);
+        await kvDb.entries.put({ key, value });
+        _cache.set(key, value);
+    });
+}

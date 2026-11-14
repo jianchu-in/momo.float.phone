@@ -1,5 +1,6 @@
 "use client";
 
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { getAllPosts, deleteMomentPost, getUnreadMomentsNotifications, saveMomentsLastSeen, addMomentComment } from "@/lib/moments-storage";
 import { loadChatContacts, resolveChatCharacterAvatar } from "@/lib/chat-storage";
@@ -75,11 +76,12 @@ type MomentsFeedProps = {
     compact?: boolean;
     onUserPublished?: (post: MomentPost) => void;
     profileCharacterId?: string;
+    sceneVisible?: boolean;
     profileChatAccountId?: string | null;
     profileUser?: { identityId?: string; chatAccountId?: string | null };
 };
 
-export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, profileCharacterId, profileChatAccountId, profileUser }: MomentsFeedProps) {
+export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, profileCharacterId, profileChatAccountId, profileUser, sceneVisible = true }: MomentsFeedProps) {
     const profileCharacter = profileCharacterId ? loadCharacters().find(character => character.id === profileCharacterId) : undefined;
     const [profileRevision, setProfileRevision] = useState(0);
     const [userPage, setUserPage] = useState<MomentsFeedProps["profileUser"] | null>(null);
@@ -287,6 +289,30 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
     }, [getScrollElement, restoreScrollAnchor, stopLoadMoreAnchorTracking]);
 
     const visiblePosts = posts.slice(0, visiblePostCount);
+    const [visiblePostId, setVisiblePostId] = useState("");
+    useEffect(() => {
+        const root = scrollRef.current;
+        if (!root || !sceneVisible || typeof IntersectionObserver === "undefined") return;
+        const visible = new Map<Element, number>();
+        const observer = new IntersectionObserver(entries => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) visible.set(entry.target, entry.intersectionRatio);
+                else visible.delete(entry.target);
+            }
+            const first = [...visible].sort((a, b) => b[1] - a[1])[0]?.[0];
+            setVisiblePostId(first?.getAttribute("data-moment-post-id") || "");
+        }, { root, threshold: [0, 0.25, 0.5, 0.75, 1] });
+        root.querySelectorAll("[data-moment-post-id]").forEach(node => observer.observe(node));
+        return () => observer.disconnect();
+    }, [visiblePostCount, posts, sceneVisible]);
+    const focusedPost = posts.find(post => post.id === (activeComposer?.postId || visiblePostId));
+    useMascotScene("moments", profileCharacterId ? `朋友圈 · ${profileName}` : "朋友圈", {
+        characterId: profileCharacterId || (focusedPost?.authorType === "character" ? focusedPost.authorId : ""),
+        postIds: focusedPost ? focusedPost.id : posts.slice(0, 8).map(post => post.id).join(","),
+        signature: profileCharacterId ? signature : "",
+        userName: coverIdentity?.name || ownerIdentity?.name || "",
+        chatAccountId: profileChatAccountId || chatScope.chatAccountId || "",
+    }, sceneVisible && !userPage, 10);
     const hasMorePosts = visiblePostCount < posts.length;
 
     const handleLoadMorePosts = useCallback(() => {
@@ -491,7 +517,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
 
     return (
         <>
-        {userPage && <MomentsFeed key={`${userPage.chatAccountId || "main"}:${userPage.identityId || "user"}`} profileUser={userPage} onCloseApp={() => setUserPage(null)} />}
+        {userPage && <MomentsFeed sceneVisible={sceneVisible} key={`${userPage.chatAccountId || "main"}:${userPage.identityId || "user"}`} profileUser={userPage} onCloseApp={() => setUserPage(null)} />}
         <div style={{ display: userPage ? "none" : "contents" }}>
         {photoFailureNotice && (
             <GeneratedImageErrorDialog

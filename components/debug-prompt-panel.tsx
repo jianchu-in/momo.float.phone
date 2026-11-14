@@ -1,5 +1,6 @@
 "use client";
 
+import { OPEN_FLOATING_TOOL } from "@/lib/roleplay-discussion";
 import { useState, useEffect, useRef, useSyncExternalStore, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
 import { getDebugChatState, getDebugPromptSnapshot, subscribeDebugChatState, subscribeDebugPromptSnapshot, type DebugPromptSnapshot } from "@/lib/debug-store";
 import { previewPromptRequestSnapshot, ChatEngineError } from "@/lib/chat-engine";
@@ -102,7 +103,7 @@ function isExtraPromptMode(mode: DebugMode): mode is ExtraPromptAppId {
     return EXTRA_PROMPT_APPS.some(app => app.id === mode);
 }
 
-export function DebugPromptPanel() {
+export function DebugPromptPanel({ combined = false }: { combined?: boolean } = {}) {
     const chatState = useSyncExternalStore(subscribeDebugChatState, getDebugChatState, () => null);
     const promptSnapshot = useSyncExternalStore(subscribeDebugPromptSnapshot, getDebugPromptSnapshot, () => null);
     const [collapsed, setCollapsed] = useState(true);
@@ -908,10 +909,20 @@ export function DebugPromptPanel() {
         setAdventureWorldId(adventureWorldOptions[0].id);
     }, [adventureWorldId, adventureWorldOptions]);
 
+    useEffect(() => {
+        if (!combined || !enabled) return;
+        const openTool = (event: Event) => {
+            if ((event as CustomEvent).detail !== "prompt-viewer") return;
+            setCollapsed(false);
+        };
+        window.addEventListener(OPEN_FLOATING_TOOL, openTool);
+        return () => window.removeEventListener(OPEN_FLOATING_TOOL, openTool);
+    }, [combined, enabled]);
+
     if (!enabled) return null;
 
     const isPanelOpen = !collapsed;
-    const showFloatingButton = collapsed || floatingDockEnabled;
+    const showFloatingButton = !combined && (collapsed || floatingDockEnabled);
     const isDual = floatingDockEnabled && quickActionEnabled && enabled;
     const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
 

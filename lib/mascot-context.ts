@@ -16,11 +16,32 @@ const DEFAULT_CONTEXT: MascotPageContext = {
 };
 
 let _ctx: MascotPageContext = { ...DEFAULT_CONTEXT };
+const scenes = new Map<symbol, { context: MascotPageContext; priority: number }>();
 const _listeners = new Set<() => void>();
 
 function notify() { _listeners.forEach((fn) => fn()); }
 
-export function getMascotContext(): MascotPageContext { return _ctx; }
+export function getMascotContext(): MascotPageContext {
+  let context = _ctx;
+  let priority = -Infinity;
+  for (const scene of scenes.values()) {
+    if (scene.priority >= priority) {
+      context = scene.context;
+      priority = scene.priority;
+    }
+  }
+  return context;
+}
+
+export function registerMascotScene(context: MascotPageContext, priority: number): () => void {
+  const id = Symbol();
+  scenes.set(id, { context, priority });
+  notify();
+  return () => {
+    scenes.delete(id);
+    notify();
+  };
+}
 
 export function setMascotContext(ctx: MascotPageContext) {
   _ctx = ctx;

@@ -1,5 +1,6 @@
 "use client";
 
+import { loadPersonalNoteRemember, savePersonalNoteRemember } from "@/lib/personal-note-timer-settings";
 import { useEffect, useId, useRef, useState } from "react";
 import { BookOpenText, ChevronLeft, Eye, Send, X } from "lucide-react";
 import { ChatFallbackAvatar } from "@/components/chat/chat-fallback-avatar";
@@ -8,7 +9,7 @@ import { resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import { loadPersonalNotes, type PersonalNote, type PersonalNoteKind } from "@/lib/personal-notes-storage";
 import {
   DEFAULT_NOTE_REACTION_PREMISE, createNoteReactionId, generatePersonalNoteReaction, loadPersonalNoteContacts,
-  loadPersonalNoteReactions, personalNoteTitle, savePersonalNoteReaction, sharePersonalNotes, type NoteReaction,
+  loadPersonalNoteReactions, PERSONAL_NOTE_REACTIONS_EVENT, personalNoteTitle, savePersonalNoteReaction, sharePersonalNotes, type NoteReaction,
 } from "@/lib/personal-note-reactions";
 
 type Mode = "peek" | "share";
@@ -115,7 +116,7 @@ export function PersonalNoteActionDialog({ action, identityId, onClose, onNotice
   const [characterId, setCharacterId] = useState("");
   const [query, setQuery] = useState("");
   const [premiseInput, setPremise] = useState("");
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(loadPersonalNoteRemember);
   const [stage, setStage] = useState<"select" | "running" | "result">("select");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<ReactionPresentation | null>(null);
@@ -284,7 +285,11 @@ export function PersonalNoteActionDialog({ action, identityId, onClose, onNotice
                   value={premiseInput} onChange={event => setPremise(event.target.value)} />
               </label>
               <label className="note-action-check note-action-remember">
-                <input type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} /> 记入角色的短期记忆
+                <input type="checkbox" checked={remember} onChange={event => {
+                  const next = event.target.checked;
+                  setRemember(next);
+                  void savePersonalNoteRemember(next).catch(() => setError("无法保存短期记忆偏好。"));
+                }} /> 记入角色的短期记忆
               </label>
             </>}
           </div>
@@ -315,6 +320,12 @@ export function PersonalNoteReactionHistory({ identityId, onBack }: { identityId
   const [active, setActive] = useState<NoteReaction | null>(null);
   let items: NoteReaction[] = [];
   let error = "";
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    const onUpdate = () => refresh(previous => previous + 1);
+    window.addEventListener(PERSONAL_NOTE_REACTIONS_EVENT, onUpdate);
+    return () => window.removeEventListener(PERSONAL_NOTE_REACTIONS_EVENT, onUpdate);
+  }, []);
   try { items = loadPersonalNoteReactions(identityId); }
   catch (reason) { error = reason instanceof Error ? reason.message : "读取失败，请重试。"; }
   return (

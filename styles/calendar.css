@@ -1533,3 +1533,17 @@
     animation: none !important;
   }
 }
+
+.calendar-month-cell, .calendar-strip-cell { position: relative; }
+.calendar-china-badge {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  color: #ad3949;
+  background: #ffedf0;
+  border-radius: 4px;
+  padding: 0 2px;
+  font-size: 9px;
+  line-height: 13px;
+}
+.calendar-china-badge[data-work] { color: #435067; background: #e9eef7; }

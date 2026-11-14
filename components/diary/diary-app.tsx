@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenText, ChevronLeft, Eye, NotebookPen, StickyNote } from "lucide-react";
+import { BookOpenText, ChevronLeft, Eye, NotebookPen, Settings2, StickyNote } from "lucide-react";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 
 import { DiaryEntriesApp } from "./diary-entries-app";
 import { NoteWallApp } from "./note-wall-app";
 import { PersonalNoteReactionHistory } from "./personal-note-actions";
+import { PersonalNoteTimerPanel } from "./personal-note-timer-panel";
 import { PersonalNotesPage } from "./personal-notes-page";
 
 type DiaryAppProps = {
@@ -14,7 +15,7 @@ type DiaryAppProps = {
   onNotice?: (message: string) => void;
 };
 
-type DiaryView = "home" | "entries" | "notewall" | "diary" | "memo" | "reactions";
+type DiaryView = "home" | "entries" | "notewall" | "diary" | "memo" | "reactions" | "auto-peek";
 
 const NOTE_WALL_UI_ENABLED = false;
 
@@ -32,6 +33,8 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
   if (view === "entries") {
     return <DiaryEntriesApp onBack={() => setView("home")} onNotice={onNotice} />;
   }
+
+  if (view === "auto-peek") return <PersonalNoteTimerPanel onBack={() => setView("home")} />;
 
   if (view === "reactions") {
     return <PersonalNoteReactionHistory identityId={resolveUserIdentity()?.id ?? null} onBack={() => setView("home")} />;
@@ -84,6 +87,10 @@ export function DiaryApp({ onClose, onNotice }: DiaryAppProps) {
 
         <button type="button" className="note-reaction-home-link" onClick={() => setView("reactions")}>
           <Eye size={19} strokeWidth={1.65} />他的偷看观后感
+        </button>
+
+        <button type="button" className="note-reaction-home-link" onClick={() => setView("auto-peek")}>
+          <Settings2 size={19} />主动偷看设置
         </button>
 
         {NOTE_WALL_UI_ENABLED ? (

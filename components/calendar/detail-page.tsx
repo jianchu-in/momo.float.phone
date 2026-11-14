@@ -6,6 +6,8 @@ import type { CalendarScheduleItem } from "@/lib/calendar-types";
 import type { MenstrualDayState } from "@/lib/menstrual-storage";
 import { formatIsoDate, parseIsoDate, timeToMinutes } from "@/lib/calendar-utils";
 import { getLunarInfoByIso } from "@/lib/lunar";
+import { getChinaCalendarMark } from "@/lib/calendar-china";
+import { ChinaCalendarBadge } from "./china-mark";
 
 const WEEKDAY_CN = ["日", "一", "二", "三", "四", "五", "六"];
 const WEEK_LABEL = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -347,6 +349,7 @@ export function CalendarDetailPage({
               const iso = addDaysIso(weekStart, i);
               const d = parseIsoDate(iso);
               const lunar = getLunarInfoByIso(iso);
+              const mark = getChinaCalendarMark(iso);
               const cycle = cycleMap?.get(iso) ?? null;
               return (
                 <button
@@ -356,10 +359,12 @@ export function CalendarDetailPage({
                   data-date={iso}
                   data-today={iso === todayIso ? "true" : undefined}
                   onClick={() => applySelection(iso, { fromStrip: true })}
-                  aria-label={`${d.getMonth() + 1}月${d.getDate()}日`}
+                  title={mark.description || undefined}
+                  aria-label={[`${d.getMonth() + 1}月${d.getDate()}日`, mark.description].filter(Boolean).join("，")}
                 >
                   <span className="calendar-strip-num">{d.getDate()}</span>
-                  <span className="calendar-strip-lunar">{lunar?.cellLabel ?? ""}</span>
+                  <span className="calendar-strip-lunar">{mark.label || lunar?.cellLabel || ""}</span>
+                  <ChinaCalendarBadge badge={mark.badge} />
                   {cycle ? <i className="calendar-cycle-dot calendar-strip-cycle" data-type={cycle.type} aria-hidden="true" /> : null}
                 </button>
               );
@@ -381,17 +386,18 @@ export function CalendarDetailPage({
           {days.map(iso => {
             const d = parseIsoDate(iso);
             const lunar = getLunarInfoByIso(iso);
+              const mark = getChinaCalendarMark(iso);
             return (
-              <div key={iso} className="calendar-tl-day-head" data-today={iso === todayIso ? "true" : undefined}>
+              <div key={iso} className="calendar-tl-day-head" title={mark.description || undefined} data-today={iso === todayIso ? "true" : undefined}>
                 {daysPerPage >= 5 ? (
                   <>
                     <b>{d.getDate()}日</b>
-                    <span>{WEEK_LABEL[d.getDay()]}</span>
+                    <span>{mark.label || WEEK_LABEL[d.getDay()]}</span>
                   </>
                 ) : (
                   <>
                     <b>{d.getMonth() + 1}月{d.getDate()}日 – {WEEK_LABEL[d.getDay()]}</b>
-                    <span>{lunar ? `${lunar.monthLabel}${lunar.isFirstDay ? "" : lunar.dayLabel}` : ""}</span>
+                    <span>{mark.description || (lunar ? `${lunar.monthLabel}${lunar.isFirstDay ? "" : lunar.dayLabel}` : "")}</span>
                   </>
                 )}
               </div>

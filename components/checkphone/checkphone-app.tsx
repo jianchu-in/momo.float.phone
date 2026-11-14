@@ -1,5 +1,6 @@
 "use client";
 
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AtSign,
@@ -654,6 +655,10 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   const dockApps = sanitizeCheckPhoneAppIds(manifest?.dockAppIds);
   const unreadAppIds = activeCharId ? unreadAppIdsByCharacter[activeCharId] || [] : [];
   const selectedAppSpec = selectedAppId && isCheckPhoneAppId(selectedAppId) ? CHECKPHONE_APP_SPECS[selectedAppId] : null;
+
+  useMascotScene("checkphone", activeCharacter ? `查手机 · ${activeCharacter.name}` : "查手机", {
+    characterId: activeCharId || "", phoneAppId: selectedAppId || "",
+  });
 
   // STAGE 2: PURE FULLSCREEN IMMERSIVE SIMULATOR
   if (activeCharacter) {
