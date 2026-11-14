@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { Bot, ChevronLeft, Clock3, NotebookPen, Trash2, WandSparkles, X } from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
 
@@ -26,8 +26,7 @@ import {
 import type { DiaryEntry, DiaryEntryBlock, DiaryEntryTimerSettings, DiaryEntryTrigger } from "@/lib/diary-entry-types";
 import { getThemeAssetDataUrl, saveThemeAssetFromBlob } from "@/lib/theme-storage";
 
-const DIARY_USER_FONT_FAMILY = "AIPhoneDiaryEntryUserFont";
-const DIARY_USER_FONT_STYLE_ID = "ai-phone-diary-entry-user-font-face";
+import { useDiaryPaperFont } from "./use-diary-paper-font";
 
 type DiaryEntriesAppProps = {
   onBack: () => void;
@@ -176,18 +175,6 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
     return () => { cancelled = true; };
   }, [diaryFontAssetId, notify]);
 
-  useEffect(() => {
-    let node = document.getElementById(DIARY_USER_FONT_STYLE_ID) as HTMLStyleElement | null;
-    if (!node) {
-      node = document.createElement("style");
-      node.id = DIARY_USER_FONT_STYLE_ID;
-      document.head.append(node);
-    }
-    node.textContent = diaryFontDataUrl
-      ? `@font-face{font-family:"${DIARY_USER_FONT_FAMILY}";src:url("${diaryFontDataUrl}");font-display:swap;}`
-      : "";
-  }, [diaryFontDataUrl]);
-
   const handleDiaryFontUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -223,14 +210,7 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
     notify("已恢复默认日记字体");
   }, [notify]);
 
-  const diaryEntryStyle = useMemo(() => {
-    return {
-      ...(diaryFontDataUrl
-        ? { "--diary-entry-font-family": `"${DIARY_USER_FONT_FAMILY}", "NoteWall Ximai", var(--app-font-family)` }
-        : {}),
-      "--diary-entry-font-scale": String(diaryFontScale),
-    } as CSSProperties;
-  }, [diaryFontDataUrl, diaryFontScale]);
+  const diaryEntryStyle = useDiaryPaperFont(diaryFontDataUrl, diaryFontScale);
 
   const deleteEntry = useCallback((entry: DiaryEntry) => {
     deleteDiaryEntry(entry.id);

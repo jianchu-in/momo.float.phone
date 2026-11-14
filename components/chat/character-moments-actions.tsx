@@ -8,7 +8,7 @@ import { saveCharacterMomentsSignature } from "@/lib/character-moments-profile";
 export function CharacterMomentsActions({ characterId, characterName, identity, coverOpen, uploadingCover, onCoverClose, onUpload, onSaveCover }: {
   characterId: string; characterName: string; coverOpen: boolean; uploadingCover: boolean; onCoverClose: () => void;
   identity: UserIdentity | null;
-  onUpload: () => void; onSaveCover: (blob: Blob) => Promise<void>;
+  onUpload: () => void; onSaveCover: (blob: Blob, description?: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [savingCover, setSavingCover] = useState(false);
@@ -71,7 +71,7 @@ export function CharacterMomentsActions({ characterId, characterName, identity, 
       <button type="button" disabled={busy || coverBusy || !description.trim()} onClick={() => void generate("image")}>生成封面图片</button>
       {image && <><img src={image.url} alt="生成的角色朋友圈封面预览" /><button type="button" disabled={busy || coverBusy} onClick={async () => {
         setSavingCover(true); setError("");
-        try { await onSaveCover(image.blob); closeCover(); }
+        try { await onSaveCover(image.blob, description); closeCover(); }
         catch (reason) { setError(reason instanceof Error ? reason.message : "封面保存失败"); }
         finally { setSavingCover(false); }
       }}>{savingCover ? "正在保存封面…" : "应用封面"}</button></>}

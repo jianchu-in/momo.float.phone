@@ -4,6 +4,14 @@ export const PERSONAL_NOTES_KEY = "ai_phone_personal_notes_v1";
 registerKvMigration(PERSONAL_NOTES_KEY);
 
 export type PersonalNoteKind = "diary" | "memo";
+export type MemoStyle = {
+  paper: "plain" | "lined" | "grid" | "dotted";
+  mode: "text" | "todo";
+  numbering: "none" | "bullet" | "number" | "letter";
+  checked: number[];
+};
+
+export const DEFAULT_MEMO_STYLE: MemoStyle = { paper: "lined", mode: "text", numbering: "none", checked: [] };
 
 export type PersonalNote = {
   id: string;
@@ -13,6 +21,7 @@ export type PersonalNote = {
   body: string;
   date: string;
   updatedAt: string;
+  memoStyle?: MemoStyle;
 };
 
 function readNotes(): PersonalNote[] {

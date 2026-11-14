@@ -57,6 +57,6 @@ export async function applyChatMomentsCover(
   if (!canApply()) return false;
   if (!loadChatMessages(session.id).some(item => item.id === source.id && isCoverUserMessage(item))) return false;
   if (loadCharacterMomentsProfile(session.contactId).coverAssetId !== previousCover) throw new Error("封面已在其他页面更新，本次图片未应用。");
-  await saveCharacterMomentsCover(session.contactId, assetId);
+  await saveCharacterMomentsCover(session.contactId, assetId, action.kind === "generate" ? action.description : undefined);
   return true;
 }

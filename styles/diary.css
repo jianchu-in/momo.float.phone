@@ -141,97 +141,29 @@
   gap: 12px;
 }
 
-.personal-notes-links button,
-.personal-notes-list button {
-  background: #fffdf8;
-  color: #363330;
-  border: 1px solid #e6e0d5;
-  border-radius: 12px;
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-}
-
 .personal-notes-links button {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 56px;
-  padding: 10px 12px;
+  gap: 9px;
+  min-height: 58px;
+  padding: 11px 13px;
+  border: 1px solid rgba(137, 117, 77, 0.18);
+  border-radius: 2px;
+  background: #fffaf0;
+  color: #463829;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(49, 38, 21, 0.1);
+}
+
+.personal-notes-links button:nth-child(2) {
+  background: #f3f6ea;
+  color: #46503b;
 }
 
 .personal-notes-links svg { flex-shrink: 0; }
 .personal-notes-app .personal-notes-add { margin-left: auto; }
-
-.personal-notes-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 18px 18px calc(24px + env(safe-area-inset-bottom, 0px));
-}
-
-.personal-notes-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.personal-notes-list button {
-  display: grid;
-  width: 100%;
-  gap: 5px;
-  padding: 13px 15px;
-  overflow-wrap: anywhere;
-}
-
-.personal-notes-list strong { font-size: calc(15px * var(--app-text-scale, 1)); }
-.personal-notes-list time { color: #70695f; font-size: calc(12px * var(--app-text-scale, 1)); }
-.personal-notes-list button > span {
-  color: #565048;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  white-space: pre-line;
-}
-
-.personal-note-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.personal-note-editor label {
-  display: grid;
-  gap: 6px;
-}
-
-.personal-note-editor :is(input, textarea) {
-  box-sizing: border-box;
-  min-width: 0;
-  width: 100%;
-  min-height: 42px;
-  padding: 9px 12px;
-  border: 1px solid #ded7cc;
-  border-radius: 8px;
-  background: #fffdf8;
-  color: #363330;
-  font: inherit;
-  font-size: max(16px, calc(16px * var(--app-text-scale, 1)));
-}
-
-.personal-note-content {
-  flex: 1;
-  min-height: 165px;
-  grid-template-rows: auto minmax(125px, 1fr);
-}
-
-.personal-note-content textarea { resize: vertical; }
-.personal-notes-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.personal-notes-error { color: #9a302a; }
-
 .diary-feature-card {
   position: relative;
   width: min(100%, 332px);
@@ -3996,4 +3928,262 @@
 
 @keyframes diary-generating-spin {
   to { transform: rotate(360deg); }
+}
+
+.personal-notes-main { padding: 20px 18px calc(24px + env(safe-area-inset-bottom, 0px)); }
+
+.personal-notes-main .diary-entry-card {
+  min-height: 128px;
+  overflow-wrap: anywhere;
+}
+
+.personal-notes-main .diary-entry-card-text {
+  min-height: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.personal-memo-app {
+  --diary-entry-font-family: var(--app-font-family);
+}
+
+.personal-note-overlay {
+  padding: 48px 16px 16px;
+}
+
+.personal-note-editor {
+  --note-paper: #fffdf5;
+  --note-rule: rgba(107, 111, 87, 0.2);
+  width: min(100%, 360px);
+  max-height: min(100%, 620px);
+  box-shadow: 0 14px 38px rgba(45, 38, 28, 0.2), 0 2px 5px rgba(43, 34, 22, 0.1);
+}
+
+.personal-note-editor .diary-entry-paper-clip {
+  top: -48px;
+  width: 75px;
+  height: 63px;
+}
+
+.personal-note-editor .diary-entry-detail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  padding-bottom: 15px;
+  overscroll-behavior: contain;
+}
+
+.personal-note-editor .diary-entry-detail-scroll > header { margin-bottom: 14px; }
+.personal-note-editor .diary-entry-detail-scroll > header > div { flex: 1; }
+.personal-note-editor .diary-entry-detail-scroll > header button { padding: 5px; }
+
+.personal-note-editor :where(input:not([type="checkbox"]), textarea, select) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: #322c24;
+}
+
+.personal-note-editor :is(input, textarea, select):focus-visible {
+  outline: 1px solid #8d8f69;
+  outline-offset: 2px;
+}
+
+.personal-note-title {
+  padding: 4px 0;
+  font-size: max(20px, calc(24px * var(--app-text-scale, 1) * var(--diary-entry-font-scale, 1)));
+  line-height: 1.32;
+}
+
+.personal-note-editor .personal-note-date {
+  width: auto;
+  max-width: 100%;
+  margin-bottom: 5px;
+  padding: 2px 0;
+  color: #685f53;
+  font-size: max(16px, calc(16px * var(--app-text-scale, 1)));
+}
+
+.personal-note-writing {
+  display: block;
+  min-height: 190px;
+  padding: 7px 0;
+  resize: vertical;
+  font-size: max(16px, calc(18px * var(--app-text-scale, 1) * var(--diary-entry-font-scale, 1)));
+  line-height: 1.72;
+}
+
+.personal-note-paper-pattern {
+  --paper-step: 24px;
+  background-color: var(--note-paper, #fffdf5);
+}
+
+.personal-note-paper-pattern[data-paper="lined"] {
+  background-image: linear-gradient(to bottom, transparent calc(var(--paper-step) - 1px), var(--note-rule, #dedccf) 1px);
+  background-size: 100% var(--paper-step);
+}
+
+.personal-note-paper-pattern[data-paper="grid"] {
+  background-image: linear-gradient(to right, var(--note-rule, #dedccf) 1px, transparent 1px), linear-gradient(to bottom, var(--note-rule, #dedccf) 1px, transparent 1px);
+  background-size: var(--paper-step) var(--paper-step);
+}
+
+.personal-note-paper-pattern[data-paper="dotted"] {
+  background-image: radial-gradient(circle, var(--note-rule, #d2d0c2) 1px, transparent 1.2px);
+  background-size: var(--paper-step) var(--paper-step);
+}
+
+.personal-note-paper-picker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  min-width: 0;
+  padding: 0;
+  margin: 0 0 13px;
+  border: 0;
+}
+
+.personal-note-paper-picker legend {
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: #685f53;
+}
+
+.personal-note-paper-picker button {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #514b40;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.personal-note-paper-picker button[aria-pressed="true"] {
+  border-color: #878b62;
+  background: #e9eddc;
+}
+
+.personal-note-paper-picker .personal-note-paper-pattern {
+  --paper-step: 9px;
+  display: block;
+  height: 24px;
+  border: 1px solid #d7d1c2;
+  border-radius: 2px;
+}
+
+.personal-note-format {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.personal-note-format label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: #685f53;
+}
+
+.personal-note-editor .personal-note-format select {
+  min-height: 35px;
+  padding: 4px 7px;
+  border: 1px solid #ded6c7;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.personal-memo-app .personal-note-writing {
+  --paper-step: max(27px, calc(24px * var(--app-text-scale, 1)));
+  padding: 0 10px;
+  border: 1px solid #ded6c7;
+  line-height: var(--paper-step);
+  background-color: var(--note-paper);
+  background-attachment: local;
+}
+
+.personal-note-items {
+  --paper-step: 40px;
+  min-height: 120px;
+  padding: 0 6px;
+  margin: 0;
+  border: 1px solid #ded6c7;
+  list-style: none;
+}
+
+.personal-note-items li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--paper-step);
+  padding: 0 4px;
+}
+
+.personal-note-items input[type="checkbox"] {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin: 0 2px 0 0;
+  accent-color: #626c47;
+}
+
+.personal-note-item-marker { flex: none; color: #685f53; font-size: 13px; }
+
+.personal-note-items input:not([type="checkbox"]) {
+  flex: 1;
+  padding: 4px 0;
+  line-height: 1.45;
+  font-size: max(16px, calc(16px * var(--app-text-scale, 1)));
+}
+
+.personal-note-items li[data-complete="true"] input:not([type="checkbox"]) {
+  color: #6d6b5f;
+  text-decoration: line-through;
+}
+
+.personal-note-item-remove,
+.personal-note-add-item,
+.personal-note-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: #645644;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.personal-note-item-remove { flex: none; opacity: 0.75; }
+.personal-note-add-item { margin-top: 6px; }
+
+.personal-notes-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 15px;
+  padding: 9px 20px 15px;
+  border-top: 1px solid rgba(137, 117, 77, 0.15);
+}
+
+.personal-notes-actions .diary-entry-confirm-btn { width: auto; min-width: 74px; }
+.personal-notes-error { margin: 10px 0; color: #9a302a; }
+
+.personal-memo-preview {
+  --paper-step: 7px;
+  width: 34px;
+  height: 24px;
+  margin-bottom: 7px;
+  border: 1px solid #ded6c7;
+  border-radius: 2px;
 }

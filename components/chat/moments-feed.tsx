@@ -451,7 +451,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
         onUserPublished?.(post);
     };
 
-    const saveCover = async (blob: Blob) => {
+    const saveCover = async (blob: Blob, description?: string) => {
         if (savingCoverRef.current) throw new Error("封面正在保存，请稍候");
         savingCoverRef.current = true;
         setCoverError("");
@@ -459,7 +459,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
             const id = await saveChatImageToIndexedDB(blob);
             const url = await getChatImageFromIndexedDB(id);
             if (!url) throw new Error("封面保存后无法读取，请重试");
-            if (profileCharacterId) await saveCharacterMomentsCover(profileCharacterId, id);
+            if (profileCharacterId) await saveCharacterMomentsCover(profileCharacterId, id, description);
             else if (ownerIdentity?.id) {
                 const profiles = loadIdentityProfiles();
                 await kvSetAsync(IDENTITY_PROFILE_KEY, JSON.stringify({
