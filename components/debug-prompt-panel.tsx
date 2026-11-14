@@ -405,7 +405,7 @@ export function DebugPromptPanel() {
                         latestMessages,
                         followUpMode
                             ? { followUpAuto: true, appTags: ["chat", "text", "followup"] }
-                            : { appTags: ["chat", "text"] }
+                            : { appTags: ["chat", "text"], allowMomentsCoverChange: true }
                     );
                 }
             }

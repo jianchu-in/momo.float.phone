@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, Play, RotateCcw, User, X } from "lucide-react";
+import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, Play, RotateCcw, Sparkles, User, X } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
+import { normalizeChineseThinkingPromptLength } from "@/lib/chinese-thinking-prompt";
 import { Toggle } from "@/components/ui/form";
 import {
     MAX_VISION_IMAGE_PROMPT_LIMIT,
@@ -134,6 +135,8 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
     const [visionLimit, setVisionLimit] = useState(() => normalizeVisionImagePromptLimit(initial.globalVisionImagePromptLimit));
     const [status, setStatus] = useState<StatusRegionConfig>(() => getStatusRegionConfig(GLOBAL_CHAT_STATUS_REGION_ID, false));
     const [meetingInvite, setMeetingInvite] = useState<MeetingInviteCardConfig>(() => resolveMeetingInviteCardConfig(initial));
+    const [globalThinkingEnabled, setGlobalThinkingEnabled] = useState(initial.globalChineseThinkingPromptEnabled === true);
+    const [globalThinkingLength, setGlobalThinkingLength] = useState(() => normalizeChineseThinkingPromptLength(initial.globalChineseThinkingPromptLength));
     const [storyAsOfflineMode, setStoryAsOfflineMode] = useState(initial.storyAsOfflineMode === true);
     const [editingCSS, setEditingCSS] = useState(false);
     const [editingStatus, setEditingStatus] = useState(false);
@@ -350,6 +353,27 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
                         <Play size={20} className="text-[var(--c-icon)]" />
                         <div className="menu-label-group"><span className="menu-label">剧情入口</span><span className="menu-desc">用剧情作为线下模式；旧线下记录进入时可选择迁移方式</span></div>
                         <Toggle checked={storyAsOfflineMode} onChange={changeStoryAsOfflineMode} />
+                    </div>
+                    <div className="menu-item">
+                        <Sparkles size={20} className="text-[var(--c-icon)]" />
+                        <div className="menu-label-group">
+                            <span className="menu-label">全部角色启用中文独白</span>
+                            <span className="menu-desc">统一用于线上私聊和群聊，关闭后恢复各会话的设置</span>
+                        </div>
+                        <Toggle checked={globalThinkingEnabled} onChange={value => {
+                            setGlobalThinkingEnabled(value);
+                            saveSettings({ globalChineseThinkingPromptEnabled: value });
+                        }} />
+                    </div>
+                    <div className="menu-item">
+                        <div className="menu-label-group"><span className="menu-label">中文独白字数</span></div>
+                        <select className="ui-input w-auto" aria-label="全部角色中文独白字数" value={globalThinkingLength} onChange={event => {
+                            const length = normalizeChineseThinkingPromptLength(Number(event.target.value));
+                            setGlobalThinkingLength(length);
+                            saveSettings({ globalChineseThinkingPromptLength: length });
+                        }}>
+                            {[100, 300, 500].map(length => <option key={length} value={length}>约 {length} 字</option>)}
+                        </select>
                     </div>
                     <div className="menu-item cursor-pointer" role="button" tabIndex={0} onClick={() => avatarInputRef.current?.click()} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") avatarInputRef.current?.click(); }}>
                         <User size={20} className="text-[var(--c-icon)]" />

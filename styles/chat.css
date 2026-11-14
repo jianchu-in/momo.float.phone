@@ -316,6 +316,70 @@
   white-space: nowrap;
 }
 
+.moment-share-dialog .modal-body {
+  width: 100%;
+}
+
+.moment-share-search {
+  width: 100%;
+  border: 1px solid var(--c-border, #ddd);
+  border-radius: 8px;
+  background: var(--c-input);
+  color: var(--c-text);
+  padding: 8px 10px;
+}
+
+.moment-share-dialog .chat-contact-item {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+
+.moment-share-dialog .chat-contact-item[aria-pressed="true"] {
+  background: var(--c-input);
+  outline: 1px solid var(--c-action-blue, #576b95);
+  outline-offset: -1px;
+}
+
+.chat-moment-share-card {
+  display: grid;
+  gap: 6px;
+  width: 236px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border, #ddd);
+  border-radius: 9px;
+  background: var(--c-panel, #fff);
+  color: var(--c-text);
+  font-size: calc(13px * var(--app-text-scale, 1));
+  overflow-wrap: anywhere;
+}
+
+.chat-moment-share-card header,
+.chat-moment-share-card small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-moment-share-card header,
+.chat-moment-share-card small,
+.chat-moment-share-card time,
+.chat-moment-share-photo-description {
+  color: var(--c-icon);
+  font-size: calc(11px * var(--app-text-scale, 1));
+}
+
+.chat-moment-share-card p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat-moment-share-card img {
+  max-height: 160px;
+  object-fit: cover;
+}
+
 /* ── Friend Request ──────────────────────── */
 
 .freq-entry {
@@ -3038,6 +3102,7 @@
 }
 
 /* ── Chat room wrapper ── */
+.chat-avatar-moments-btn { cursor: pointer; touch-action: manipulation; }
 .chat-room-wrapper {
   background-color: var(--c-page-body-bg, #fff);
   transition: opacity 0.15s ease-in-out;
@@ -7277,3 +7342,47 @@
   background: currentColor;
   animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }
+
+.chat-history-media-tags {
+  display: flex;
+  gap: 9px;
+  padding: 0 16px 12px;
+}
+.chat-history-media-tags button {
+  min-height: 32px;
+  padding: 3px 14px;
+  border: 1px solid var(--c-border, #ddd);
+  border-radius: 18px;
+  background: var(--c-card-bg);
+  color: var(--c-text);
+}
+.chat-history-media-tags button[aria-pressed="true"] {
+  border-color: var(--c-icon-active);
+  color: var(--c-icon-active);
+  font-weight: 600;
+}
+.chat-history-media { padding: 0 16px 16px; }
+.chat-history-media h3 { margin: 12px 0 7px; font-size: calc(13px * var(--app-text-scale, 1)); color: var(--c-text-title); }
+.chat-history-media-toolbar { display: flex; align-items: center; gap: 8px; }
+.chat-history-media-toolbar > span { flex: 1; color: var(--c-text); font-size: calc(13px * var(--app-text-scale, 1)); }
+.chat-history-image-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.chat-history-media-item { position: relative; min-width: 0; }
+.chat-history-image {
+  border: 0; width: 100%; aspect-ratio: 1; border-radius: 4px;
+  padding: 0; overflow: hidden; display: grid; place-items: center;
+  color: var(--c-icon); background: var(--c-input, #eee);
+}
+.chat-history-image img { width: 100%; height: 100%; min-height: 0; object-fit: cover; }
+.chat-history-media-favorite,
+.chat-history-media-check {
+  position: absolute; z-index: 1; top: 4px; right: 4px;
+  width: 27px; height: 27px; display: grid; place-items: center;
+  border-radius: 50%; border: 1px solid #fff; background: #1c202779; color: white;
+}
+.chat-history-media-check { inset: 0; width: 100%; height: 100%; border: 0; border-radius: 4px; background: transparent; place-items: start end; padding: 5px; }
+.chat-history-media-check span { width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid white; border-radius: 50%; background: #20282a73; }
+.chat-history-media-item[data-selected="true"] .chat-history-media-check { background: #19282545; }
+.chat-history-media-item[data-selected="true"] .chat-history-media-check span { background: #187456; }
+.chat-history-audio-list { display: grid; gap: 6px; }
+.chat-history-audio { background: var(--c-card-bg); border-radius: 8px; padding: 8px 37px 7px 9px; }
+.chat-history-selection { position: sticky; bottom: 0; z-index: 3; padding: 8px 0; background: var(--c-page-body-bg); }

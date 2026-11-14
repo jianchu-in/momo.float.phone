@@ -190,6 +190,7 @@ import {
     DEFAULT_OFFLINE_CHAT_BILINGUAL_PROMPT,
 } from "@/lib/bilingual-prompt-defaults";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { ChatHistoryMedia, type HistoryMediaKind } from "./chat-history-media";
 import { MessageBubble, isStandaloneHtmlPreviewContent } from "./message-bubble";
 import { ScreenEffectSettingsModal } from "./screen-effect-settings-modal";
 
@@ -469,6 +470,8 @@ export function ChatSettingsPanel({
     // TA 的电脑：翻看角色云端电脑（连接了角色电脑才显示入口）
     const [showComputer, setShowComputer] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+    const [searchMedia, setSearchMedia] = useState<HistoryMediaKind | null>(null);
+    const [mediaQuery, setMediaQuery] = useState("");
     const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
     const [searchHistoryMessages, setSearchHistoryMessages] = useState<ChatMessage[]>([]);
     const [searchHasMore, setSearchHasMore] = useState(false);
@@ -493,6 +496,8 @@ export function ChatSettingsPanel({
     const openSearchPanel = () => {
         searchRunRef.current += 1;
         setSearchQuery("");
+        setSearchMedia(null);
+        setMediaQuery("");
         setSubmittedSearchQuery("");
         setSearchResults([]);
         setIsSearching(false);
@@ -504,6 +509,8 @@ export function ChatSettingsPanel({
         searchRunRef.current += 1;
         setShowSearch(false);
         setSearchQuery("");
+        setSearchMedia(null);
+        setMediaQuery("");
         setSubmittedSearchQuery("");
         setSearchResults([]);
         setSearchHistoryMessages([]);
@@ -519,6 +526,7 @@ export function ChatSettingsPanel({
     };
 
     const runSearch = () => {
+        if (searchMedia) { setMediaQuery(searchQuery.trim()); return; }
         const rawQuery = searchQuery.trim();
         const runId = searchRunRef.current + 1;
         searchRunRef.current = runId;
@@ -1606,7 +1614,9 @@ export function ChatSettingsPanel({
                         <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.api} />
                         <div className="menu-label-group">
                             <span className="menu-label">启用内置中文思考提示词</span>
-                            <span className="menu-desc">仅当前会话：线上回复加入中文角色独白，沿用现有思考区的字体与排版</span>
+                            <span className="menu-desc">{loadChatAppSettings().globalChineseThinkingPromptEnabled
+                                ? "当前使用全局中文独白设置。关闭全局开关后，此会话的设置生效。"
+                                : "仅当前会话：线上回复加入中文角色独白，沿用现有思考区的字体与排版"}</span>
                             <button type="button" className="mt-1 flex w-fit items-center gap-1 text-left ts-12 text-[var(--c-icon-active)]" onClick={() => setShowChineseThinkingSettings(true)}>
                                 详细设置 · 约 {chineseThinkingPromptLength} 字 <ChevronRight size={14} />
                             </button>
@@ -2032,7 +2042,6 @@ export function ChatSettingsPanel({
                     <PageShell title="查找聊天记录" onBack={closeSearchPanel}>
                         <div className="px-4 pt-2 pb-3 flex items-center gap-2">
                             <input
-                                autoFocus
                                 type="text"
                                 placeholder="搜索聊天记录..."
                                 value={searchQuery}
@@ -2056,7 +2065,20 @@ export function ChatSettingsPanel({
                                 <Search size={20} strokeWidth={2.1} />
                             </button>
                         </div>
-                        <div className="flex flex-col gap-4 px-4 pb-4">
+                        <div className="chat-history-media-tags" role="group" aria-label="聊天记录标签">
+                            {([[null, "全部"], ["image", "图片"], ["audio", "语音"]] as const).map(([kind, label]) => (
+                                <button type="button" key={label} aria-pressed={searchMedia === kind} onClick={() => {
+                                    searchRunRef.current += 1;
+                                    setIsSearching(false);
+                                    setSearchMedia(kind);
+                                    setMediaQuery("");
+                                    setSearchQuery("");
+                                    setSubmittedSearchQuery("");
+                                }}>{label}</button>
+                            ))}
+                        </div>
+                        {searchMedia ? <ChatHistoryMedia key={`${session.id}:${searchMedia}:${mediaQuery}`} session={session} kind={searchMedia}
+                            query={mediaQuery} onJump={jumpToSearchMessage} /> : <div className="flex flex-col gap-4 px-4 pb-4">
                             {!searchMode && searchHistoryMessages.length === 0 && (
                                 <div className="ui-empty">
                                     <span className="menu-desc">暂无聊天记录</span>
@@ -2087,7 +2109,7 @@ export function ChatSettingsPanel({
                                     <span className="menu-desc">仅显示最近 {SEARCH_RESULT_LIMIT} 条结果</span>
                                 </div>
                             )}
-                        </div>
+                        </div>}
                     </PageShell>
                 </div>
                 </div>

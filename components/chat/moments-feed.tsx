@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { getAllPosts, deleteMomentPost, getUnreadMomentsNotifications, saveMomentsLastSeen, addMomentComment } from "@/lib/moments-storage";
 import { loadChatContacts, resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
-import { CHARACTER_MOMENTS_PROFILE_UPDATED, getCharacterMomentPosts, loadCharacterMomentsProfile, saveCharacterMomentsProfile } from "@/lib/character-moments-profile";
+import { CHARACTER_MOMENTS_PROFILE_UPDATED, getCharacterMomentPosts, loadCharacterMomentsProfile, saveCharacterMomentsCover, saveCharacterMomentsSignature } from "@/lib/character-moments-profile";
 import { USER_IDENTITIES_UPDATED_EVENT, loadUserIdentities } from "@/lib/settings-storage";
 import { CharacterMomentsActions } from "./character-moments-actions";
 import {
@@ -23,7 +23,7 @@ import { MomentsCompose } from "./moments-compose";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { PageShell } from "@/components/ui/page-shell";
 import { AlertCircle } from "lucide-react";
-import { kvGet, kvSet, registerKvMigration } from "@/lib/kv-db";
+import { kvGet, kvSet, kvSetAsync, registerKvMigration } from "@/lib/kv-db";
 import { onUserComment, MOMENT_PHOTO_GENERATION_FAILED_EVENT } from "@/lib/moments-engine";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 
@@ -75,10 +75,11 @@ type MomentsFeedProps = {
     compact?: boolean;
     onUserPublished?: (post: MomentPost) => void;
     profileCharacterId?: string;
+    profileChatAccountId?: string | null;
     profileUser?: { identityId?: string; chatAccountId?: string | null };
 };
 
-export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, profileCharacterId, profileUser }: MomentsFeedProps) {
+export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, profileCharacterId, profileChatAccountId, profileUser }: MomentsFeedProps) {
     const profileCharacter = profileCharacterId ? loadCharacters().find(character => character.id === profileCharacterId) : undefined;
     const [profileRevision, setProfileRevision] = useState(0);
     const [userPage, setUserPage] = useState<MomentsFeedProps["profileUser"] | null>(null);
@@ -89,7 +90,10 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     // 后台生图失败：弹一次弹窗提示，关掉即消失（同时多条失败只提示第一条）
     const [photoFailureNotice, setPhotoFailureNotice] = useState<string | null>(null);
-    const [coverUrl, setCoverUrl] = useState<string | null>(null);
+    const [coverImage, setCoverImage] = useState<{ id: string; url: string } | null>(null);
+    const [coverError, setCoverError] = useState("");
+    const [uploadingCover, setUploadingCover] = useState(false);
+    const savingCoverRef = useRef(false);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [chatScope, setChatScope] = useState<ChatScopeState>(() => loadChatScope());
@@ -99,6 +103,17 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
         : userIdentity;
     const profileName = profileCharacterId ? profileCharacter?.name || "角色" : ownerIdentity?.name || "我";
     const profileAvatar = profileCharacterId ? resolveChatCharacterAvatar(profileCharacter) : ownerIdentity?.avatarUrl;
+    const coverIdentity = profileCharacterId
+        ? profileChatAccountId === undefined
+            ? resolveChatScopeUserIdentity(profileCharacterId, "moments")
+            : resolveChatAccountUserIdentity(profileChatAccountId, profileCharacterId, "chat")
+        : null;
+    const savedProfile = useMemo(() => profileCharacterId
+        ? loadCharacterMomentsProfile(profileCharacterId)
+        : ownerIdentity?.id ? loadIdentityProfiles()[ownerIdentity.id] : undefined,
+    [ownerIdentity?.id, profileCharacterId, profileRevision]);
+    const coverAssetId = profileCharacterId ? savedProfile?.coverAssetId : savedProfile?.coverAssetId || kvGet(COVER_ASSET_KEY);
+    const coverUrl = coverImage?.id === coverAssetId ? coverImage?.url : undefined;
     const [signature, setSignature] = useState(() => {
         if (typeof window !== "undefined") {
             return kvGet("moments_signature") || "make every day count (●ˇ∀ˇ●)";
@@ -127,7 +142,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
     const handleSignatureSubmit = (val: string) => {
         const trimmed = val.trim() || (profileCharacterId ? "" : "make every day count (●ˇ∀ˇ●)");
         setSignature(trimmed);
-        if (profileCharacterId) saveCharacterMomentsProfile(profileCharacterId, { signature: trimmed });
+        if (profileCharacterId) saveCharacterMomentsSignature(profileCharacterId, profileName, trimmed);
         else if (ownerIdentity?.id) saveIdentityProfile(ownerIdentity.id, { signature: trimmed });
         else kvSet("moments_signature", trimmed);
         setEditingSignature(false);
@@ -391,19 +406,18 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
     }, [refreshPosts]);
 
     useEffect(() => {
+        setSignature(profileCharacterId ? savedProfile?.signature || "" : savedProfile?.signature || kvGet("moments_signature") || "make every day count (●ˇ∀ˇ●)");
+    }, [profileCharacterId, ownerIdentity?.id, savedProfile?.signature]);
+    useEffect(() => {
+        if (!coverAssetId || coverUrl) return;
         let cancelled = false;
-        const characterProfile = profileCharacterId ? loadCharacterMomentsProfile(profileCharacterId) : undefined;
-        const identityProfile = ownerIdentity?.id ? loadIdentityProfiles()[ownerIdentity.id] : undefined;
-        setSignature(profileCharacterId ? characterProfile?.signature || "" : identityProfile?.signature || kvGet("moments_signature") || "make every day count (●ˇ∀ˇ●)");
-        const savedId = profileCharacterId ? characterProfile?.coverAssetId : identityProfile?.coverAssetId || kvGet(COVER_ASSET_KEY);
-        setCoverUrl(null);
-        if (savedId) {
-            getChatImageFromIndexedDB(savedId).then(url => {
-                if (!cancelled && url) setCoverUrl(url);
-            });
-        }
+        getChatImageFromIndexedDB(coverAssetId).then(url => {
+            if (cancelled) return;
+            if (url) setCoverImage({ id: coverAssetId, url });
+            else setCoverError("封面图片已丢失，请重新设置");
+        }).catch(() => { if (!cancelled) setCoverError("封面读取失败，请重试"); });
         return () => { cancelled = true; };
-    }, [ownerIdentity?.id, profileCharacterId, profileRevision]);
+    }, [coverAssetId, coverUrl]);
     useEffect(() => {
         const update = (event: Event) => {
             if ((event as CustomEvent<{ characterId: string }>).detail?.characterId === profileCharacterId) setProfileRevision(value => value + 1);
@@ -437,40 +451,42 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
         onUserPublished?.(post);
     };
 
-    const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const saveCover = async (blob: Blob, description?: string) => {
+        if (savingCoverRef.current) throw new Error("封面正在保存，请稍候");
+        savingCoverRef.current = true;
+        setCoverError("");
+        try {
+            const id = await saveChatImageToIndexedDB(blob);
+            const url = await getChatImageFromIndexedDB(id);
+            if (!url) throw new Error("封面保存后无法读取，请重试");
+            if (profileCharacterId) await saveCharacterMomentsCover(profileCharacterId, id, description);
+            else if (ownerIdentity?.id) {
+                const profiles = loadIdentityProfiles();
+                await kvSetAsync(IDENTITY_PROFILE_KEY, JSON.stringify({
+                    ...profiles,
+                    [ownerIdentity.id]: { ...profiles[ownerIdentity.id], coverAssetId: id },
+                }));
+            } else await kvSetAsync(COVER_ASSET_KEY, id);
+            setCoverImage({ id, url });
+            setProfileRevision(value => value + 1);
+        } finally {
+            savingCoverRef.current = false;
+        }
+    };
 
-        const img = new Image();
-        const objectUrl = URL.createObjectURL(file);
-        img.onload = () => {
-            const maxSize = 800;
-            let w = img.width, h = img.height;
-            if (w > maxSize || h > maxSize) {
-                if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
-                else { w = Math.round(w * maxSize / h); h = maxSize; }
-            }
-            const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext("2d")!;
-            ctx.drawImage(img, 0, 0, w, h);
-            canvas.toBlob(blob => {
-                URL.revokeObjectURL(objectUrl);
-                if (!blob) return;
-                saveChatImageToIndexedDB(blob).then(assetId => {
-                    if (profileCharacterId) saveCharacterMomentsProfile(profileCharacterId, { coverAssetId: assetId });
-                    else if (ownerIdentity?.id) saveIdentityProfile(ownerIdentity.id, { coverAssetId: assetId });
-                    else kvSet(COVER_ASSET_KEY, assetId);
-                    getChatImageFromIndexedDB(assetId).then(url => {
-                        if (url) setCoverUrl(url);
-                    });
-                });
-            }, "image/jpeg", 0.8);
-        };
-        img.src = objectUrl;
-        // Reset so same file can be re-selected
+    const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
         e.target.value = "";
+        if (!file || savingCoverRef.current) return;
+        setUploadingCover(true);
+        try {
+            await saveCover(file);
+            setCoverMenuOpen(false);
+        } catch (reason) {
+            setCoverError(reason instanceof Error ? reason.message : "封面上传失败");
+        } finally {
+            setUploadingCover(false);
+        }
     };
 
     return (
@@ -574,7 +590,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
                     <div className="contact-moments-signature">{editingSignature ? <input ref={sigInputRef} autoFocus aria-label={profileCharacterId ? "角色朋友圈个性签名" : "用户朋友圈个性签名"} defaultValue={signature}
                         onBlur={event => handleSignatureSubmit(event.target.value)} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
                         : <button type="button" onClick={() => setEditingSignature(true)}>{signature || "添加个性签名"}</button>}</div>
-                    {profileCharacterId && <CharacterMomentsActions key={profileCharacterId} characterId={profileCharacterId} coverOpen={coverMenuOpen} onCoverClose={() => setCoverMenuOpen(false)} onUpload={() => coverInputRef.current?.click()} />}
+                    {profileCharacterId && <CharacterMomentsActions key={`${profileCharacterId}:${coverIdentity?.id || ""}`} characterId={profileCharacterId} characterName={profileName} identity={coverIdentity} coverOpen={coverMenuOpen} uploadingCover={uploadingCover} onCoverClose={() => setCoverMenuOpen(false)} onUpload={() => coverInputRef.current?.click()} onSaveCover={saveCover} />}
                 </section> : <div className="feed-cover-shell w-full relative mb-4">
                     
                     {/* Background Absolute Cover */}
@@ -647,6 +663,8 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
                         </div>
                     </div>
                 </div>}
+                {coverError && <p className="moments-cover-status" role="status">{coverError}</p>}
+                {uploadingCover && <p className="moments-cover-status" role="status">正在保存封面…</p>}
 
                 {/* Unread notifications banner */}
                 {!personalMode && unreadNotifs.length > 0 && (

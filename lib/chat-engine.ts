@@ -26,6 +26,7 @@ import {
 } from "./chat-storage";
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
 import { applyWithProtectedAvatarDecisionMarkers, findUserAvatarChangeIntent } from "./chat-avatar-intent";
+import { coverRequestPrompt, extractCoverAction, findCoverRequest, protectCoverActions, stripCoverActions, type CoverAction, type CoverRequest } from "./chat-moments-cover-intent";
 import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
 import type { CustomAppPromptProfile } from "./custom-app-types";
 import {
@@ -38,7 +39,7 @@ import {
     resolveUserIdentity,
 } from "./settings-storage";
 import { resolveChatAccountUserIdentity } from "./chat-scope-storage";
-import { buildChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
+import { buildChineseThinkingPrompt, resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
 import { assemblePromptPayload, applyOutputRegex, type LLMMessage, type LLMContentPart } from "./llm-prompt-assembler";
 import { MacroEngine, postProcessTrim } from "./macro-engine";
 import { getStatusRegionConfig, resolveStatusRegionSection, resolveStatusRegionExampleLine, resolveStatusRegionComposition, resolveStatusRegionFullExample } from "./chat-status-region";
@@ -367,6 +368,7 @@ type ChatPromptBuildOptions = {
     activateAllWorldBooks?: boolean;
     toolsAllowed?: boolean;
     forceEnableTools?: boolean;
+    allowMomentsCoverChange?: boolean;
 };
 
 function matchesPromptProfileRef(prompt: { identifier: string; name?: string }, refs: Set<string>): boolean {
@@ -883,7 +885,7 @@ export async function sendLLMStreamRequest(
                 appTags: options?.appTags,
                 followUpCount: options?.followUpCount,
             });
-            rawOutput = applyWithProtectedAvatarDecisionMarkers(
+            rawOutput = applyProtectedChatActions(
                 rawOutput,
                 protectedText => applyOutputRegex(protectedText, regexes, { macroEngine, activeTags }),
             );
@@ -1065,7 +1067,7 @@ export async function sendLLMRequest(
             appTags: options?.appTags,
             followUpCount: options?.followUpCount,
         });
-        return applyWithProtectedAvatarDecisionMarkers(
+        return applyProtectedChatActions(
             rawOutput,
             protectedText => applyOutputRegex(protectedText, regexes, { macroEngine, activeTags }),
         );
@@ -1383,7 +1385,7 @@ export async function sendLLMToolRequest(
                 appTags: options?.appTags,
                 followUpCount: options?.followUpCount,
             });
-            rawOutput = applyWithProtectedAvatarDecisionMarkers(
+            rawOutput = applyProtectedChatActions(
                 rawOutput,
                 protectedText => applyOutputRegex(protectedText, regexes, { macroEngine, activeTags }),
             );
@@ -1519,7 +1521,19 @@ export type ChatCompletionPart = {
 
 export type ChatCompletionResult = {
     parts: ChatCompletionPart[];
+    coverChange?: { request: CoverRequest; action: CoverAction };
 };
+
+function applyProtectedChatActions(text: string, transform: (text: string) => string): string {
+    return applyWithProtectedAvatarDecisionMarkers(text, value => protectCoverActions(value, transform));
+}
+
+function resolveCoverChange(request: CoverRequest | undefined, text: string): ChatCompletionResult["coverChange"] {
+    if (request?.kind === "use_image" && request.imageId) return { request, action: { kind: "use_image" } };
+    if (request?.kind !== "generate") return;
+    const action = extractCoverAction(stripStateAndInnerForPrompt(text));
+    if (action?.kind === "generate") return { request, action };
+}
 
 /** Extract combined clean text from a ChatCompletionResult (for callers that need a plain string). */
 export function flattenCompletionResult(result: ChatCompletionResult): string {
@@ -1845,6 +1859,7 @@ export async function buildChatPromptMessages(
     regexes: RegexConfig[];
     userIdentity: ReturnType<typeof resolveUserIdentity>;
     toolsEnabled: boolean;
+    coverRequest?: CoverRequest;
 }> {
     // 设置页可能在聊天室仍挂载时更新会话对象。每次组装提示词都重新读取落库状态，
     // 避免拉黑/解除拉黑刚切换后仍使用进入聊天室时的旧 session 快照。
@@ -1872,7 +1887,8 @@ export async function buildChatPromptMessages(
     if (preset && promptProfile) {
         preset = applyCustomPromptProfileToPreset(preset, promptProfile);
     }
-    const chineseThinkingEnabled = session.chineseThinkingPromptEnabled === true
+    const chineseThinking = resolveChineseThinkingPrompt(session, loadChatAppSettings());
+    const chineseThinkingEnabled = chineseThinking.enabled
         && resolvedAppId === "chat" && !options?.appTags?.includes("offline") && !promptProfile;
     preset = withChineseThinkingPrompt(preset, chineseThinkingEnabled);
 
@@ -2029,7 +2045,7 @@ export async function buildChatPromptMessages(
     if (chineseThinkingEnabled) {
         llmMessages.push({ role: "system", content: buildChineseThinkingPrompt(
             userIdentity?.name || "你", preset?.online_thinking_tag?.trim() || "thinking", [character.name],
-            session.chineseThinkingPromptLength,
+            chineseThinking.length,
         ) });
     }
     const avatarChangeIntent = !session.isGroup
@@ -2073,6 +2089,10 @@ export async function buildChatPromptMessages(
             ].join("\n"),
         });
     }
+    const coverRequest = options?.allowMomentsCoverChange && !session.isGroup && !session.isBlacklisted
+        && !isOfflineMode && resolvedAppId === "chat" && !promptProfile && !options.followUpCount
+        ? findCoverRequest(history, session.id) : undefined;
+    if (coverRequest) llmMessages.push({ role: "system", content: coverRequestPrompt(coverRequest) });
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({
             role: "system",
@@ -2086,7 +2106,7 @@ export async function buildChatPromptMessages(
     }
     appendEmptyGenerateGuardMessage(llmMessages, config, historyForPrompt);
 
-    return { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled };
+    return { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled, coverRequest };
 }
 
 export type ChatCompletionCallbacks = {
@@ -2245,9 +2265,10 @@ async function generateNativeChatCompletion(
         options?: ChatPromptBuildOptions & { signal?: AbortSignal };
         callbacks?: ChatCompletionCallbacks;
         bailoutRef: ReplyBailoutRef;
+        coverRequest?: CoverRequest;
     },
 ): Promise<ChatCompletionResult> {
-    const { session, llmMessages, character, config, preset, regexes, userIdentity, options, callbacks, bailoutRef } = params;
+    const { session, llmMessages, character, config, preset, regexes, userIdentity, options, callbacks, bailoutRef, coverRequest } = params;
     const enabledTools = getEnabledTools(options?.appId ?? "chat");
     const requestAppTags = mergeAppTags(options?.appTags, options?.promptProfile?.appTags, options?.appId ?? "chat");
     const persistedSession = loadChatSessions().find(item => item.id === session.id);
@@ -2262,6 +2283,7 @@ async function generateNativeChatCompletion(
     let nativeBundle = buildNativeChatTools(enabledTools, expandedSourceIds, nativeToolBuildOptions);
     const requestMessages: LlmRequestMessage[] = toLlmRequestMessages(llmMessages);
     const parts: ChatCompletionPart[] = [];
+    let coverChange: ChatCompletionResult["coverChange"];
     const meta = { characterName: character.name, userName: userIdentity?.name };
     const actionContext = { characterId: session.contactId, sessionId: session.id, sourceEngine: "chat" as const, signal: options?.signal };
     const expandableSourceKeys = new Set(enabledTools.filter(tool => !isNativeSingleTool(tool)).map(nativeToolSourceKey));
@@ -2340,29 +2362,31 @@ async function generateNativeChatCompletion(
             throwIfAborted(options?.signal);
             dispatchActions(actions, actionContext).catch(err => console.warn("[ChatEngine] Action dispatch failed:", err));
         }
-        const assistantForToolContext = stripStateAndInnerForPrompt(displayContent);
+        const visibleText = stripCoverActions(afterActionStrip);
+        const assistantForToolContext = stripStateAndInnerForPrompt(stripCoverActions(displayContent));
 
         if (result.toolCalls.length === 0) {
             throwIfAborted(options?.signal);
             // 无工具调用的最终轮：把解析到的思维链先交给回调（先于 onTextPart，与非原生路径一致）
             // 标签解析开启时已在上方用标签思维链覆盖，此处不再重复喂原生
             if (result.reasoning && !onlineThinkingEnabled) callbacks?.onReasoning?.(result.reasoning);
-            await callbacks?.onTextPart?.(afterActionStrip);
-            parts.push({ text: afterActionStrip });
+            coverChange = resolveCoverChange(coverRequest, afterActionStrip);
+            await callbacks?.onTextPart?.(visibleText);
+            parts.push({ text: visibleText });
             if (bailoutRef.shortcutHandles.length > 0) bailoutRef.shortcutCompleted = true;
             break;
         }
 
         throwIfAborted(options?.signal);
         await callbacks?.onNativeToolAssistantTurn?.({
-            content: afterActionStrip,
-            rawContent: displayContent,
+            content: visibleText,
+            rawContent: stripCoverActions(displayContent),
             reasoning: onlineThinkingEnabled ? (extractThinkingTag(result.content, onlineThinkingTag) || undefined) : result.reasoning,
             openRouterReasoningDetails: onlineThinkingEnabled ? undefined : result.openRouterReasoningDetails,
             toolCalls: result.toolCalls,
         });
-        if (afterActionStrip) {
-            parts.push({ text: afterActionStrip });
+        if (visibleText) {
+            parts.push({ text: visibleText });
         }
 
         const loaderCalls = result.toolCalls
@@ -2561,7 +2585,7 @@ async function generateNativeChatCompletion(
         }
     }
 
-    return { parts };
+    return { parts, coverChange };
 }
 
 type ReplyBailoutRef = {
@@ -2651,7 +2675,7 @@ async function generateChatCompletionCore(
     callbacks: ChatCompletionCallbacks | undefined,
     bailoutRef: ReplyBailoutRef,
 ): Promise<ChatCompletionResult> {
-    const { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled } = await buildChatPromptMessages(session, history, options);
+    const { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled, coverRequest } = await buildChatPromptMessages(session, history, options);
     const requestAppTags = mergeAppTags(options?.appTags, options?.promptProfile?.appTags, options?.appId ?? "chat");
 
     // 追问有自己的排期时兜底（followup:key），这里只为普通回复生成挂单。
@@ -2677,7 +2701,8 @@ async function generateChatCompletionCore(
         // 900KB 上限（app/api/push/jobs/route.ts），一撞就是整条兜底挂不上、
         // 静默丢掉离线回复——为了第二轮续跑赔掉第一轮，不划算。冷场重连与定时
         // 唤醒是低频任务，那两条照常挂续跑。
-        const bailoutMessages = [...llmMessages];
+        const localPrompt = coverRequest && coverRequestPrompt(coverRequest);
+        const bailoutMessages = llmMessages.filter(message => message.content !== localPrompt);
         // 这条路径不挂续跑（见上），所以也不能向角色承诺第二轮
         maybeAppendShortcutCapability(bailoutMessages, { continuationAvailable: false });
         void import("./push-bailout-client").then(async mod => {
@@ -2710,11 +2735,13 @@ async function generateChatCompletionCore(
             options,
             callbacks,
             bailoutRef,
+            coverRequest,
         });
     }
 
     // ── Tool calling loop with real-time callbacks ──
     const parts: ChatCompletionPart[] = [];
+    let coverChange: ChatCompletionResult["coverChange"];
     const meta = { characterName: character.name, userName: userIdentity?.name };
     const actionContext = { characterId: session.contactId, sessionId: session.id, sourceEngine: "chat" as const, signal: options?.signal };
 
@@ -2789,13 +2816,15 @@ async function generateChatCompletionCore(
         // Check for [获取指令:xxx] and [执行动作:xxx({...})]
         const toolFetches = toolsEnabled ? parseToolFetches(afterActionStrip) : [];
         const { toolCalls } = toolsEnabled ? parseToolCalls(afterActionStrip) : { toolCalls: [] };
-        const assistantForToolContext = stripStateAndInnerForPrompt(filteredOutput);
+        const visibleText = stripCoverActions(afterActionStrip);
+        const assistantForToolContext = stripStateAndInnerForPrompt(stripCoverActions(filteredOutput));
 
         // No tool activity — final round
         if (toolFetches.length === 0 && toolCalls.length === 0) {
             throwIfAborted(options?.signal);
-            await callbacks?.onTextPart?.(afterActionStrip);
-            parts.push({ text: afterActionStrip });
+            coverChange = resolveCoverChange(coverRequest, afterActionStrip);
+            await callbacks?.onTextPart?.(visibleText);
+            parts.push({ text: visibleText });
             if (bailoutRef.shortcutHandles.length > 0) bailoutRef.shortcutCompleted = true;
             break;
         }
@@ -2805,14 +2834,14 @@ async function generateChatCompletionCore(
         throwIfAborted(options?.signal);
         const responseBatchId = createResponseBatchId();
         const toolDirectiveText = extractTextToolDirectiveText(afterActionStrip);
-        await callbacks?.onTextPart?.(afterActionStrip, undefined, {
+        await callbacks?.onTextPart?.(visibleText, undefined, {
             responseBatchId,
-            rawResponseText: afterActionStrip,
+            rawResponseText: visibleText,
         });
         if (toolDirectiveText) {
             callbacks?.onToolAssistantTurn?.(toolDirectiveText, { responseBatchId });
         }
-        parts.push({ text: filteredOutput });
+        parts.push({ text: stripCoverActions(filteredOutput) });
 
         // Helper: find insert index for injecting after history
         const findInsertIdx = () => {
@@ -2990,8 +3019,10 @@ async function generateChatCompletionCore(
                     }
                     // 剔除预设配置的文本片段（<思考结束> 等残留标签）
                     finalOutput = stripPresetTexts(finalOutput, preset);
-                    await callbacks?.onTextPart?.(finalOutput);
-                    parts.push({ text: finalOutput });
+                    coverChange = resolveCoverChange(coverRequest, finalOutput);
+                    const visibleText = stripCoverActions(finalOutput);
+                    await callbacks?.onTextPart?.(visibleText);
+                    parts.push({ text: visibleText });
                     if (bailoutRef.shortcutHandles.length > 0) bailoutRef.shortcutCompleted = true;
                 } catch (err) {
                     throwIfAborted(options?.signal);
@@ -3014,7 +3045,7 @@ async function generateChatCompletionCore(
         }
     })();
 
-    return { parts };
+    return { parts, coverChange };
 }
 
 /**

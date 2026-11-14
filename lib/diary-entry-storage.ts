@@ -150,7 +150,7 @@ export function saveDiaryEntryFontAssetId(assetId: string | null): void {
 }
 
 export function loadDiaryEntryFontScale(): number {
-  const raw = Number(kvGet(DIARY_ENTRY_FONT_SCALE_KEY));
+  const raw = Number(kvGet(DIARY_ENTRY_FONT_SCALE_KEY) ?? 1);
   if (!Number.isFinite(raw)) return 1;
   return Math.min(1.25, Math.max(0.85, Number(raw.toFixed(2))));
 }

@@ -141,6 +141,7 @@ export type ChatMessage = {
         | "payment_request" | "accept_payment_request" | "decline_payment_request"
         | "music" | "music_share" | "music_notify" | "music_not_found"
         | "xiaohongshu_note_share"
+        | "moment_share"
         | "gift"
         | "contact_card"
         | "app_card"
@@ -161,6 +162,7 @@ export type ChatMessage = {
         label?: string;           // 红包留言/转账备注/照片描述/位置名/表情名
         status?: "pending" | "opened" | "received" | "declined" | "paid" | "canceled";  // 红包/转账/代付状态
         quoteMessageId?: string;  // 引用消息 ID
+        momentsCoverAttempted?: boolean;
         quotePreview?: string;    // 引用消息预览文本
         quoteRole?: ChatMessageRole; // 引用消息的 role
         stickerUrl?: string;      // 表情包图片路径
@@ -232,6 +234,7 @@ export type ChatMessage = {
         xiaohongshuImageAssetId?: string;
         xiaohongshuCoverIcon?: string;
         xiaohongshuTone?: string;
+        momentShare?: import("./chat-share").MomentShareSnapshot;
         callDuration?: string;    // 通话时长（如 05:23）
         voiceDuration?: number;   // 语音条时长（秒）
         synthesizedFromText?: string; // 语音条当前音频对应的合成文本
@@ -368,6 +371,8 @@ export type ChatAppSettings = {
     meetingInviteCard?: MeetingInviteCardConfig;
     /** 私聊默认传入的最近图片数量；单独会话设置优先 */
     globalVisionImagePromptLimit?: number;
+    globalChineseThinkingPromptEnabled?: boolean;
+    globalChineseThinkingPromptLength?: ChineseThinkingPromptLength;
     timeAware?: boolean; // When true, inject timestamps into prompt so AI knows message timing (default: true)
     promptViewerEnabled?: boolean; // When true, show the floating prompt viewer entry
     quickActionEnabled?: boolean; // When true, show the floating quick action entry
@@ -576,6 +581,7 @@ const MEDIA_PREVIEW_MAP: Record<string, string> = {
     music: "[音乐]",
     music_share: "[音乐分享]",
     xiaohongshu_note_share: "[小红书分享]",
+    moment_share: "[朋友圈分享]",
     app_card: "[应用卡片]",
     tool_notice: "[执行动作]",
     system_instruction: "[系统指令]",

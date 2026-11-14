@@ -178,8 +178,9 @@ export async function addChatFavorite(input: {
   });
   const tags = new Set<string>(["聊天"]);
   for (const message of storedMessages) {
-    if (message.mediaType === "audio") tags.add("语音");
-    if (message.mediaType === "image" || message.mediaType === "video" || message.mediaType === "media_file") tags.add("图片");
+    const mediaType = message.mediaType === "media_file" ? message.mediaData?.fileType : message.mediaType;
+    if (mediaType === "audio") tags.add("语音");
+    if (mediaType === "image" || mediaType === "video") tags.add("图片");
   }
   const entityType: FavoriteEntityType = session.isGroup ? "group" : "character";
   const entityId = session.isGroup ? session.id : session.contactId;

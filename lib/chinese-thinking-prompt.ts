@@ -1,3 +1,4 @@
+import type { ChatAppSettings, ChatSession } from "./chat-storage";
 import type { PresetConfig } from "./settings-types";
 import { createBuiltinPreset } from "./builtin-preset";
 
@@ -5,6 +6,12 @@ export type ChineseThinkingPromptLength = 100 | 300 | 500;
 
 export function normalizeChineseThinkingPromptLength(value: unknown): ChineseThinkingPromptLength {
     return value === 300 || value === 500 ? value : 100;
+}
+
+export function resolveChineseThinkingPrompt(session: ChatSession, settings: ChatAppSettings) {
+    return settings.globalChineseThinkingPromptEnabled === true
+        ? { enabled: true, length: normalizeChineseThinkingPromptLength(settings.globalChineseThinkingPromptLength) }
+        : { enabled: session.chineseThinkingPromptEnabled === true, length: normalizeChineseThinkingPromptLength(session.chineseThinkingPromptLength) };
 }
 
 /** Request-local display settings; never mutate or save the shared preset. */

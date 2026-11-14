@@ -8,7 +8,7 @@ import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse, type ParsedMessagePart } from "@/lib/rich-message-parser";
 import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
-import { withChineseThinkingPrompt } from "@/lib/chinese-thinking-prompt";
+import { resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "@/lib/chinese-thinking-prompt";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent } from "./message-bubble";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
@@ -77,6 +77,9 @@ import {
 } from "@/lib/generated-image-retry";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { MomentsFeed } from "./moments-feed";
+import { applyChatMomentsCover } from "@/lib/chat-moments-cover";
+import type { ChatCompletionResult } from "@/lib/chat-engine";
 import { ChatScreenEffectOverlay, type ActiveScreenEffect } from "./chat-screen-effect";
 import {
     formatChatDiceResultMessage,
@@ -213,6 +216,7 @@ const CHAT_VISUAL_MEDIA_TYPES = new Set([
     "location",
     "music_share",
     "xiaohongshu_note_share",
+    "moment_share",
     "app_card",
     "audio",
     "video",
@@ -261,6 +265,7 @@ const CHAT_MEDIA_BUBBLE_TYPES = new Set([
     "location",
     "music_share",
     "xiaohongshu_note_share",
+    "moment_share",
     "app_card",
     "media_file",
 ]);
@@ -1148,6 +1153,12 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [editingOfflineTarget, setEditingOfflineTarget] = useState<OfflineActionTarget | null>(null);
     const [editingOfflineContent, setEditingOfflineContent] = useState("");
     const [regexRevision, setRegexRevision] = useState(0);
+    const [globalThinkingEnabled, setGlobalThinkingEnabled] = useState(() => loadChatAppSettings().globalChineseThinkingPromptEnabled === true);
+    useEffect(() => {
+        const sync = () => setGlobalThinkingEnabled(loadChatAppSettings().globalChineseThinkingPromptEnabled === true);
+        window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
+        return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
+    }, []);
     // Whether there are unsent user messages waiting for AI generation
     const [pendingGenerate, setPendingGenerate] = useState(false);
     // 生成期间又来了一次回复请求（如拉黑/解除拉黑事件）且被判定为忙碌丢弃：
@@ -1162,6 +1173,11 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [customPlusActions, setCustomPlusActions] = useState<RegisteredCustomAppChatPlusAction[]>(() => loadCustomAppChatPlusActions());
     const [activeCustomChatPlus, setActiveCustomChatPlus] = useState<ActiveCustomChatPlus | null>(null);
     const [showSettings, setShowSettings] = useState(false);
+    const [showCharacterMoments, setShowCharacterMoments] = useState(false);
+    const avatarClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+    }, []);
     const [showVoiceCall, setShowVoiceCall] = useState(false);
     const [showVideoCall, setShowVideoCall] = useState(false);
     const [callMinimized, setCallMinimized] = useState(false);
@@ -1677,7 +1693,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         const presets = loadPresets();
         const preset = withChineseThinkingPrompt(
             presets.find(item => item.id === slot.presetId) || presets.find(item => item.builtIn) || null,
-            session.chineseThinkingPromptEnabled === true,
+            resolveChineseThinkingPrompt(session, { globalChineseThinkingPromptEnabled: globalThinkingEnabled }).enabled,
         );
         const withThoughtCompat = (tag: string): string[] => (tag === "thinking" ? ["thinking", "thought", "think"] : [tag]);
         return {
@@ -1691,7 +1707,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             // 预设「剔除文本」：引擎最终会删，预览阶段同步删，避免闪现（字面量删除，成本极低）
             stripTexts: (preset?.strip_texts || []).filter(Boolean),
         };
-    }, [regexRevision, session.contactId, session.isGroup, session.chineseThinkingPromptEnabled]);
+    }, [regexRevision, session.contactId, session.isGroup, session.chineseThinkingPromptEnabled, globalThinkingEnabled]);
 
     const displayRegexMacroEngine = useMemo(() => {
         const charName = session.isGroup
@@ -3238,6 +3254,20 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         setMessages(prev => [...prev, msg]);
     };
 
+    const finishMomentsCoverChange = async (change: ChatCompletionResult["coverChange"], guard: GenerationRunGuard) => {
+        if (!change) return;
+        try {
+            throwIfGenerationStopped(guard);
+            if (change.action.kind === "generate") showChatToast("正在生成朋友圈封面…");
+            const applied = await applyChatMomentsCover(session, change.request, change.action, guard.signal);
+            if (applied) persistToolNotice("已更换朋友圈封面");
+        } catch (error) {
+            if (!guard.signal?.aborted && !isAbortLikeError(error)) {
+                persistToolNotice(`朋友圈封面更新失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+            }
+        }
+    };
+
     const appendTransientMessage = (
         role: ChatMessage["role"],
         content: string,
@@ -3484,6 +3514,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     generationHistory,
                     {
                         appTags: theaterMode ? ["chat"] : ["chat", "text"],
+                        allowMomentsCoverChange: true,
                         signal: generationRun.controller.signal,
                     },
                     {
@@ -3511,6 +3542,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 );
                 if (!isCurrentGeneration()) return;
                 const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                await finishMomentsCoverChange(cr.coverChange, generationGuard);
                 if (!isCurrentGeneration()) return;
                 scheduleFollowUp(session.id, 0, result.stateValues);
                 handleCallTrigger(result.triggerCall);
@@ -3973,6 +4005,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
 
                 const result = await generateChatCompletion(session, latestMessages, {
                     appTags: theaterMode ? ["chat"] : ["chat", "text"],
+                    allowMomentsCoverChange: true,
                     signal: generationRun.controller.signal,
                 }, {
                     onReasoning: (t) => { pendingReasoning = t; },
@@ -4057,6 +4090,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                         handleToolExecution(results, generationGuard, options?.toolExecutionId);
                     },
                 });
+                if (!isCurrentGeneration()) return;
+
+                await finishMomentsCoverChange(result.coverChange, generationGuard);
                 if (!isCurrentGeneration()) return;
 
                 if (lastSendResult) {
@@ -5773,6 +5809,29 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const editingMessage = editingMessageId ? messages.find(m => m.id === editingMessageId) : null;
     const editingSystemInstruction = editingMessage ? isSystemInstructionMessage(editingMessage) : false;
 
+    const renderCharacterAvatar = (className: string) => (
+        <button type="button" className={className} aria-label={`查看${character?.name || "角色"}的朋友圈`}
+            onClick={event => {
+                if (isMultiSelectMode || !character) return;
+                if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+                const open = () => {
+                    avatarClickTimer.current = null;
+                    closeContextMenu();
+                    setShowCharacterMoments(true);
+                };
+                if (event.detail === 0 || offlineMode) open();
+                else avatarClickTimer.current = setTimeout(open, 300);
+            }}
+            onDoubleClick={() => {
+                if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+                avatarClickTimer.current = null;
+                if (character && !offlineMode && !isMultiSelectMode) sendRichMessage("poke", { pokeTarget: character.name });
+            }}
+        >
+            {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+        </button>
+    );
+
     // 群聊通话没有缩小悬浮窗，维持原有的整屏早退渲染
     if (showVoiceCall && session.isGroup && groupCharacters.length > 0) {
         return (
@@ -5928,9 +5987,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                 </div>
                                 <div className="chat-offline-entry" data-role="assistant">
                                     {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
-                                    <div className="chat-offline-avatar" aria-hidden="true">
+                                    {character && !session.isGroup ? renderCharacterAvatar("chat-offline-avatar") : <div className="chat-offline-avatar" aria-hidden="true">
                                         {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} alt="" /> : <ChatFallbackAvatar />}
-                                    </div>
+                                    </div>}
                                     <div className="chat-offline-label-row">
                                         <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
                                         {assistantHasHtmlPreview ? (
@@ -6029,9 +6088,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                     /* 流式预览原地长出：与正式剧情正文同结构（头像/角色名/正文区），
                                        正文用轻量 pre-wrap 渲染（避免每帧 markdown/双语解析），落库时原地换成正式排版 */
                                     <div className="chat-offline-entry" data-role="assistant">
-                                        <div className="chat-offline-avatar" aria-hidden="true">
+                                        {character && !session.isGroup ? renderCharacterAvatar("chat-offline-avatar") : <div className="chat-offline-avatar" aria-hidden="true">
                                             {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} alt="" /> : <ChatFallbackAvatar />}
-                                        </div>
+                                        </div>}
                                         <div className="chat-offline-label-row">
                                             <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
                                         </div>
@@ -6398,28 +6457,17 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                                 </div>
                                             ) : (
                                                 <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                                    {(() => {
-                                                        const senderChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        const senderAvatar = session.isGroup ? senderChar?.avatar : effectiveCharacterAvatar;
-                                                        return (
-                                                            <>
-                                                    <div onDoubleClick={() => {
-                                                        const targetChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
-                                                    }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
-                                                        {resolveChatCharacterAvatar(senderChar) ? (
-                                                            <img src={resolveChatCharacterAvatar(senderChar)} className="w-full h-full object-cover" alt="" />
-                                                        ) : (
-                                                            <ChatFallbackAvatar />
-                                                        )}
-                                                    </div>
-                                                            </>
-                                                        );
-                                                    })()}
+                                                    {character && !session.isGroup
+                                                        ? renderCharacterAvatar("chat-avatar-moments-btn w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden")
+                                                        : (() => {
+                                                            const sender = (msg.senderCharacterId && groupCharMap.get(msg.senderCharacterId)) || character;
+                                                            const avatar = resolveChatCharacterAvatar(sender);
+                                                            return <div onDoubleClick={() => {
+                                                                if (sender) sendRichMessage("poke", { pokeTarget: sender.name });
+                                                            }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
+                                                                {avatar ? <img src={avatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+                                                            </div>;
+                                                        })()}
                                                 </div>
                                             )
                                         )}
@@ -6617,9 +6665,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                 return (
                                     <div key={`stream-seg-${j}`} className="chat-msg-wrapper" data-role="assistant">
                                         <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                            <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
+                                            {character && !session.isGroup ? renderCharacterAvatar("chat-avatar-moments-btn w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden") : <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
                                                 {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
-                                            </div>
+                                            </div>}
                                         </div>
                                         <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
                                             <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
@@ -6747,6 +6795,13 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     onConfirm={handleMultiDeleteConfirmed}
                     onCancel={() => setShowConfirmMultiDelete(false)}
                 />
+            )}
+
+            {showCharacterMoments && character && wrapperRef.current?.parentElement && createPortal(
+                <div className="chat-settings-layer absolute inset-0 z-50 bg-[var(--c-page-body-bg)]">
+                    <MomentsFeed profileCharacterId={character.id} profileChatAccountId={session.chatAccountId ?? null} onCloseApp={() => setShowCharacterMoments(false)} />
+                </div>,
+                wrapperRef.current.parentElement
             )}
 
             {/* Settings Panel — portaled outside session-scoped CSS, preserves chat room mount */}
