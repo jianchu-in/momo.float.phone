@@ -78,6 +78,8 @@ import {
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import { MomentsFeed } from "./moments-feed";
+import { applyChatMomentsCover } from "@/lib/chat-moments-cover";
+import type { ChatCompletionResult } from "@/lib/chat-engine";
 import { ChatScreenEffectOverlay, type ActiveScreenEffect } from "./chat-screen-effect";
 import {
     formatChatDiceResultMessage,
@@ -3246,6 +3248,20 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         setMessages(prev => [...prev, msg]);
     };
 
+    const finishMomentsCoverChange = async (change: ChatCompletionResult["coverChange"], guard: GenerationRunGuard) => {
+        if (!change) return;
+        try {
+            throwIfGenerationStopped(guard);
+            if (change.action.kind === "generate") showChatToast("正在生成朋友圈封面…");
+            const applied = await applyChatMomentsCover(session, change.request, change.action, guard.signal);
+            if (applied) persistToolNotice("已更换朋友圈封面");
+        } catch (error) {
+            if (!guard.signal?.aborted && !isAbortLikeError(error)) {
+                persistToolNotice(`朋友圈封面更新失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+            }
+        }
+    };
+
     const appendTransientMessage = (
         role: ChatMessage["role"],
         content: string,
@@ -3492,6 +3508,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     generationHistory,
                     {
                         appTags: theaterMode ? ["chat"] : ["chat", "text"],
+                        allowMomentsCoverChange: true,
                         signal: generationRun.controller.signal,
                     },
                     {
@@ -3519,6 +3536,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 );
                 if (!isCurrentGeneration()) return;
                 const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                await finishMomentsCoverChange(cr.coverChange, generationGuard);
                 if (!isCurrentGeneration()) return;
                 scheduleFollowUp(session.id, 0, result.stateValues);
                 handleCallTrigger(result.triggerCall);
@@ -3981,6 +3999,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
 
                 const result = await generateChatCompletion(session, latestMessages, {
                     appTags: theaterMode ? ["chat"] : ["chat", "text"],
+                    allowMomentsCoverChange: true,
                     signal: generationRun.controller.signal,
                 }, {
                     onReasoning: (t) => { pendingReasoning = t; },
@@ -4065,6 +4084,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                         handleToolExecution(results, generationGuard, options?.toolExecutionId);
                     },
                 });
+                if (!isCurrentGeneration()) return;
+
+                await finishMomentsCoverChange(result.coverChange, generationGuard);
                 if (!isCurrentGeneration()) return;
 
                 if (lastSendResult) {
@@ -6771,7 +6793,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
 
             {showCharacterMoments && character && wrapperRef.current?.parentElement && createPortal(
                 <div className="chat-settings-layer absolute inset-0 z-50 bg-[var(--c-page-body-bg)]">
-                    <MomentsFeed profileCharacterId={character.id} onCloseApp={() => setShowCharacterMoments(false)} />
+                    <MomentsFeed profileCharacterId={character.id} profileChatAccountId={session.chatAccountId ?? null} onCloseApp={() => setShowCharacterMoments(false)} />
                 </div>,
                 wrapperRef.current.parentElement
             )}

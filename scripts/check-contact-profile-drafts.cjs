@@ -98,10 +98,11 @@ async function main() {
     resolveChatAccountUserIdentity: () => identity, sessionMatchesChatScope: session => (session.chatAccountId || null) === scope.chatAccountId });
   mock("lib/character-world-storage.ts", { loadCharacterWorldGroups: () => [{ id: "world", name: "冬日世界", memberIds: [character.id] }] });
   mock("lib/settings-storage.ts", { USER_IDENTITIES_UPDATED_EVENT: "identity-updated", loadUserIdentities: () => [identity] });
-  let generatedSignatures = 0, generatedCovers = 0, failProfileGeneration = false;
+  let generatedSignatures = 0, generatedCovers = 0, failProfileGeneration = false, selectedReferences;
   mock("lib/character-moments-generation.ts", {
     generateCharacterMomentText: async (_id, kind) => { if (failProfileGeneration) throw Error("模拟生成失败"); if (kind === "signature") { generatedSignatures++; return "新的角色签名"; } return "冬夜的城市街景"; },
-    generateCharacterMomentCover: async () => { generatedCovers++; return { blob: new Blob(["generated"], { type: "image/png" }) }; },
+    generateCharacterMomentCover: async (_id, _description, _signal, refs) => { generatedCovers++; selectedReferences = refs; return { blob: new Blob(["generated"], { type: "image/png" }) }; },
+    loadMomentCoverReferences: async () => ({ supported: true, characterImage: "/role.png", userImage: "/user.png" }),
   });
   mock("lib/moments-storage.ts", { getAllPosts: () => posts, loadMomentPosts: () => posts, getUnreadMomentsNotifications: () => [], saveMomentsLastSeen() {},
     deleteMomentPost: id => { posts = posts.filter(post => post.id !== id); }, addMomentComment: value => { requestedComments++; return value; } });
@@ -152,7 +153,12 @@ async function main() {
   assert.equal(props(container.querySelector('[aria-label="角色封面画面描述"]')).value, "冬夜的城市街景");
   const savedURLCreate = URL.createObjectURL, savedURLRevoke = URL.revokeObjectURL;
   URL.createObjectURL = () => "blob:generated-cover"; URL.revokeObjectURL = () => {};
+  const choices = [...container.querySelectorAll(".moment-cover-references input")];
+  assert.equal(choices.length, 2);
+  assert.ok(choices.every(input => !props(input).checked && !props(input).disabled));
+  await act(async () => { for (const input of choices) props(input).onChange({ target: { checked: true } }); });
   await click(button("生成封面图片")); assert.equal(generatedCovers, 1);
+  assert.deepEqual(selectedReferences, { character: true, user: true, identity });
   assert.equal(profiles.loadCharacterMomentsProfile(character.id).coverAssetId, "character-cover", "Generated cover awaits Apply");
   unreadableCover = true;
   await act(async () => props(button("应用封面")).onClick());
@@ -322,6 +328,35 @@ async function main() {
   assert.equal(importedShare.mediaRestored, 1);
   assert.match(shared.at(-1).mediaUrl, /^asset:\/\/cover-\d+$/);
   assert.equal(shared.at(-1).mediaData.momentShare.body, sharePost.content);
+
+  // A cover request must use the actual user's attachment or selected identity.
+  const { applyChatMomentsCover } = require(path.join(root, "lib/chat-moments-cover.ts"));
+  const { findCoverRequest } = require(path.join(root, "lib/chat-moments-cover-intent.ts"));
+  const { storeMediaBlob } = require(path.join(root, "lib/media-cache-storage.ts"));
+  const chat = sessions[1];
+  const photo = new Blob(["photo"], { type: "image/png" });
+  const photoUrl = await storeMediaBlob(photo, photo.type, "image");
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "", mediaType: "image", mediaUrl: photoUrl });
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "用这张当你的朋友圈封面" });
+  chatStore.updateMessageMediaData = (id, data) => { shared.find(message => message.id === id).mediaData = data; };
+  const request = findCoverRequest(chatStore.loadChatMessages(chat.id), chat.id);
+  const modelCalls = generatedCovers;
+  assert.equal(await applyChatMomentsCover(chat, request, { kind: "use_image" }), true);
+  assert.equal(generatedCovers, modelCalls, "An uploaded image must never call the image API");
+  assert.equal(await applyChatMomentsCover(chat, request, { kind: "use_image" }), false);
+  const directCover = profiles.loadCharacterMomentsProfile(character.id).coverAssetId;
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "assistant", content: "好呀" });
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "生成一张我们的合照做你的朋友圈封面" });
+  const generateRequest = findCoverRequest(chatStore.loadChatMessages(chat.id), chat.id);
+  const generatedAction = { kind: "generate", subject: "合照", description: "雨夜合照" };
+  const altIdentity = { ...identity, id: "chat-alt-identity:alt", name: "小号" };
+  const scopeModule = mocks.get(path.join(root, "lib/chat-scope-storage.ts"));
+  scopeModule.resolveChatAccountUserIdentity = accountId => accountId === "alt" ? altIdentity : identity;
+  assert.equal(await applyChatMomentsCover(chat, generateRequest, generatedAction), true);
+  assert.deepEqual(selectedReferences, { character: true, user: true, identity: altIdentity });
+  assert.notEqual(profiles.loadCharacterMomentsProfile(character.id).coverAssetId, directCover);
+  assert.equal(await applyChatMomentsCover(chat, generateRequest, generatedAction), false);
+  assert.equal(generatedCovers, modelCalls + 1, "Retrying a reply cannot make a second paid request");
 
   // Fresh cache proves drafts and profile edits reach persistent IndexedDB.
   const Dexie = require("dexie").default, disk = new Dexie("AiPhoneKvDB"); disk.version(1).stores({ entries: "key" });

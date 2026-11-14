@@ -39,3 +39,7 @@
 .character-moments-actions textarea,.character-moments-actions input { box-sizing: border-box; width: 100%; padding: 8px; font: inherit; background: var(--c-panel,#fff); color: inherit; border: 1px solid var(--c-border,#ddd); border-radius: 7px; }
 .character-moments-actions img { display: block; width: 100%; max-height: 230px; object-fit: cover; border-radius: 8px; margin-top: 10px; }
 .character-moments-actions p { line-height: 1.7; white-space: pre-wrap; }
+.moment-cover-references { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 8px 0; }
+.moment-cover-references label { display: flex; align-items: center; gap: 6px; min-height: 38px; }
+.moment-cover-references input[type="checkbox"] { width: auto; padding: 0; }
+.moment-cover-references img { width: 32px; height: 32px; margin: 0; border-radius: 5px; }

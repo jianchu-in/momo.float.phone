@@ -162,6 +162,7 @@ export type ChatMessage = {
         label?: string;           // 红包留言/转账备注/照片描述/位置名/表情名
         status?: "pending" | "opened" | "received" | "declined" | "paid" | "canceled";  // 红包/转账/代付状态
         quoteMessageId?: string;  // 引用消息 ID
+        momentsCoverAttempted?: boolean;
         quotePreview?: string;    // 引用消息预览文本
         quoteRole?: ChatMessageRole; // 引用消息的 role
         stickerUrl?: string;      // 表情包图片路径

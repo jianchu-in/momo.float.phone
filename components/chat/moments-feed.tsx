@@ -75,10 +75,11 @@ type MomentsFeedProps = {
     compact?: boolean;
     onUserPublished?: (post: MomentPost) => void;
     profileCharacterId?: string;
+    profileChatAccountId?: string | null;
     profileUser?: { identityId?: string; chatAccountId?: string | null };
 };
 
-export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, profileCharacterId, profileUser }: MomentsFeedProps) {
+export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, profileCharacterId, profileChatAccountId, profileUser }: MomentsFeedProps) {
     const profileCharacter = profileCharacterId ? loadCharacters().find(character => character.id === profileCharacterId) : undefined;
     const [profileRevision, setProfileRevision] = useState(0);
     const [userPage, setUserPage] = useState<MomentsFeedProps["profileUser"] | null>(null);
@@ -102,6 +103,11 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
         : userIdentity;
     const profileName = profileCharacterId ? profileCharacter?.name || "角色" : ownerIdentity?.name || "我";
     const profileAvatar = profileCharacterId ? resolveChatCharacterAvatar(profileCharacter) : ownerIdentity?.avatarUrl;
+    const coverIdentity = profileCharacterId
+        ? profileChatAccountId === undefined
+            ? resolveChatScopeUserIdentity(profileCharacterId, "moments")
+            : resolveChatAccountUserIdentity(profileChatAccountId, profileCharacterId, "chat")
+        : null;
     const savedProfile = useMemo(() => profileCharacterId
         ? loadCharacterMomentsProfile(profileCharacterId)
         : ownerIdentity?.id ? loadIdentityProfiles()[ownerIdentity.id] : undefined,
@@ -584,7 +590,7 @@ export function MomentsFeed({ onCloseApp, compact = false, onUserPublished, prof
                     <div className="contact-moments-signature">{editingSignature ? <input ref={sigInputRef} autoFocus aria-label={profileCharacterId ? "角色朋友圈个性签名" : "用户朋友圈个性签名"} defaultValue={signature}
                         onBlur={event => handleSignatureSubmit(event.target.value)} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
                         : <button type="button" onClick={() => setEditingSignature(true)}>{signature || "添加个性签名"}</button>}</div>
-                    {profileCharacterId && <CharacterMomentsActions key={profileCharacterId} characterId={profileCharacterId} characterName={profileName} coverOpen={coverMenuOpen} uploadingCover={uploadingCover} onCoverClose={() => setCoverMenuOpen(false)} onUpload={() => coverInputRef.current?.click()} onSaveCover={saveCover} />}
+                    {profileCharacterId && <CharacterMomentsActions key={`${profileCharacterId}:${coverIdentity?.id || ""}`} characterId={profileCharacterId} characterName={profileName} identity={coverIdentity} coverOpen={coverMenuOpen} uploadingCover={uploadingCover} onCoverClose={() => setCoverMenuOpen(false)} onUpload={() => coverInputRef.current?.click()} onSaveCover={saveCover} />}
                 </section> : <div className="feed-cover-shell w-full relative mb-4">
                     
                     {/* Background Absolute Cover */}

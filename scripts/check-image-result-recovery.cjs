@@ -11,12 +11,18 @@ const params = { settings, prompt: "test", referenceImageDataUrl: null };
 const imageResponse = () => new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-function load(fetcher, saved = new Map(), proxy = "") {
+function load(fetcher, saved = new Map(), proxy = "", references = {}) {
   const source = fs.readFileSync(path.join(root, "lib/image-generation-service.ts"), "utf8")
     + "\nexport const directTest = generateImageDirect; export const serverTest = generateImageViaServerOrProxy;";
   const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const module = { exports: {} };
   const calls = [];
+  const labels = [];
+  class Image {
+    naturalWidth = 100;
+    naturalHeight = 100;
+    set src(value) { queueMicrotask(() => value.startsWith("data:image/") ? this.onload() : this.onerror()); }
+  }
   class FileReader {
     readAsDataURL(blob) {
       blob.arrayBuffer().then(data => {
@@ -30,13 +36,19 @@ function load(fetcher, saved = new Map(), proxy = "") {
     require: name => name === "./kv-db" ? {
       kvGet: key => saved.get(key), kvSet: (key, value) => saved.set(key, value), registerKvMigration() {},
     } : name === "./sha256-stream" ? { sha256TextHex: async text => crypto.createHash("sha256").update(text).digest("hex") }
+      : name === "./chat-asset-storage" ? { getChatImageFromIndexedDB: async id => references[id] }
+      : name === "./media-cache-storage" ? { storeMediaBlob: async () => "media-store://result" }
       : { throwIfAborted(signal) { if (signal?.aborted) throw new DOMException("Aborted", "AbortError"); } },
     process: { env: { NEXT_PUBLIC_IMAGE_GEN_PROXY_URL: proxy } }, crypto: crypto.webcrypto,
-    TypeError, Error, DOMException, AbortController, FormData, Blob, TextEncoder, TextDecoder, FileReader, atob,
+    TypeError, Error, DOMException, AbortController, FormData, Blob, TextEncoder, TextDecoder, FileReader, atob, Image,
+    document: { createElement: () => ({
+      getContext: () => ({ fillRect() {}, drawImage() {}, fillText: label => labels.push(label) }),
+      toDataURL: () => "data:image/png;base64,AA==",
+    }) },
     setTimeout, clearTimeout,
     fetch: async (url, init) => { calls.push({ url, method: init?.method || "GET", body: init?.body }); return fetcher(url, init); },
   });
-  return { api: module.exports, calls, saved };
+  return { api: module.exports, calls, saved, labels };
 }
 
 async function main() {
@@ -88,6 +100,23 @@ async function main() {
   const b64 = load(async () => json({ data: [{ b64_json: "AA==" }] }));
   assert.equal((await b64.api.directTest(params)).b64, "AA==");
   assert.equal(b64.calls.length, 1);
+  const coverSettings = { ...settings, enabled: true, provider: "openai", requestMode: "direct", extraPrompt: "",
+    characterReferences: { role: { assetId: "role-photo" } },
+    userReferences: { alt: { assetId: "alt-photo" }, main: { assetId: "main-photo" } } };
+  const coverParams = { settings: coverSettings, characterId: "role", description: "雨夜合照",
+    referenceSelection: { character: true, user: true, identity: { id: "alt", name: "小号昵称" } } };
+  const refs = { "role-photo": "data:image/png;base64,AA==", "alt-photo": "data:image/png;base64,AQ==" };
+  const portrait = load(async () => json({ data: [{ b64_json: "AA==" }] }), new Map(), "", refs);
+  const cover = await portrait.api.generateImageFromConfiguredApi(coverParams);
+  assert.equal(cover.usedReferenceImage, true);
+  assert.equal(portrait.calls.length, 1);
+  assert.match(portrait.calls[0].url, /\/images\/edits$/);
+  assert.deepEqual(portrait.labels, ["角色参考", "用户参考：小号昵称"]);
+  assert.match(cover.prompt, /共 2 格/);
+  const missing = load(async () => { throw Error("Unexpected paid API call"); }, new Map(), "", { "role-photo": refs["role-photo"] });
+  await assert.rejects(missing.api.generateImageFromConfiguredApi(coverParams), /当前用户参考图/);
+  await assert.rejects(missing.api.generateImageFromConfiguredApi({ ...coverParams, settings: { ...coverSettings, provider: "novelai" } }), /NovelAI/);
+  assert.equal(missing.calls.length, 0);
   const unavailable = load(async () => { throw new TypeError("connection closed"); });
   await assert.rejects(unavailable.api.serverTest(params), /connection closed/);
   assert.equal(unavailable.calls.length, 1, "Unknown request failures must not silently resubmit generation");

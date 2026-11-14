@@ -5,7 +5,8 @@ import { simpleLLMCall } from "./api-helpers";
 import { loadMemoryConfig, loadMemoryEntriesByType } from "./memory-storage";
 import { retrieveCoreMemoriesForPrompt } from "./memory-service";
 import { loadNativeTimelineAsync, prepareShortTermContext } from "./short-term-assembler";
-import { generateImageFromConfiguredApi, type ImageGenerationResult } from "./image-generation-service";
+import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings, type ImageGenerationResult, type ImageReferenceSelection } from "./image-generation-service";
+import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 
 export async function generateCharacterMomentText(characterId: string, kind: "signature" | "cover", signal?: AbortSignal): Promise<string> {
   const character = loadCharacters().find(item => item.id === characterId);
@@ -34,8 +35,22 @@ export async function generateCharacterMomentText(characterId: string, kind: "si
   return content;
 }
 
-export async function generateCharacterMomentCover(characterId: string, description: string, signal?: AbortSignal): Promise<ImageGenerationResult> {
-  const result = await generateImageFromConfiguredApi({ characterId, appId: "moments", description, includeUserReferenceImage: false, useReferenceImage: false, signal });
+export async function loadMomentCoverReferences(characterId: string, identityId?: string) {
+  const settings = resolveConfiguredImageGenerationSettings(characterId, "moments");
+  const read = (reference?: { assetId?: string; enabled?: boolean }) =>
+    reference?.assetId && reference.enabled !== false ? getChatImageFromIndexedDB(reference.assetId).catch(() => null) : Promise.resolve(null);
+  const [characterImage, userImage] = await Promise.all([
+    read(settings.characterReferences?.[characterId]),
+    read(identityId ? settings.userReferences?.[identityId] : undefined),
+  ]);
+  return { characterImage, userImage, supported: settings.provider !== "novelai" };
+}
+
+export async function generateCharacterMomentCover(
+  characterId: string, description: string, signal?: AbortSignal,
+  referenceSelection: ImageReferenceSelection = { character: false, user: false },
+): Promise<ImageGenerationResult> {
+  const result = await generateImageFromConfiguredApi({ characterId, appId: "moments", description, referenceSelection, signal });
   if (!result) throw Error("请先启用并配置角色的生图 API");
   return result;
 }

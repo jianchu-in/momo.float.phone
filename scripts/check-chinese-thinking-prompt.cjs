@@ -34,6 +34,7 @@ async function main() {
     }
     assert.equal(helper.withChineseThinkingPrompt(null, true).online_thinking_enabled, true);
     const session = { id: "session", contactId: "char", chatAccountId: "alt", chineseThinkingPromptEnabled: false };
+    const coverIntent = load("lib/chat-moments-cover-intent.ts", {});
     const history = [{ id: "user-message", sessionId: session.id, role: "user", content: "你好", createdAt: "2026-11-02" }];
     const shortTerm = { recentBlocks: [], truncatedHistory: history, wbActivationContext: "", unifiedRecentItems: [] };
     const deps = {
@@ -53,6 +54,7 @@ async function main() {
         "./memory-storage": { loadMemoryConfig: () => ({}) },
         "./chat-plugin-hooks": { runChatPluginTransform: async (_event, value) => ({ ...value, hint: "" }) },
         "./chat-avatar-intent": { findUserAvatarChangeIntent: () => null },
+        "./chat-moments-cover-intent": coverIntent,
         "./music-service": { isNeteaseConfigured: () => false },
         "./calendar-storage": { getCurrentCalendarScheduleForPrompt: () => "", buildCalendarScheduleMarker: () => "" },
         "./llm-prompt-assembler": { assemblePromptPayload: () => [{ role: "system", content: "原有提示词" }],
@@ -61,6 +63,26 @@ async function main() {
     const engine = load("lib/chat-engine.ts", deps);
     const hasPrompt = result => result.llmMessages.some(message => String(message.content).includes("【内置中文思考展示提示词】"));
     const normal = await engine.buildChatPromptMessages(session, history);
+    const read = (id, content, extra = {}) => ({ ...history[0], id, content, ...extra });
+    const photo = read("photo", "", { mediaType: "image", mediaUrl: "asset://photo" });
+    const request = read("cover", "用这张当你的朋友圈封面吧");
+    const generate = read("generate", "换个朋友圈封面吧，用我们俩的合照");
+    const coverOptions = { allowMomentsCoverChange: true };
+    const build = messages => engine.buildChatPromptMessages(session, messages, coverOptions);
+    for (const messages of [history, [photo], [read("no", "不要换朋友圈封面")], [read("mine", "我换了朋友圈封面")], [read("ask", "怎么换你的朋友圈封面？")]]) {
+        const result = await build(messages);
+        assert.equal(result.coverRequest, undefined);
+        assert.equal(JSON.stringify(result.llmMessages), JSON.stringify(normal.llmMessages));
+    }
+    assert.equal((await build([photo, request])).coverRequest.imageId, "photo");
+    assert.equal((await build([photo, { ...photo, id: "two" }, request])).coverRequest.kind, "clarify");
+    assert.equal((await build([photo, { ...photo, id: "two" }, { ...request, mediaData: { quoteMessageId: "photo" } }])).coverRequest.imageId, "photo");
+    assert.equal((await build([generate])).coverRequest.kind, "generate");
+    assert.equal((await build([generate])).llmMessages.length, normal.llmMessages.length + 1);
+    assert.equal((await build([read("mention", "你的朋友圈封面好久没换了")])).coverRequest.kind, "clarify");
+    assert.equal((await build([{ ...generate, mediaData: { momentsCoverAttempted: true } }])).coverRequest, undefined);
+    assert.equal(coverIntent.extractCoverAction("好呀！\n[生成朋友圈封面:合照|雨夜合影]").subject, "合照");
+    assert.equal(coverIntent.extractCoverAction("好呀！\n[生成朋友圈封面:无效|雨夜合影]"), undefined);
     assert.equal(hasPrompt(normal), false);
     assert.equal(normal.preset, preset);
     session.chineseThinkingPromptEnabled = true;
@@ -81,7 +103,8 @@ async function main() {
     }
     assert.equal(enabled.preset.online_thinking_tag, "inner_note");
     assert.equal(engine.stripOnlineThinkingTag("<inner_note>我想先关心小林。</inner_note>\n你好。", "inner_note"), "你好。");
-    const stream = load("lib/stream-preview.ts", { "./text-tool-protocol": { stripTextToolDirectives: text => text } });
+    const stream = load("lib/stream-preview.ts", { "./text-tool-protocol": { stripTextToolDirectives: text => text }, "./chat-moments-cover-intent": coverIntent });
+    assert.equal(stream.cleanStreamText("好呀！\n[生成朋友圈封面:合照|雨"), "好呀！");
     assert.ok(!stream.cleanStreamText("<inner_note>我想先关心小林。", { stripXmlTags: ["inner_note"] }).includes("小林"), "Partial streaming monologues must stay outside the message bubble");
     assert.equal(hasPrompt(await engine.buildChatPromptMessages(session, history, { appTags: ["chat", "offline"] })), false);
     assert.equal(hasPrompt(await engine.buildChatPromptMessages(session, history, { appId: "story" })), false);

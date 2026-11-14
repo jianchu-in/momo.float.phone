@@ -5,6 +5,7 @@
 // 已经剥掉的不会再剥，未闭合的标签残留会在下一批增量到来时随全文重算被清掉。
 
 import { stripTextToolDirectives } from "./text-tool-protocol";
+import { stripCoverActionPreview } from "./chat-moments-cover-intent";
 
 const TOOL_DIRECTIVE_START_RE = /\[[^\]\r\n]*?(?:执行动作|获取指令|获取工具|工具调用)\s*[:：]/;
 const MEDIA_DIRECTIVE_RE = /\[(?:代付请求|音乐分享|语音条|表情包|照片|红包|转账|位置|名片|音乐|礼物)\s*[:：][^\]\r\n]*\]/g;
@@ -51,6 +52,7 @@ export function cleanStreamText(raw: string, options?: { stripXmlTags?: readonly
     let text = raw;
     if (options?.stripXmlTags?.length) text = stripXmlTagBlocks(text, options.stripXmlTags);
     if (options?.stripLiterals?.length) text = stripLiteralTexts(text, options.stripLiterals);
+    text = stripCoverActionPreview(text);
     // 成对富媒体块整块剥掉
     text = text.replace(/\[状态栏\][\s\S]*?\[\/状态栏\]/gi, "");
     text = text.replace(/\[内心\][\s\S]*?\[\/内心\]/gi, "");
