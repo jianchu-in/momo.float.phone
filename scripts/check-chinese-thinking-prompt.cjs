@@ -12,7 +12,7 @@ function load(file, deps, suffix = "") {
     }).outputText;
     vm.runInNewContext(code, { module, exports: module.exports, require: name => deps[name]
         ? new Proxy(deps[name], { get: (target, key) => key in target ? target[key] : fallback[key] }) : fallback,
-        console, Error, Date, setTimeout, clearTimeout, fetch() { throw new Error("Regression must not call paid APIs"); } });
+        console, Error, Date, AbortController, DOMException, TextDecoder, setTimeout, clearTimeout, fetch() { throw new Error("Regression must not call paid APIs"); } });
     return module.exports;
 }
 
@@ -44,7 +44,7 @@ async function main() {
         "./character-storage": { loadCharacters: () => [{ id: "char", name: "角色甲" }] },
         "./settings-storage": {
             loadBindingConfig: () => ({}), resolveBinding: () => ({ apiConfigId: "api", presetId: "preset" }),
-            loadApiConfigs: () => [{ id: "api", provider: "OpenAI", defaultModel: "test" }],
+            loadApiConfigs: () => [{ id: "api", provider: "OpenAI", defaultModel: "test", apiKey: "mock" }],
             loadPresets: () => [preset], loadWorldBooks: () => [], loadRegexes: () => [], resolveUserIdentity: () => ({ name: "主号昵称" }),
         },
         "./chat-scope-storage": { resolveChatAccountUserIdentity: () => ({ name: "小林" }) },
@@ -60,6 +60,33 @@ async function main() {
         "./llm-prompt-assembler": { assemblePromptPayload: () => [{ role: "system", content: "原有提示词" }],
             assembleGroupPromptPayload: () => [{ role: "system", content: "原有群聊提示词" }] },
     };
+    let modelReply = "好呀，我用你发的那张。";
+    let streaming = false;
+    let modelCalls = 0;
+    deps["./chat-storage"].isSessionStreamingEnabled = () => streaming;
+    deps["./chat-storage"].getMaxToolRounds = () => 1;
+    deps["./action-parser"] = { parseActionTags: text => ({ cleanText: text, actions: [] }) };
+    deps["./prompt-sanitizer"] = { stripStateAndInnerForPrompt: text => text.replace(/\[状态栏\][\s\S]*?\[\/状态栏\]/g, "").trim() };
+    deps["./llm-http"] = { fetchLlmPayload: async () => {
+        modelCalls++;
+        return streaming
+            ? new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: modelReply } }] })}\n\ndata: [DONE]\n\n`)
+            : Response.json({ choices: [{ message: { content: modelReply } }] });
+    } };
+    const apiHelpers = {
+        isNativeAnthropicApi: () => false, isNativeGoogleApi: () => false,
+        determineBaseUrl: () => "https://example.invalid", buildChatCompletionsUrl: base => base,
+        buildRequestHeaders: () => ({}), stripHallucinatedTimestamps: text => text,
+    };
+    deps["./api-helpers"] = apiHelpers;
+    deps["./llm-provider-adapter"] = load("lib/llm-provider-adapter.ts", {
+        "./api-helpers": apiHelpers,
+        "./generation-parameters": { resolveEnabledGenerationParameters: () => new Set() },
+    });
+    deps["./sse-json"] = load("lib/sse-json.ts", {});
+    deps["./macro-engine"] = { MacroEngine: class {} };
+    deps["./llm-prompt-assembler"].applyOutputRegex = text => text;
+    deps["./chat-avatar-intent"].applyWithProtectedAvatarDecisionMarkers = (text, transform) => transform(text);
     const engine = load("lib/chat-engine.ts", deps);
     const hasPrompt = result => result.llmMessages.some(message => String(message.content).includes("【内置中文思考展示提示词】"));
     const normal = await engine.buildChatPromptMessages(session, history);
@@ -75,6 +102,29 @@ async function main() {
         assert.equal(JSON.stringify(result.llmMessages), JSON.stringify(normal.llmMessages));
     }
     assert.equal((await build([photo, request])).coverRequest.imageId, "photo");
+    const reply = read("photo-reply", "这张照片真好看", { role: "assistant" });
+    const directRequest = read("background", "帮我设置成你的朋友圈背景");
+    assert.equal((await build([photo, reply, directRequest])).coverRequest.imageId, "photo");
+    assert.equal((await build([photo, reply, read("do-it", "换一下朋友圈背景吧")])).coverRequest.imageId, "photo");
+    assert.equal((await build([photo, reply, read("fresh", "生成一张新的朋友圈背景图")])).coverRequest.kind, "generate");
+    assert.equal((await build([photo, reply, read("stop", "不要用这张做朋友圈背景")])).coverRequest, undefined);
+    assert.equal((await build([directRequest])).coverRequest.kind, "clarify");
+    assert.equal((await build([photo, reply, read("new-theme", "把你的朋友圈背景改成雪山吧")])).coverRequest.kind, "generate");
+    assert.equal((await build([photo, reply, { ...directRequest, mediaData: { quoteMessageId: "missing" } }])).coverRequest.kind, "clarify");
+    assert.equal((await build([photo, { ...photo, id: "second" }, reply, directRequest])).coverRequest.kind, "clarify");
+    for (const useStream of [false, true]) {
+        streaming = useStream;
+        const completed = await engine.generateChatCompletion(session, [photo, reply, directRequest], { ...coverOptions, appTags: ["followup"] });
+        assert.equal(completed.coverChange?.request.imageId, "photo", "An ordinary model reply must still save the uploaded picture");
+        assert.equal(completed.coverChange?.action.kind, "use_image");
+        assert.equal(completed.parts[0].text, modelReply);
+    }
+    streaming = false;
+    assert.equal(modelCalls, 2, "Uploaded images use the existing chat reply call only");
+    modelReply = "我想好了。\n【生成朋友圈封面：合照｜一起看雪】\n[状态栏]冬天[/状态栏]";
+    const generated = await engine.generateChatCompletion(session, [generate], { ...coverOptions, appTags: ["followup"] });
+    assert.equal(generated.coverChange?.action.description, "一起看雪", "A trailing status block must not swallow the cover directive");
+    assert.ok(!generated.parts[0].text.includes("生成朋友圈封面"));
     assert.equal((await build([photo, { ...photo, id: "two" }, request])).coverRequest.kind, "clarify");
     assert.equal((await build([photo, { ...photo, id: "two" }, { ...request, mediaData: { quoteMessageId: "photo" } }])).coverRequest.imageId, "photo");
     assert.equal((await build([generate])).coverRequest.kind, "generate");

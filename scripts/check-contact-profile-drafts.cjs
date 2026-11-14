@@ -177,7 +177,10 @@ async function main() {
   const signatureInput = container.querySelector('[aria-label="角色朋友圈个性签名"]');
   await act(async () => props(signatureInput).onBlur({ target: { value: "修改后的角色签名" } }));
   assert.equal(profiles.loadCharacterMomentsProfile(character.id).signature, "修改后的角色签名"); assert.equal(kv.kvGet("moments_signature"), "用户签名");
-  assert.equal(shortMemory.loadManualShortMemories(character.id).length, 2);
+  assert.equal(shortMemory.loadManualShortMemories(character.id).filter(entry => entry.sourceDetail === "moments_signature").length, 2);
+  const generatedMemory = shortMemory.loadManualShortMemories(character.id).find(entry => entry.sourceDetail === "moments_cover");
+  assert.equal(generatedMemory.momentsMeta.photoUrl, "asset://cover-2");
+  assert.equal(generatedMemory.momentsMeta.photoDescription, "冬夜的城市街景");
   assert.match(container.querySelector('img[alt="朋友圈封面"]').getAttribute("src"), /cover-2/);
   // Exercise cover upload and its actual per-character storage target without networking.
   await act(async () => props(container.querySelector('input[type="file"]')).onChange({ target: { files: [new Blob(["upload"], { type: "image/jpeg" })], value: "" } }));
@@ -267,7 +270,11 @@ async function main() {
 
   // Exercise the real share button and confirm flow from a post with an IndexedDB photo.
   const shared = [];
-  chatStore.pushChatMessage = message => shared.push({ ...message, id: "shared-" + shared.length, status: "sent", createdAt: "2026-11-13" });
+  chatStore.pushChatMessage = message => {
+    const row = { ...message, id: "shared-" + shared.length, status: "sent", createdAt: "2026-11-13" };
+    shared.push(row);
+    return row;
+  };
   chatStore.createOrGetSession = (id, accountId) => sessions.find(session => session.contactId === id && (session.chatAccountId || null) === accountId);
   chatStore.loadChatMessages = id => shared.filter(message => message.sessionId === id);
   mock("components/chat/message-bubble.tsx", { BilingualTextBlock: () => null, MediaImageWithPreview: () => null });
@@ -335,16 +342,39 @@ async function main() {
   const { storeMediaBlob } = require(path.join(root, "lib/media-cache-storage.ts"));
   const chat = sessions[1];
   const photo = new Blob(["photo"], { type: "image/png" });
-  const photoUrl = await storeMediaBlob(photo, photo.type, "image");
-  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "", mediaType: "image", mediaUrl: photoUrl });
-  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "用这张当你的朋友圈封面" });
+  // The browser's photo picker stores a FileReader data URL before media compaction.
+  const photoUrl = "data:image/png;base64,cGhvdG8=";
+  const uploaded = chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "", mediaType: "image", mediaUrl: photoUrl });
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "assistant", content: "这张照片真好看" });
+  const instruction = chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "帮我设置成你的朋友圈背景" });
   chatStore.updateMessageMediaData = (id, data) => { shared.find(message => message.id === id).mediaData = data; };
   const request = findCoverRequest(chatStore.loadChatMessages(chat.id), chat.id);
   const modelCalls = generatedCovers;
-  assert.equal(await applyChatMomentsCover(chat, request, { kind: "use_image" }), true);
+  assert.equal(request.imageId, uploaded.id);
+  const previousFetch = global.fetch;
+  global.fetch = async url => { assert.equal(url, photoUrl); return new Response(photo); };
+  unreadableCover = true;
+  await assert.rejects(applyChatMomentsCover(chat, request, { kind: "use_image" }), /封面保存后无法读取/);
+  assert.equal(instruction.mediaData?.momentsCoverAttempted, undefined);
+  unreadableCover = false;
+  await act(async () => {
+    assert.equal(await applyChatMomentsCover(chat, request, { kind: "use_image" }), true);
+  });
+  global.fetch = previousFetch;
   assert.equal(generatedCovers, modelCalls, "An uploaded image must never call the image API");
   assert.equal(await applyChatMomentsCover(chat, request, { kind: "use_image" }), false);
   const directCover = profiles.loadCharacterMomentsProfile(character.id).coverAssetId;
+  assert.ok(shortMemory.loadManualShortMemories(character.id).some(entry => entry.momentsMeta?.photoUrl === `asset://${directCover}`));
+  await render(profile());
+  await click(container.querySelector(".contact-profile-moments"));
+  assert.match(container.querySelector('img[alt="朋友圈封面"]').getAttribute("src"), new RegExp(directCover));
+  await unmount();
+  const cachedPhoto = await storeMediaBlob(photo, photo.type, "image");
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "assistant", content: "换好啦" });
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "", mediaType: "image", mediaUrl: cachedPhoto });
+  chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "用这张当你的朋友圈封面" });
+  const cachedRequest = findCoverRequest(chatStore.loadChatMessages(chat.id), chat.id);
+  assert.equal(await applyChatMomentsCover(chat, cachedRequest, { kind: "use_image" }), true);
   chatStore.pushChatMessage({ sessionId: chat.id, role: "assistant", content: "好呀" });
   chatStore.pushChatMessage({ sessionId: chat.id, role: "user", content: "生成一张我们的合照做你的朋友圈封面" });
   const generateRequest = findCoverRequest(chatStore.loadChatMessages(chat.id), chat.id);

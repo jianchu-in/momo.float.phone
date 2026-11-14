@@ -22,6 +22,8 @@ async function readCoverImage(url: string, signal?: AbortSignal): Promise<Blob> 
   return blob;
 }
 
+const applyingCoverRequests = new Set<string>();
+
 export async function applyChatMomentsCover(
   session: ChatSession, request: CoverRequest, action: CoverAction, signal?: AbortSignal,
 ): Promise<boolean> {
@@ -33,30 +35,43 @@ export async function applyChatMomentsCover(
   const history = loadChatMessages(session.id);
   const source = history.find(item => item.id === request.messageId && isCoverUserMessage(item));
   if (!source || source.mediaData?.momentsCoverAttempted) return false;
-  const imageUrl = request.imageId ? history.find(item => item.id === request.imageId && isCoverUserImage(item))?.mediaUrl : undefined;
-  const previousCover = loadCharacterMomentsProfile(session.contactId).coverAssetId;
-  // Preserve the attempt across reply regeneration, which deletes assistant messages.
-  updateMessageMediaData(source.id, { ...source.mediaData, momentsCoverAttempted: true });
-
-  let blob: Blob;
-  if (action.kind === "use_image") {
-    if (!imageUrl) throw new Error("要使用的图片已找不到，请重新发送。");
-    blob = await readCoverImage(imageUrl, signal);
-  } else {
-    const result = await generateCharacterMomentCover(session.contactId, action.description, signal, {
-      character: action.subject === "角色" || action.subject === "合照",
-      user: action.subject === "用户" || action.subject === "合照",
-      identity: resolveChatAccountUserIdentity(session.chatAccountId, session.contactId, "chat"),
-    });
-    blob = result.blob;
+  const key = `${session.id}:${source.id}`;
+  if (applyingCoverRequests.has(key)) return false;
+  applyingCoverRequests.add(key);
+  try {
+    const previousCover = loadCharacterMomentsProfile(session.contactId).coverAssetId;
+    let blob: Blob;
+    if (action.kind === "use_image") {
+      const imageUrl = history.find(item => item.id === request.imageId && isCoverUserImage(item))?.mediaUrl;
+      if (!imageUrl) throw new Error("要使用的图片已找不到，请重新发送。");
+      blob = await readCoverImage(imageUrl, signal);
+    } else {
+      // Record paid attempts before calling the API, including retries of the reply.
+      updateMessageMediaData(source.id, { ...source.mediaData, momentsCoverAttempted: true });
+      const result = await generateCharacterMomentCover(session.contactId, action.description, signal, {
+        character: action.subject === "角色" || action.subject === "合照",
+        user: action.subject === "用户" || action.subject === "合照",
+        identity: resolveChatAccountUserIdentity(session.chatAccountId, session.contactId, "chat"),
+      });
+      blob = result.blob;
+    }
+    throwIfAborted(signal);
+    const assetId = await saveChatImageToIndexedDB(blob);
+    if (!await getChatImageFromIndexedDB(assetId)) throw new Error("封面保存后无法读取。");
+    throwIfAborted(signal);
+    if (!canApply()) return false;
+    const latest = loadChatMessages(session.id);
+    const current = latest.find(item => item.id === source.id && isCoverUserMessage(item));
+    if (!current) return false;
+    if (action.kind === "use_image" && !latest.some(item => item.id === request.imageId && isCoverUserImage(item))) return false;
+    if (loadCharacterMomentsProfile(session.contactId).coverAssetId !== previousCover) throw new Error("封面已在其他页面更新，本次图片未应用。");
+    await saveCharacterMomentsCover(session.contactId, assetId, action.kind === "generate" ? action.description : undefined);
+    if (action.kind === "use_image") {
+      const savedSource = loadChatMessages(session.id).find(item => item.id === source.id);
+      if (savedSource) updateMessageMediaData(source.id, { ...savedSource.mediaData, momentsCoverAttempted: true });
+    }
+    return true;
+  } finally {
+    applyingCoverRequests.delete(key);
   }
-  throwIfAborted(signal);
-  const assetId = await saveChatImageToIndexedDB(blob);
-  if (!await getChatImageFromIndexedDB(assetId)) throw new Error("封面保存后无法读取。");
-  throwIfAborted(signal);
-  if (!canApply()) return false;
-  if (!loadChatMessages(session.id).some(item => item.id === source.id && isCoverUserMessage(item))) return false;
-  if (loadCharacterMomentsProfile(session.contactId).coverAssetId !== previousCover) throw new Error("封面已在其他页面更新，本次图片未应用。");
-  await saveCharacterMomentsCover(session.contactId, assetId, action.kind === "generate" ? action.description : undefined);
-  return true;
 }

@@ -1529,8 +1529,10 @@ function applyProtectedChatActions(text: string, transform: (text: string) => st
 }
 
 function resolveCoverChange(request: CoverRequest | undefined, text: string): ChatCompletionResult["coverChange"] {
-    const action = request && extractCoverAction(text);
-    if (request && action && request.kind === action.kind) return { request, action };
+    if (request?.kind === "use_image" && request.imageId) return { request, action: { kind: "use_image" } };
+    if (request?.kind !== "generate") return;
+    const action = extractCoverAction(stripStateAndInnerForPrompt(text));
+    if (action?.kind === "generate") return { request, action };
 }
 
 /** Extract combined clean text from a ChatCompletionResult (for callers that need a plain string). */
