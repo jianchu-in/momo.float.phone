@@ -1,9 +1,8 @@
 import { loadCharacters } from "./character-storage";
 import { createOrGetSession, hydrateChatStorage, pushChatMessage } from "./chat-storage";
-import { loadMemoryConfig } from "./memory-storage";
 import { kvClaim } from "./kv-db";
 import { DEFAULT_NOTE_REACTION_PREMISE, generatePersonalNoteReaction, savePersonalNoteReaction } from "./personal-note-reactions";
-import { loadPersistedPersonalNoteRemember, loadPersistedPersonalNoteTimerSettings, noteTimerClaimPrefix } from "./personal-note-timer-settings";
+import { loadPersistedPersonalNoteTimerSettings, noteTimerClaimPrefix } from "./personal-note-timer-settings";
 import { loadPersistedPersonalNotes, type PersonalNote } from "./personal-notes-storage";
 import { resolveUserIdentity } from "./settings-storage";
 
@@ -12,13 +11,14 @@ let running = false;
 let rerun = false;
 let active: { note: PersonalNote; characterId: string; controller: AbortController } | null = null;
 
-async function eligible(note: PersonalNote, characterId: string): Promise<PersonalNote | undefined> {
+async function eligible(note: PersonalNote, characterId: string) {
   const settings = await loadPersistedPersonalNoteTimerSettings();
   if (!settings.enabled || settings.epoch !== note.autoPeek?.epoch ||
       !settings.characterIds.includes(characterId) || !loadCharacters().some(item => item.id === characterId) ||
       note.identityId !== (resolveUserIdentity()?.id ?? null)) return undefined;
-  return (await loadPersistedPersonalNotes()).find(item => item.id === note.id &&
+  const latest = (await loadPersistedPersonalNotes()).find(item => item.id === note.id &&
     item.identityId === note.identityId && item.autoPeek?.epoch === settings.epoch);
+  return latest && { note: latest, settings };
 }
 
 export function cancelStalePersonalNoteReaction() {
@@ -56,18 +56,22 @@ export async function runPersonalNoteTimerCheck(): Promise<void> {
         attempted.add(claimKey);
         if (!claimed) continue;
         const controller = new AbortController();
-        active = { note: latest, characterId, controller };
+        active = { note: latest.note, characterId, controller };
         try {
-          await hydrateChatStorage();
-          const readyNote = await eligible(latest, characterId);
-          if (!readyNote || controller.signal.aborted) continue;
+          const ready = await eligible(latest.note, characterId);
+          if (!ready || controller.signal.aborted) continue;
+          const prepareMessage = ready.settings.remember && ready.settings.sendMessage;
           const reaction = await generatePersonalNoteReaction(identityId, [note.id], characterId,
-            DEFAULT_NOTE_REACTION_PREMISE, controller.signal, () => {}, readyNote);
-          const remember = await loadPersistedPersonalNoteRemember() && loadMemoryConfig().shortTermAllowedSources?.diary !== false;
-          if (!await eligible(latest, characterId) || controller.signal.aborted) continue;
+            DEFAULT_NOTE_REACTION_PREMISE, controller.signal, () => {}, { note: ready.note, prepareMessage });
+          const current = await eligible(latest.note, characterId);
+          if (!current || controller.signal.aborted) continue;
+          const remember = current.settings.remember;
+          if (!remember || !current.settings.sendMessage) delete reaction.proactiveMessage;
           await savePersonalNoteReaction(reaction, remember);
-          if (!await eligible(latest, characterId) || controller.signal.aborted) continue;
           if (!reaction.proactiveMessage) continue;
+          await hydrateChatStorage();
+          const afterSave = await eligible(latest.note, characterId);
+          if (!afterSave?.settings.remember || !afterSave.settings.sendMessage || controller.signal.aborted) continue;
           const session = createOrGetSession(characterId, null);
           const message = pushChatMessage({
             role: "assistant", sessionId: session.id,

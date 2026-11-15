@@ -32,6 +32,7 @@ export function createNoteReactionId(): string {
 }
 
 export const DEFAULT_NOTE_REACTION_PREMISE = "趁我没注意，翻到我留在小手机里的手记。";
+const PRIVATE_NOTE_GUIDANCE = "偷看是角色私下知道的事。与手记作者互动时，可以按人设自然关心或安慰，避免主动交代消息来源、引用手记原文，或刻意说出「我看了你的日记」。只有人设和当前互动确实需要时才自然提起。";
 
 export function personalNoteTitle(note: PersonalNote): string {
   return note.title.trim() || note.body.trim().split("\n")[0].slice(0, 30) || (note.kind === "diary" ? "未命名日记" : "未命名备忘录");
@@ -77,9 +78,9 @@ export async function sharePersonalNotes(identityId: string | null, ids: string[
 
 export async function generatePersonalNoteReaction(
   identityId: string | null, noteIds: string[], characterId: string, premise: string,
-  signal: AbortSignal, onText: (text: string) => void, automaticNote?: PersonalNote,
+  signal: AbortSignal, onText: (text: string) => void, automatic?: { note: PersonalNote; prepareMessage: boolean },
 ): Promise<NoteReaction> {
-  const notes = automaticNote ? [automaticNote] : resolveSelectedNotes(identityId, noteIds);
+  const notes = automatic ? [automatic.note] : resolveSelectedNotes(identityId, noteIds);
   const character = loadCharacters().find(item => item.id === characterId);
   if (!character) throw new Error("所选角色已不存在，请重新选择。");
   const slot = resolveBinding(loadBindingConfig(), character.id, "diary");
@@ -95,8 +96,8 @@ export async function generatePersonalNoteReaction(
   const stripXmlTags = ["think", "thinking", "analysis", "reasoning", preset?.online_thinking_tag || ""];
   const clean = (text: string) => cleanStreamText(text, { stripXmlTags });
   let raw = "";
-  const outputInstruction = automaticNote
-    ? '仅输出 JSON 对象，包含两个字符串字段：reaction 是中文第一人称心声，message 是角色主动发给手记作者的简短私聊正文。私聊和心声应各自完整，不附标签、状态栏或指令。'
+  const outputInstruction = automatic?.prepareMessage
+    ? `仅输出 JSON 对象，包含两个字符串字段：reaction 是中文第一人称心声，message 是角色主动发给手记作者的简短私聊正文。私聊和心声应各自完整，不附标签、状态栏或指令。只对私聊正文应用以下要求：${PRIVATE_NOTE_GUIDANCE}`
     : '只写可展示的独白正文，不输出推理过程、标签、状态栏或指令。';
   const result = await sendLLMStreamRequest(
     api, preset, [
@@ -121,11 +122,10 @@ export async function generatePersonalNoteReaction(
   const content = clean(result.content);
   let text = content;
   let proactiveMessage: string | undefined;
-  if (automaticNote) {
+  if (automatic?.prepareMessage) {
     const parsed = JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/gi, ""));
     text = typeof parsed.reaction === "string" ? parsed.reaction.trim() : "";
     proactiveMessage = typeof parsed.message === "string" ? parsed.message.trim() : "";
-    if (!proactiveMessage) throw new Error("没有生成角色私聊正文。");
   }
   if (!text) throw new Error("这一轮没有生成可展示的心声，请重试。");
   return {
@@ -160,7 +160,7 @@ export function savePersonalNoteReaction(reaction: NoteReaction, remember: boole
       importShortMemories(reaction.characterId, [{
         id, sourceApp: "diary", sourceDetail: "personal_note_reaction",
         authorType: "character", memoryScope: "short", timestamp: reaction.createdAt,
-        content: `[手记] ${reaction.characterName}偷看了${titles}。情境：${reaction.premise}\n心声：${reaction.text}`,
+        content: `[手记] ${reaction.characterName}偷看了${titles}。情境：${reaction.premise}\n心声：${reaction.text}\n互动时：${PRIVATE_NOTE_GUIDANCE}`,
       }]);
     }
     await persistShortMemoryChanges(reaction.characterId);
