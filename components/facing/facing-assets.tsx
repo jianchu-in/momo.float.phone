@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ChevronRight, ImagePlus, Plus, Sparkles } from "lucide-react";
+import { ChevronRight, ImagePlus, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/modal";
 import type { Character } from "@/lib/character-types";
 import { loadDwellingLayout } from "@/lib/dwelling-storage";
 import { facingFullImageInstruction, polishFacingImageDescription } from "@/lib/facing-engine";
@@ -13,7 +14,7 @@ import { loadMediaBlob } from "@/lib/media-cache-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
 import { fileToUserAvatarDataUrl } from "@/lib/user-avatar-image";
 import { loadVnScenes, loadVnSprites, type VnAssetLayout } from "@/lib/vn-asset-storage";
-import { FacingMedia, useFacingMediaUrl } from "./facing-stage";
+import { FacingMedia, FacingStage, useFacingMediaUrl } from "./facing-stage";
 
 type Category = FacingAsset["category"];
 type View = "list" | "add" | "vn" | "dwelling" | "edit" | "generate";
@@ -71,18 +72,22 @@ function readFile(file: Blob): Promise<string> {
   });
 }
 
-export function FacingAssets({ character, assets, settings, initialCategory, onBack, onChange, onSelect }: {
+export function FacingAssets({ character, assets, settings, previewPortrait, previewScene, initialCategory, onBack, onChange, onSelect, onDelete }: {
   character: Character;
   assets: FacingAsset[];
   settings: FacingCharacterSettings;
+  previewPortrait?: FacingAsset;
+  previewScene?: FacingAsset;
   initialCategory: Category;
   onBack: () => void;
   onChange: () => void;
   onSelect: (asset: FacingAsset) => Promise<void>;
+  onDelete: (asset: FacingAsset) => Promise<void>;
 }) {
   const [category, setCategory] = useState<Category>(initialCategory);
   const [view, setView] = useState<View>("list");
   const [edited, setEdited] = useState<FacingAsset>();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [candidate, setCandidate] = useState<Candidate>();
   const [name, setName] = useState("");
   const [use, setUse] = useState<FacingAsset["use"]>("idle");
@@ -122,6 +127,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
     setBusy(false);
     setPolishing(false);
     setError("");
+    setConfirmDelete(false);
     setEdited(undefined);
     setCandidate(undefined);
     setName("");
@@ -304,12 +310,28 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
     } finally { setBusy(false); }
   }
 
+  async function removeAsset() {
+    if (!edited || busy) return;
+    setConfirmDelete(false);
+    setBusy(true);
+    setError("");
+    try {
+      await onDelete(edited);
+      reset();
+    } catch {
+      setError("素材删除失败，请重试。");
+    } finally { setBusy(false); }
+  }
+
   const currentUrl = candidate?.url ?? editedUrl;
   const currentType = candidate?.mediaType ?? edited?.mediaType ?? "";
   return <>
     <header className="facing-header"><button type="button" className="facing-back" onClick={view === "list" ? onBack : reset}
-      aria-label="返回">‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情"
-        : view === "dwelling" ? "栖所场景" : "立绘与场景"}</h1></header>
+      aria-label="返回" disabled={view === "edit" && busy}>‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情"
+        : view === "dwelling" ? "栖所场景" : "立绘与场景"}</h1>
+      {view === "edit" && edited && <button type="button" className="facing-icon facing-delete" aria-label="删除素材" title="删除素材"
+        disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={18} /></button>}
+    </header>
     <main className="facing-scroll">
       {view === "list" && <>
         <div className="facing-segments" role="group" aria-label="素材分类">
@@ -330,7 +352,18 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
       </div>}
       {view === "dwelling" && <FacingDwellingScenes characterId={character.id} onSelect={newAsset} />}
       {view === "edit" && <div className="facing-form">
-        {currentUrl && <div className="facing-material-preview"><FacingMedia url={currentUrl} mediaType={currentType} name={name} /></div>}
+        {currentUrl && <div className="facing-layout-preview" role="group" aria-label="画面实时预览">
+          <FacingStage draft={{ category, name, url: currentUrl, mediaType: currentType, layout, composition: fullAsset ? "full" : undefined }}
+            scene={category === "portrait" && !fullAsset ? previewScene : undefined}
+            portrait={category === "scene" ? previewPortrait : undefined}
+            fallback={category === "scene" ? character.avatar : undefined} name={character.name} />
+        </div>}
+        <div className="facing-form-layout">
+          <label>横向位置<input type="range" min={0} max={100} value={layout.x ?? layoutDefaults.x} onChange={event => setLayout({ ...layout, x: +event.target.value })} /></label>
+          <label>纵向位置<input type="range" min={0} max={100} value={layout.y ?? layoutDefaults.y} onChange={event => setLayout({ ...layout, y: +event.target.value })} /></label>
+          <label>缩放<input type="range" min={category === "scene" || fullAsset ? 100 : 40} max={180} value={layout.scale ?? layoutDefaults.scale} onChange={event => setLayout({ ...layout, scale: +event.target.value })} /></label>
+        </div>
+        {(category === "scene" || fullAsset) && <p className="facing-layout-help">放大后可上下左右调整裁切位置。</p>}
         <label>名称<input value={name} onChange={event => setName(event.target.value)} maxLength={50} /></label>
         {category === "portrait" && <label>用途<select aria-label="用途" value={use} onChange={event => setUse(event.target.value as FacingAsset["use"])}>
           <option value="idle">待机立绘</option><option value="reaction">表情或动作</option>
@@ -339,11 +372,6 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
           <div className="facing-choices">{FACING_REACTIONS.map(item => <button type="button" key={item} className="facing-small" onClick={() => setName(item)}>{item}</button>)}</div>
           <label>播放时长（秒）<input type="number" min={1} max={30} value={duration} onChange={event => setDuration(Math.max(1, Math.min(30, Number(event.target.value) || 1)))} /></label>
         </>}
-        <div className="facing-form-layout">
-          <label>横向位置<input type="range" min={0} max={100} value={layout.x ?? layoutDefaults.x} onChange={event => setLayout({ ...layout, x: +event.target.value })} /></label>
-          <label>纵向位置<input type="range" min={0} max={100} value={layout.y ?? layoutDefaults.y} onChange={event => setLayout({ ...layout, y: +event.target.value })} /></label>
-          <label>缩放<input type="range" min={category === "scene" || fullAsset ? 100 : 40} max={180} value={layout.scale ?? layoutDefaults.scale} onChange={event => setLayout({ ...layout, scale: +event.target.value })} /></label>
-        </div>
         <div className="facing-pair"><button type="button" className="facing-soft" disabled={busy || !name.trim()} onClick={() => void save(false)}>保存到资源</button>
           {use !== "reaction" && <button type="button" className="facing-primary" disabled={busy || !name.trim()} onClick={() => void save(true)}>
             {category === "scene" ? "设为当前场景" : "设为待机"}
@@ -405,6 +433,9 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
       </form>}
       {error && <p className="facing-error" role="alert">{error}</p>}
     </main>
+    {confirmDelete && edited && <ConfirmDialog title="删除素材？" message={`要从面对面移除「${edited.name}」吗？`}
+      icon={Trash2} variant="danger" overlayClassName="facing-delete-overlay" confirmLabel="确认删除"
+      onConfirm={() => void removeAsset()} onCancel={() => setConfirmDelete(false)} />}
     {view === "add" && <div className="facing-overlay" onClick={reset}>
       <section className="facing-sheet" role="dialog" aria-modal="true" aria-label="添加素材" onClick={event => event.stopPropagation()}>
         <header><h2>添加{category === "portrait" ? "立绘" : "场景"}</h2><button type="button" onClick={reset}>完成</button></header>

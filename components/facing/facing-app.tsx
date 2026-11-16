@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, PanelsTopLeft, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, FACING_PARTS, facingId, loadFacingAssets, loadFacingMeetings, loadFacingSettings, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAsset, FACING_PARTS, facingId, loadFacingAssets, loadFacingMeetings, loadFacingSettings, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -142,10 +142,12 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const layeredPortrait = assets.find(item => item.id === current.portraitId && item.use === "idle");
   const fullPortrait = assets.find(item => item.id === current.fullPortraitId && item.use === "idle");
   const portrait = useScene ? layeredPortrait : fullPortrait ?? layeredPortrait;
-  const scene = useScene ? assets.find(item => item.id === current.sceneId && item.category === "scene") : undefined;
+  const defaultScene = assets.find(item => item.id === current.sceneId && item.category === "scene");
+  const scene = useScene ? defaultScene : undefined;
   const savedRoomPortrait = assets.find(item => item.id === roomPortrait && item.use === "idle");
   const activePortrait = savedRoomPortrait && (savedRoomPortrait.composition === "full") === !useScene ? savedRoomPortrait : portrait;
-  const activeScene = useScene ? assets.find(item => item.id === roomScene && item.category === "scene") : undefined;
+  const selectedRoomScene = assets.find(item => item.id === roomScene && item.category === "scene");
+  const activeScene = useScene ? selectedRoomScene : undefined;
   const usesFullPortrait = activePortrait ? activePortrait.composition === "full" : !useScene;
   const reactions = assets.filter(item => item.use === "reaction" && (item.composition === "full") === usesFullPortrait &&
     (!item.location || !activePortrait?.location || item.location === activePortrait.location));
@@ -153,6 +155,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const records = page === "records" && character ? loadFacingMeetings(character.id, identityId).filter(item => item.type === recordType) : [];
   const currentPortrait = settingOrigin === "room" && meeting ? activePortrait : portrait;
   const currentScene = settingOrigin === "room" && meeting ? activeScene : scene;
+  const assetsOpenedFromRoom = assetOrigin === "settings" && settingOrigin === "room" && !!meeting;
 
   async function selectCharacter(id: string) {
     setError("");
@@ -256,7 +259,16 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       </main>
     </>}
     {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} settings={current}
+      previewPortrait={assetsOpenedFromRoom && savedRoomPortrait?.composition !== "full" ? savedRoomPortrait ?? layeredPortrait : layeredPortrait}
+      previewScene={assetsOpenedFromRoom ? selectedRoomScene : defaultScene}
       initialCategory={category} onBack={() => setPage(assetOrigin)} onChange={() => { setAssets(loadFacingAssets(character.id)); }}
+      onDelete={async asset => {
+        await deleteFacingAsset(character.id, asset.id);
+        setAssets(loadFacingAssets(character.id));
+        setPreferences(loadFacingSettings());
+        setRoomScene(id => id === asset.id ? undefined : id);
+        setRoomPortrait(id => id === asset.id ? undefined : id);
+      }}
       onSelect={async asset => {
         await changeSetting(asset.category === "scene" ? { sceneId: asset.id, useScene: true }
           : asset.composition === "full" ? { fullPortraitId: asset.id, useScene: false } : { portraitId: asset.id, useScene: true });

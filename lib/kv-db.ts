@@ -263,3 +263,16 @@ export async function kvUpdatePersisted(key: string, update: (value: string | nu
         _cache.set(key, value);
     });
 }
+
+export async function kvUpdatePersistedEntries(updates: Record<string, (value: string | null) => string>): Promise<void> {
+    const entries = await kvDb.transaction("rw", kvDb.entries, async () => {
+        const pending: Array<{ key: string; value: string }> = [];
+        for (const [key, update] of Object.entries(updates)) {
+            const current = await kvDb.entries.get(key);
+            pending.push({ key, value: update(current?.value ?? _cache.get(key) ?? null) });
+        }
+        await kvDb.entries.bulkPut(pending);
+        return pending;
+    });
+    for (const { key, value } of entries) _cache.set(key, value);
+}

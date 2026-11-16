@@ -49,11 +49,14 @@ export function FacingMedia({ url, mediaType, name, loop = true, onEnd, onRatio 
   }} />;
 }
 
-export function FacingStage({ portrait, scene, reaction, fallback, name, points = [], editing, activePoint, onPoint,
+type FacingStageDraft = Pick<FacingAsset, "category" | "name" | "mediaType" | "layout" | "composition"> & { url: string };
+
+export function FacingStage({ portrait, scene, reaction, draft, fallback, name, points = [], editing, activePoint, onPoint,
   onPointMove, onReactionEnd, children }: {
   portrait?: FacingAsset;
   scene?: FacingAsset;
   reaction?: FacingAsset;
+  draft?: FacingStageDraft;
   fallback?: string | null;
   name: string;
   points?: FacingHotspot[];
@@ -71,9 +74,13 @@ export function FacingStage({ portrait, scene, reaction, fallback, name, points 
   const portraitUrl = useFacingMediaUrl(portrait);
   const reactionUrl = useFacingMediaUrl(reaction);
   const sceneUrl = useFacingMediaUrl(scene);
-  const foreground = reactionUrl ? reaction : portrait;
-  const mediaUrl = reactionUrl || portraitUrl;
-  const mediaKey = foreground?.mediaId ?? fallback ?? "";
+  const portraitDraft = draft?.category === "portrait" ? draft : undefined;
+  const sceneDraft = draft?.category === "scene" ? draft : undefined;
+  const background = sceneDraft ?? scene;
+  const backgroundUrl = sceneDraft?.url ?? sceneUrl;
+  const foreground = reactionUrl ? reaction : portraitDraft ?? portrait;
+  const mediaUrl = reactionUrl || portraitDraft?.url || portraitUrl;
+  const mediaKey = (reactionUrl ? reaction?.mediaId : portraitDraft?.url ?? portrait?.mediaId) ?? fallback ?? "";
   const ratioValue = ratio?.key === mediaKey ? ratio.value : 0.72;
   const layout = foreground?.layout ?? portrait?.layout;
   const full = foreground?.composition === "full" && Boolean(mediaUrl);
@@ -95,9 +102,9 @@ export function FacingStage({ portrait, scene, reaction, fallback, name, points 
   }, []);
 
   return <div className="facing-stage" ref={area}>
-    {scene && sceneUrl && <div className="facing-scene" key={scene.mediaId} style={{ "--facing-scene-x": `${scene.layout?.x ?? 50}%`,
-      "--facing-scene-y": `${scene.layout?.y ?? 50}%`, "--facing-scene-scale": (scene.layout?.scale ?? 100) / 100 } as React.CSSProperties}>
-      <FacingMedia url={sceneUrl} mediaType={scene.mediaType} name={scene.name} />
+    {background && backgroundUrl && <div className="facing-scene" key={sceneDraft ? "draft-scene" : scene?.mediaId} style={{ "--facing-scene-x": `${background.layout?.x ?? 50}%`,
+      "--facing-scene-y": `${background.layout?.y ?? 50}%`, "--facing-scene-scale": (background.layout?.scale ?? 100) / 100 } as React.CSSProperties}>
+      <FacingMedia url={backgroundUrl} mediaType={background.mediaType} name={background.name} />
     </div>}
     <div ref={figure} className="facing-figure" style={full ? {
       width, height, transform: "none",

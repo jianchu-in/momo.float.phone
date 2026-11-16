@@ -1,4 +1,4 @@
-import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, registerKvMigration } from "./kv-db";
+import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, registerKvMigration } from "./kv-db";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 import type { VnAssetLayout } from "./vn-asset-storage";
 
@@ -135,6 +135,34 @@ export async function updateFacingAsset(asset: FacingAsset) {
   await kvUpdatePersisted(FACING_ASSETS_KEY, raw => JSON.stringify(
     readJson<FacingAsset[]>(raw, []).map(item => item.id === asset.id ? asset : item),
   ));
+}
+
+export async function deleteFacingAsset(characterId: string, assetId: string): Promise<void> {
+  let mediaId: string | undefined;
+  await kvUpdatePersistedEntries({
+    [FACING_ASSETS_KEY]: raw => {
+      const assets = readJson<FacingAsset[]>(raw, []);
+      const remaining = assets.filter(asset => asset.id !== assetId || asset.characterId !== characterId);
+      const removed = assets.find(asset => asset.id === assetId && asset.characterId === characterId);
+      if (removed && !remaining.some(asset => asset.mediaId === removed.mediaId)) mediaId = removed.mediaId;
+      return JSON.stringify(remaining);
+    },
+    [FACING_SETTINGS_KEY]: raw => {
+      const settings = readJson<FacingSettings>(raw, { characters: {} });
+      const previous = settings.characters[characterId];
+      if (!previous) return JSON.stringify(settings);
+      const next = { ...previous };
+      if (next.portraitId === assetId) delete next.portraitId;
+      if (next.fullPortraitId === assetId) delete next.fullPortraitId;
+      if (next.sceneId === assetId) delete next.sceneId;
+      if (next.hotspots?.[assetId]) {
+        next.hotspots = { ...next.hotspots };
+        delete next.hotspots[assetId];
+      }
+      return JSON.stringify({ ...settings, characters: { ...settings.characters, [characterId]: next } });
+    },
+  });
+  if (mediaId) await deleteThemeAsset(mediaId).catch(() => {});
 }
 
 export function loadFacingMeetings(characterId: string, identityId: string | null): FacingMeeting[] {
