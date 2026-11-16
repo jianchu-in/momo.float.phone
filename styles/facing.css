@@ -99,6 +99,12 @@
   background: var(--facing-card); padding: 7px 9px; font-size: 16px; color: var(--facing-ink);
 }
 .facing-form input[type=range] { width: 100%; accent-color: var(--facing-accent); }
+.facing-description { display: grid; gap: 5px; }
+.facing-description .facing-row { padding: 0 0 2px; }
+.facing-polish-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 8px; font-size: 12px; color: var(--facing-muted); }
+.facing-description .facing-link { min-height: 36px; color: var(--facing-accent); }
+.facing-polish-options { padding: 5px 0; font-size: 12px; color: var(--facing-muted); }
+.facing-polish-options summary { cursor: pointer; min-height: 28px; }
 .facing-form-layout { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
 .facing-material-preview { height: clamp(140px,30dvh,265px); border-radius: 14px; overflow: hidden; background: var(--facing-soft); }
 .facing-material-preview :is(img,video) { width: 100%; height: 100%; object-fit: contain; }

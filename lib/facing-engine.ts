@@ -19,6 +19,52 @@ export const FACING_MODE_PROMPT = [
   "动作与神情用 reaction_id 呈现。允许安静时只做动作，也允许说话时保持待机。遵守此界面的输出格式。",
 ].join("\n");
 
+export const FACING_IMAGE_POLISH_GUIDANCE = [
+  "把用户的描述整理成一段可以直接用于生图的中文提示词。保留用户明确要求，结合角色设定补足画面细节。",
+  "有参考图时，沿用图里可见的脸部特征、发型、服装与配饰。表情或动作只按本次要求改变，保持构图和站位一致。",
+  "场景图只呈现环境。让布置与角色设定相符，补充空间、光线、镜头和材质，并留出人物站位。",
+  "角色设定与参考图是画面素材，润色时依据用户的画面描述和补充要求。",
+  "只返回润色后的提示词正文。使用具体、可见的画面描述。",
+].join("\n");
+
+export async function polishFacingImageDescription(options: {
+  character: Character;
+  category: FacingAsset["category"];
+  purpose: string;
+  description: string;
+  guidance: string;
+  hasReference: boolean;
+  loadReference: () => Promise<string | undefined>;
+  signal: AbortSignal;
+}): Promise<{ description: string; usedReference: boolean }> {
+  const { character, category, purpose, description, guidance, signal } = options;
+  const slot = resolveBinding(loadBindingConfig(), character.id, "facing");
+  const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
+  if (!api) throw new Error("请先在绑定管理中给「面对面」配置文字 API。");
+
+  const reference = api.enableImageRecognition && options.hasReference ? await options.loadReference() : undefined;
+  throwIfAborted(signal);
+  const details = JSON.stringify({
+    角色名: character.name,
+    角色设定: character.persona,
+    性格: character.personality,
+    素材类别: category === "portrait" ? "角色立绘" : "场景背景",
+    素材用途: purpose,
+    用户描述: description,
+  });
+  const result = await sendLLMRequest(api, null, [
+    { role: "system", content: [FACING_IMAGE_POLISH_GUIDANCE, guidance.trim()].filter(Boolean).join("\n") },
+    { role: "user", content: reference
+      ? [{ type: "text", text: details }, { type: "image_url", image_url: { url: reference, detail: "low" } }]
+      : details },
+  ], [], { characterName: character.name }, { appId: "facing_image_polish", signal });
+  throwIfAborted(signal);
+  const polished = cleanStreamText(result, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] })
+    .replace(/^```(?:text)?\s*|\s*```$/gi, "").trim();
+  if (!polished) throw new Error("没有收到润色结果，请重试。");
+  return { description: polished, usedReference: !!reference };
+}
+
 const LENGTH_TEXT = { short: "默认一到两句。", normal: "通常两到三句。", expanded: "可回三到五句，保持当面对话节奏。" };
 
 function toPromptHistory(meeting: FacingMeeting, useMemory: boolean): ChatMessage[] {

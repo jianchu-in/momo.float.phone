@@ -1,18 +1,56 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ChevronRight, ImagePlus, Plus } from "lucide-react";
+import { ChevronRight, ImagePlus, Plus, Sparkles } from "lucide-react";
 import type { Character } from "@/lib/character-types";
+import { loadDwellingLayout } from "@/lib/dwelling-storage";
+import { polishFacingImageDescription } from "@/lib/facing-engine";
 import { FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingId, facingMediaType, saveFacingAsset, updateFacingAsset,
   type FacingAsset, type FacingCharacterSettings } from "@/lib/facing-storage";
 import { generateImageFromConfiguredApi } from "@/lib/image-generation-service";
 import { removeConnectedEdgeBackgroundFromDataUrl } from "@/lib/image-background-removal";
+import { loadMediaBlob } from "@/lib/media-cache-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
+import { fileToUserAvatarDataUrl } from "@/lib/user-avatar-image";
 import { loadVnScenes, loadVnSprites, type VnAssetLayout } from "@/lib/vn-asset-storage";
 import { FacingMedia, useFacingMediaUrl } from "./facing-stage";
 
 type Category = FacingAsset["category"];
-type View = "list" | "add" | "vn" | "edit" | "generate";
+type View = "list" | "add" | "vn" | "dwelling" | "edit" | "generate";
+
+function FacingDwellingScenes({ characterId, onSelect }: {
+  characterId: string;
+  onSelect: (blob: Blob, name: string) => void;
+}) {
+  const [rooms, setRooms] = useState<{ id: string; name: string; blob: Blob; url: string }[]>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    const urls: string[] = [];
+    void (async () => {
+      const layout = await loadDwellingLayout(characterId);
+      const sources = await Promise.all((layout?.layout.rooms ?? []).map(async room => {
+        if (!room.imageAssetId) return null;
+        const media = await loadMediaBlob(room.imageAssetId).catch(() => null);
+        if (!media?.mimeType.startsWith("image/") || !media.blob.size || !active) return null;
+        const blob = media.blob.slice(0, media.blob.size, media.mimeType);
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        return { id: room.id, name: room.name, blob, url };
+      }));
+      if (active) setRooms(sources.filter((room): room is NonNullable<typeof room> => !!room));
+    })().catch(() => { if (active) setError("栖所图片读取失败，请返回后重试。"); });
+    return () => { active = false; urls.forEach(url => URL.revokeObjectURL(url)); };
+  }, [characterId]);
+
+  if (error) return <p className="facing-error" role="alert">{error}</p>;
+  if (!rooms) return <p className="facing-empty" role="status">正在读取栖所图片…</p>;
+  if (!rooms.length) return <p className="facing-empty">这个角色的栖所还没有可导入的房间图。</p>;
+  return <div className="facing-grid">{rooms.map(room => <button type="button" key={room.id} className="facing-asset-tile"
+    onClick={() => onSelect(room.blob, room.name)}>
+    <span className="facing-thumb"><img src={room.url} alt="" loading="lazy" /></span><span>{room.name}</span>
+  </button>)}</div>;
+}
 
 export function FacingAssetTile({ asset, onClick }: { asset: FacingAsset; onClick: () => void }) {
   const url = useFacingMediaUrl(asset);
@@ -50,6 +88,10 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
   const [duration, setDuration] = useState(3);
   const [layout, setLayout] = useState<VnAssetLayout>({});
   const [description, setDescription] = useState("");
+  const [originalDescription, setOriginalDescription] = useState<string>();
+  const [polishGuidance, setPolishGuidance] = useState("");
+  const [polishNotice, setPolishNotice] = useState("");
+  const [polishing, setPolishing] = useState(false);
   const [reference, setReference] = useState("text");
   const [referenceFile, setReferenceFile] = useState<File>();
   const [busy, setBusy] = useState(false);
@@ -70,6 +112,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
     control.current?.abort();
     control.current = null;
     setBusy(false);
+    setPolishing(false);
     setError("");
     setEdited(undefined);
     setCandidate(undefined);
@@ -126,12 +169,62 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
       : category === "portrait" && character.avatar ? "avatar" : "text");
     setReferenceFile(undefined);
     setDescription("");
+    setOriginalDescription(undefined);
+    setPolishNotice("");
     setName(category === "portrait" ? "待机" : "");
     setUse(category === "portrait" ? "idle" : "scene");
     setDuration(3);
     setLayout(category === "portrait" ? currentPortrait?.layout ?? {} : {});
     setError("");
     setView("generate");
+  }
+
+  async function loadReference(forPolish: boolean, signal: AbortSignal): Promise<string | undefined> {
+    let source: string | null | undefined;
+    if (reference === "portrait" && currentPortrait) source = await getThemeAssetDataUrl(currentPortrait.mediaId);
+    if (reference === "avatar" || (forPolish && reference === "text")) source = character.avatar;
+    if (reference === "file" && referenceFile) source = await readFile(referenceFile);
+    if (reference !== "text" && !source) throw new Error("先选一张可读的参考图。");
+    if (!source) return undefined;
+    if (!forPolish && source.startsWith("data:image/")) return source;
+    const response = await fetch(source, { signal });
+    if (!response.ok) throw new Error("暂时无法读取这张参考图，请重新选择。");
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) throw new Error("请选择图片作为参考图。");
+    // A still frame keeps animated portrait references readable by vision models.
+    return forPolish ? fileToUserAvatarDataUrl(new File([blob], "reference", { type: blob.type }), 1024) : readFile(blob);
+  }
+
+  async function polish() {
+    if (busy || control.current) return;
+    if (reference === "file" && !referenceFile) { setError("请先上传参考图。"); return; }
+    const run = new AbortController();
+    control.current = run;
+    const hasReference = reference !== "text" || !!character.avatar;
+    setBusy(true);
+    setPolishing(true);
+    setError("");
+    setPolishNotice("");
+    try {
+      const result = await polishFacingImageDescription({
+        character, category, purpose: name.trim() || (use === "reaction" ? "表情或动作" : use === "idle" ? "待机立绘" : "场景"),
+        description, guidance: polishGuidance, hasReference, loadReference: () => loadReference(true, run.signal), signal: run.signal,
+      });
+      if (run.signal.aborted) return;
+      setOriginalDescription(description);
+      setDescription(result.description);
+      setPolishNotice(hasReference && !result.usedReference
+        ? "当前文字配置未开启识图，本次按角色设定和描述润色。"
+        : result.usedReference ? "已结合角色设定和参考图润色。" : "已结合角色设定润色。");
+    } catch (cause) {
+      if (!run.signal.aborted) setError(cause instanceof Error ? cause.message : "润色失败，请重试。");
+    } finally {
+      if (control.current === run) {
+        control.current = null;
+        setBusy(false);
+        setPolishing(false);
+      }
+    }
   }
 
   async function generate(event: FormEvent) {
@@ -142,11 +235,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
     const run = new AbortController();
     control.current = run;
     try {
-      let ref: string | null | undefined;
-      if (reference === "portrait" && currentPortrait) ref = await getThemeAssetDataUrl(currentPortrait.mediaId);
-      if (reference === "avatar") ref = character.avatar;
-      if (reference === "file" && referenceFile) ref = await readFile(referenceFile);
-      if (reference !== "text" && !ref) throw new Error("先选一张可读的参考图。");
+      const ref = await loadReference(false, run.signal);
       const instruction = category === "scene"
         ? "生成竖屏场景背景，镜头平视，预留人物站位，画面中没有人物。"
         : "生成竖屏角色前景立绘，人物边缘完整。沿用参考图的脸部特征、发型、服装、镜头高度和站位。输出透明底。若只能生成实底，请使用单一纯色底。";
@@ -202,7 +291,8 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
   const currentType = candidate?.mediaType ?? edited?.mediaType ?? "";
   return <>
     <header className="facing-header"><button type="button" className="facing-back" onClick={view === "list" ? onBack : reset}
-      aria-label="返回">‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情" : "立绘与场景"}</h1></header>
+      aria-label="返回">‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情"
+        : view === "dwelling" ? "栖所场景" : "立绘与场景"}</h1></header>
     <main className="facing-scroll">
       {view === "list" && <>
         <div className="facing-segments" role="group" aria-label="素材分类">
@@ -221,6 +311,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
             void chooseVn({ name: item.name, id: item.assetId, layout: item.layout })}>{item.name}<ChevronRight size={16} /></button>)}
         {(category === "portrait" ? loadVnSprites(character.id) : loadVnScenes(character.id)).length === 0 && <p className="facing-empty">漫卷里暂无可导入的素材</p>}
       </div>}
+      {view === "dwelling" && <FacingDwellingScenes characterId={character.id} onSelect={newAsset} />}
       {view === "edit" && <div className="facing-form">
         {currentUrl && <div className="facing-material-preview"><FacingMedia url={currentUrl} mediaType={currentType} name={name} /></div>}
         <label>名称<input value={name} onChange={event => setName(event.target.value)} maxLength={50} /></label>
@@ -255,8 +346,30 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
           <option value="file">上传参考图</option>
         </select></label>
         {reference === "file" && <label>参考图<input type="file" accept="image/*" onChange={event => setReferenceFile(event.target.files?.[0])} /></label>}
-        <label>画面描述<textarea value={description} onChange={event => setDescription(event.target.value)} rows={4} required /></label>
-        <button className="facing-primary" disabled={busy || !description.trim()}>{busy ? "正在生成…" : candidate ? "再生成一张" : "生成预览"}</button>
+        <div className="facing-description">
+          <div className="facing-row">
+            <label htmlFor="facing-image-description">画面描述</label>
+            <button type="button" className="facing-small" disabled={busy} onClick={() => void polish()}>
+              <Sparkles size={15} aria-hidden />{polishing ? "正在润色…" : "AI 润色"}
+            </button>
+          </div>
+          <textarea id="facing-image-description" value={description} onChange={event => setDescription(event.target.value)}
+            rows={4} disabled={polishing} required />
+          {polishNotice && <div className="facing-polish-result">
+            <span role="status">{polishNotice}</span>
+            {originalDescription !== undefined && <button type="button" className="facing-link" disabled={busy} onClick={() => {
+              setDescription(originalDescription);
+              setOriginalDescription(undefined);
+              setPolishNotice("");
+            }}>恢复原描述</button>}
+          </div>}
+          <details className="facing-polish-options">
+            <summary>润色要求</summary>
+            <label>补充提示词<textarea value={polishGuidance} onChange={event => setPolishGuidance(event.target.value)}
+              rows={2} disabled={busy} placeholder="例如保留现有构图，突出冷蓝光" /></label>
+          </details>
+        </div>
+        <button className="facing-primary" disabled={busy || !description.trim()}>{busy && !polishing ? "正在生成…" : candidate ? "再生成一张" : "生成预览"}</button>
         {candidate && <>
           <div className="facing-material-preview"><FacingMedia url={candidate.url} mediaType={candidate.mediaType} name="候选素材" /></div>
           <div className="facing-pair">
@@ -273,6 +386,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
         <div className="facing-list">
           <button type="button" onClick={() => upload.current?.click()}>从手机导入<ChevronRight size={16} /></button>
           <button type="button" onClick={() => setView("vn")}>从漫卷资源选<ChevronRight size={16} /></button>
+          {category === "scene" && <button type="button" onClick={() => setView("dwelling")}>从角色栖所选<ChevronRight size={16} /></button>}
           <button type="button" onClick={openGeneration}>AI 生图<ChevronRight size={16} /></button>
         </div>
       </section>
