@@ -35,11 +35,11 @@ function toCloudSttConfig(config: VoiceApiConfig | undefined | null): CloudSttCo
  * 解析可用的云端识别配置：优先角色绑定的语音配置（须为 OpenAI 兼容且启用 STT），
  * 否则取第一个满足条件的语音配置。没有则返回 null（通话回落到旧输入方式）。
  */
-export function resolveCloudSttConfig(characterId?: string): CloudSttConfig | null {
+export function resolveCloudSttConfig(characterId?: string, appId = "chat"): CloudSttConfig | null {
     const configs = loadVoiceConfigs();
     if (characterId) {
         const bindings = loadBindingConfig();
-        const slot = resolveBinding(bindings, characterId, "chat");
+        const slot = resolveBinding(bindings, characterId, appId);
         const bound = configs.find(c => c.id === slot.voiceConfigId);
         const fromBound = toCloudSttConfig(bound);
         if (fromBound) return fromBound;

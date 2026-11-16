@@ -354,6 +354,8 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
         type: "kv",
         label: "创作玩法配置",
         keys: [
+          "ai_phone_facing_settings_v1",
+          "ai_phone_facing_assets_v1",
           "ai_phone_vn_scenes_v1",
           "ai_phone_vn_sprites_v1",
           // 剧情公用方案仓库（文风/状态栏/小剧场/快捷输入方案），随创作模块备份
@@ -385,7 +387,7 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
           "mixology_builtin_version_v1",
           "mixology_profile_v1",
         ],
-        prefixes: ["map_world_theme_", "map_adventure_summary_", "ai_phone_black_market_theater_events_", "ai_phone_story_input_draft_v1_"],
+        prefixes: ["ai_phone_facing_meeting_v1:", "map_world_theme_", "map_adventure_summary_", "ai_phone_black_market_theater_events_", "ai_phone_story_input_draft_v1_"],
       },
     ],
   },

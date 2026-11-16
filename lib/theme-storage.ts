@@ -307,7 +307,8 @@ export async function saveThemeAssetFromBlob(
   type: ThemeAssetType,
   providedId?: string
 ): Promise<string> {
-  const normalized = await normalizeIncomingBlob(blob);
+  // Facing portraits may be APNG or animated WebP. Keep every frame and its alpha channel.
+  const normalized = type === "facing_media" ? blob : await normalizeIncomingBlob(blob);
   const dataUrl = await blobToDataUrl(normalized);
   const mimeType = normalized.type || dataUrlToMimeType(dataUrl);
   const id = providedId ?? createThemeAssetId(type);

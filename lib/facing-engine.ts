@@ -1,0 +1,113 @@
+import { jsonrepair } from "jsonrepair";
+import { throwIfAborted } from "./abort-utils";
+import type { ChatMessage } from "./chat-storage";
+import { sendLLMRequest } from "./chat-engine";
+import type { Character } from "./character-types";
+import { loadFacingMeetings, type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "./facing-storage";
+import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
+import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
+import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
+import { loadMemoryConfig } from "./memory-storage";
+import { loadApiConfigs, loadBindingConfig, loadPresets, loadRegexes, loadWorldBooks, resolveBinding, resolveUserIdentity } from "./settings-storage";
+import { prepareShortTermContext } from "./short-term-assembler";
+import { cleanStreamText } from "./stream-preview";
+
+export const FACING_MODE_PROMPT = [
+  "你和用户此刻在同一个场景里面对面交流。保持角色人设与你们的关系，用自然的即时短句回答。",
+  "语音转写是用户当面说的话，触碰事件是用户在你面前做的动作。根据部位、当前心情与关系作出反应。",
+  "只输出 JSON 对象，dialogue 是实际说出口的台词，reaction_id 是可用立绘反应 ID 或 null。",
+  "动作与神情用 reaction_id 呈现。允许安静时只做动作，也允许说话时保持待机。遵守此界面的输出格式。",
+].join("\n");
+
+const LENGTH_TEXT = { short: "默认一到两句。", normal: "通常两到三句。", expanded: "可回三到五句，保持当面对话节奏。" };
+
+function toPromptHistory(meeting: FacingMeeting, useMemory: boolean): ChatMessage[] {
+  const earlier = useMemory && meeting.type === "main" ? loadFacingMeetings(meeting.characterId, meeting.identityId)
+    .filter(record => record.id !== meeting.id && record.type === "main" && record.createdAt <= meeting.createdAt)
+    .slice(0, 2).reverse().flatMap(record => record.turns.slice(-8)) : [];
+  return [...earlier, ...meeting.turns.slice(-40)].map(turn => ({
+    id: turn.id,
+    sessionId: meeting.id,
+    role: turn.role,
+    content: turn.kind === "touch" ? `【用户当面触碰了你的${turn.text}】`
+      : [turn.text, turn.reactionName ? `【当时的反应：${turn.reactionName}】` : ""].filter(Boolean).join("\n"),
+    createdAt: turn.at,
+    status: "sent",
+  }));
+}
+
+export async function generateFacingReply(options: {
+  character: Character;
+  meeting: FacingMeeting;
+  settings: FacingCharacterSettings;
+  scene: string;
+  reactions: FacingAsset[];
+  signal: AbortSignal;
+}): Promise<{ dialogue: string; reaction?: FacingAsset }> {
+  const { character, meeting, settings, scene, reactions, signal } = options;
+  const identity = resolveUserIdentity(character.id, "facing");
+  const slot = resolveBinding(loadBindingConfig(), character.id, "facing");
+  const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
+  if (!api) throw new Error("请先在绑定管理中给「面对面」配置文字 API。");
+  const presets = loadPresets();
+  const preset = presets.find(item => item.id === slot.presetId) ?? presets.find(item => item.builtIn) ?? null;
+  const worldBooks = loadWorldBooks().filter(item => slot.worldBookIds?.includes(item.id));
+  const regexes = loadRegexes().filter(item => slot.regexIds?.includes(item.id));
+  const useMemory = settings.memory !== false && meeting.type !== "independent";
+  const history = toPromptHistory(meeting, useMemory);
+  const recent = useMemory && meeting.type === "main" ? prepareShortTermContext(character.id, "facing", {
+    history, userName: identity?.name ?? "用户",
+  }) : { truncatedHistory: history, recentBlocks: undefined, unifiedRecentItems: undefined, wbActivationContext: "" };
+  const activationContext = [recent.wbActivationContext, ...history.slice(-10).map(message => message.content)].filter(Boolean).join("\n");
+  const config = loadMemoryConfig();
+  const [core, long] = useMemory ? await Promise.all([
+    retrieveCoreMemoriesForPrompt(character.id, config).catch(() => null),
+    retrieveMemoriesForPrompt(character.id, activationContext, config).catch(() => null),
+  ]) : [null, null];
+  throwIfAborted(signal);
+  const messages: LLMMessage[] = assemblePromptPayload({
+    character, history: recent.truncatedHistory, preset, worldBooks, regexes, userIdentity: identity,
+    appId: "facing", recentBlocks: recent.recentBlocks, unifiedRecentItems: recent.unifiedRecentItems,
+    worldBookActivationContext: activationContext,
+    coreMemories: core ? formatCoreMemories(core) : "", longTermMemories: long ? formatLongTermMemories(long) : "",
+    ...(meeting.type === "independent" ? { characterRelations: null, dwellingContext: null } : {}),
+  });
+  const persona = character.persona?.trim();
+  const personality = character.personality?.trim();
+  const missingRoleDetails = [persona, personality].filter((detail): detail is string =>
+    !!detail && !messages.some(message => typeof message.content === "string" && message.content.includes(detail)));
+  if (missingRoleDetails.length) messages.unshift({ role: "system", content: `角色 ${character.name}\n${missingRoleDetails.join("\n")}` });
+  const latest = history.at(-1);
+  const lastUser = messages.map(item => item.role).lastIndexOf("user");
+  const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
+  const mode: LLMMessage = {
+    role: "system",
+    content: [FACING_MODE_PROMPT, LENGTH_TEXT[settings.length ?? "short"], JSON.stringify({
+      角色: character.name, 用户: identity?.name ?? "用户", 当前场景: scene,
+      可用反应: reactions.map(asset => ({ id: asset.id, name: asset.name })),
+      ...(!hasLatest && history.length > 1 ? { 见面记录: history.slice(-16, -1).map(item => ({ role: item.role, text: item.content })) } : {}),
+    })].join("\n"),
+  };
+  if (!hasLatest) {
+    messages.push(mode);
+    if (latest) messages.push({ role: "user", content: latest.content });
+  } else {
+    messages.splice(lastUser, 0, mode);
+  }
+  const output = await sendLLMRequest(api, preset, messages, [], { characterName: character.name, userName: identity?.name }, { appId: "facing", appTags: ["facing"], signal });
+  const text = cleanStreamText(output, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] }).trim();
+  const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/gi, "");
+  let dialogue = unfenced;
+  let reaction: FacingAsset | undefined;
+  if (unfenced.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; reaction_id?: unknown };
+      dialogue = typeof parsed.dialogue === "string" ? parsed.dialogue.trim() : "";
+      reaction = reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
+    } catch {
+      throw new Error("角色回应格式有误，可以重试。");
+    }
+  }
+  if (!dialogue && !reaction) throw new Error("这一轮没有可显示的回应，可以重试。");
+  return { dialogue, reaction };
+}

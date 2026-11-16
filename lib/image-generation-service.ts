@@ -868,6 +868,7 @@ export async function generateImageFromConfiguredApi(params: {
   /** 强制是否加入角色当前绑定用户的参考图；未传时根据合照/用户照片语义自动判断。 */
   includeUserReferenceImage?: boolean;
   referenceSelection?: ImageReferenceSelection;
+  explicitReferenceImage?: string;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult | null> {
@@ -880,7 +881,9 @@ export async function generateImageFromConfiguredApi(params: {
 
   // NovelAI 模式
   if (settings.provider === "novelai") {
-    if (selection && (selection.character || selection.user)) throw new Error("当前 NovelAI 生图方式无法使用人像参考图。");
+    if (params.explicitReferenceImage || (selection && (selection.character || selection.user))) {
+      throw new Error("当前 NovelAI 生图方式无法使用参考图，请改选文字生图。");
+    }
     const naiApiKey = settings.novelai?.apiKey?.trim();
     if (!naiApiKey) return null;
 
@@ -949,6 +952,9 @@ export async function generateImageFromConfiguredApi(params: {
     && reference.enabled !== false,
   );
   const referenceInputs: Array<{ dataUrl: string; label: string }> = [];
+  if (params.explicitReferenceImage) {
+    referenceInputs.push({ dataUrl: await normalizeReferenceImageForEdit(params.explicitReferenceImage), label: "本次选用的参考图" });
+  }
   if (shouldUseReference && reference?.assetId) {
     const raw = await getChatImageFromIndexedDB(reference.assetId);
     if (raw) referenceInputs.push({
