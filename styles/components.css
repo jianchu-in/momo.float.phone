@@ -6440,3 +6440,60 @@
 .discussion-editor-actions .discussion-delete, .roleplay-discussion-error { color: var(--c-danger, #a53851); }
 .roleplay-discussion-error { margin: 0; font-size: 13px; }
 .discussion-send-error { margin: 6px 14px 0; }
+
+.discussion-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.discussion-new-icon { color: var(--discussion-accent); }
+.discussion-history {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  padding: 10px 13px 13px;
+  border-top: 1px solid var(--discussion-edge);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--discussion-soft);
+}
+.discussion-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  flex: none;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.discussion-history-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.discussion-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 62px;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 12px;
+  background: var(--c-bg-card, #fff);
+  padding: 8px 10px;
+  text-align: left;
+}
+.discussion-history-row > div { flex: 1; min-width: 0; }
+.discussion-history-row strong, .discussion-history-row span, .discussion-history-row p {
+  display: block;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discussion-history-row strong { font-size: 14px; font-weight: 650; }
+.discussion-history-row span, .discussion-history-row time { color: var(--c-text-secondary, #625c74); font-size: 11px; }
+.discussion-history-row p { margin-top: 2px; color: var(--c-text-secondary, #625c74); font-size: 12px; }
+.discussion-history-row time, .discussion-history-row svg { flex: none; }
+.discussion-retry { align-self: flex-end; }
