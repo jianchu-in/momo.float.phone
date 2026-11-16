@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, Play, RotateCcw, Sparkles, User, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, ListOrdered, Play, RotateCcw, Sparkles, User, X } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { normalizeChineseThinkingPromptLength } from "@/lib/chinese-thinking-prompt";
@@ -137,6 +137,7 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
     const [meetingInvite, setMeetingInvite] = useState<MeetingInviteCardConfig>(() => resolveMeetingInviteCardConfig(initial));
     const [globalThinkingEnabled, setGlobalThinkingEnabled] = useState(initial.globalChineseThinkingPromptEnabled === true);
     const [globalThinkingLength, setGlobalThinkingLength] = useState(() => normalizeChineseThinkingPromptLength(initial.globalChineseThinkingPromptLength));
+    const thinkingLengthId = useId();
     const [storyAsOfflineMode, setStoryAsOfflineMode] = useState(initial.storyAsOfflineMode === true);
     const [editingCSS, setEditingCSS] = useState(false);
     const [editingStatus, setEditingStatus] = useState(false);
@@ -365,15 +366,21 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
                             saveSettings({ globalChineseThinkingPromptEnabled: value });
                         }} />
                     </div>
-                    <div className="menu-item">
-                        <div className="menu-label-group"><span className="menu-label">中文独白字数</span></div>
-                        <select className="ui-input w-auto" aria-label="全部角色中文独白字数" value={globalThinkingLength} onChange={event => {
-                            const length = normalizeChineseThinkingPromptLength(Number(event.target.value));
-                            setGlobalThinkingLength(length);
-                            saveSettings({ globalChineseThinkingPromptLength: length });
-                        }}>
-                            {[100, 300, 500].map(length => <option key={length} value={length}>约 {length} 字</option>)}
-                        </select>
+                    <div className="menu-item flex-wrap">
+                        <label htmlFor={thinkingLengthId} className="menu-label-group flex items-center gap-3" style={{ minWidth: "max-content" }}>
+                            <ListOrdered size={20} className="shrink-0 text-[var(--c-icon)]" aria-hidden="true" />
+                            <span className="menu-label whitespace-nowrap">中文独白字数</span>
+                        </label>
+                        <div className="menu-right">
+                            <select id={thinkingLengthId} className="ui-input" style={{ width: "auto", minHeight: 36, padding: "6px 8px" }}
+                                value={globalThinkingLength} onChange={event => {
+                                    const length = normalizeChineseThinkingPromptLength(Number(event.target.value));
+                                    setGlobalThinkingLength(length);
+                                    saveSettings({ globalChineseThinkingPromptLength: length });
+                                }}>
+                                {[100, 300, 500].map(length => <option key={length} value={length}>约 {length} 字</option>)}
+                            </select>
+                        </div>
                     </div>
                     <div className="menu-item cursor-pointer" role="button" tabIndex={0} onClick={() => avatarInputRef.current?.click()} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") avatarInputRef.current?.click(); }}>
                         <User size={20} className="text-[var(--c-icon)]" />
