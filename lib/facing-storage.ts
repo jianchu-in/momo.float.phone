@@ -137,32 +137,39 @@ export async function updateFacingAsset(asset: FacingAsset) {
   ));
 }
 
-export async function deleteFacingAsset(characterId: string, assetId: string): Promise<void> {
-  let mediaId: string | undefined;
+export async function deleteFacingAssets(characterId: string, assetIds: readonly string[]): Promise<void> {
+  const requestedIds = new Set(assetIds);
+  if (!requestedIds.size) return;
+  const removedIds = new Set<string>();
+  const unusedMediaIds = new Set<string>();
   await kvUpdatePersistedEntries({
     [FACING_ASSETS_KEY]: raw => {
       const assets = readJson<FacingAsset[]>(raw, []);
-      const remaining = assets.filter(asset => asset.id !== assetId || asset.characterId !== characterId);
-      const removed = assets.find(asset => asset.id === assetId && asset.characterId === characterId);
-      if (removed && !remaining.some(asset => asset.mediaId === removed.mediaId)) mediaId = removed.mediaId;
+      const remaining = assets.filter(asset => {
+        if (asset.characterId !== characterId || !requestedIds.has(asset.id)) return true;
+        removedIds.add(asset.id);
+        unusedMediaIds.add(asset.mediaId);
+        return false;
+      });
+      for (const asset of remaining) unusedMediaIds.delete(asset.mediaId);
       return JSON.stringify(remaining);
     },
     [FACING_SETTINGS_KEY]: raw => {
       const settings = readJson<FacingSettings>(raw, { characters: {} });
       const previous = settings.characters[characterId];
-      if (!previous) return JSON.stringify(settings);
+      if (!previous || !removedIds.size) return JSON.stringify(settings);
       const next = { ...previous };
-      if (next.portraitId === assetId) delete next.portraitId;
-      if (next.fullPortraitId === assetId) delete next.fullPortraitId;
-      if (next.sceneId === assetId) delete next.sceneId;
-      if (next.hotspots?.[assetId]) {
+      if (next.portraitId && removedIds.has(next.portraitId)) delete next.portraitId;
+      if (next.fullPortraitId && removedIds.has(next.fullPortraitId)) delete next.fullPortraitId;
+      if (next.sceneId && removedIds.has(next.sceneId)) delete next.sceneId;
+      if (next.hotspots) {
         next.hotspots = { ...next.hotspots };
-        delete next.hotspots[assetId];
+        for (const id of removedIds) delete next.hotspots[id];
       }
       return JSON.stringify({ ...settings, characters: { ...settings.characters, [characterId]: next } });
     },
   });
-  if (mediaId) await deleteThemeAsset(mediaId).catch(() => {});
+  await Promise.allSettled(Array.from(unusedMediaIds, deleteThemeAsset));
 }
 
 export function loadFacingMeetings(characterId: string, identityId: string | null): FacingMeeting[] {

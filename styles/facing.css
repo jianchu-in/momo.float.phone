@@ -121,10 +121,17 @@
 .facing-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px; color: var(--facing-muted); padding: 7px 1px; }
 .facing-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
 .facing-app .facing-asset-tile { display: grid; text-align: left; gap: 4px; min-width: 0; border-radius: 12px; padding: 5px 5px 7px; background: var(--facing-card); overflow: hidden; }
+.facing-asset-tile[aria-pressed=true] { box-shadow: inset 0 0 0 2px var(--facing-accent); }
 .facing-asset-tile > :is(span:not(.facing-thumb),small) { padding-inline: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .facing-asset-tile small { color: var(--facing-muted); }
-.facing-thumb { display: grid; place-items: center; aspect-ratio: 3 / 2; border-radius: 8px; overflow: hidden; background: var(--facing-soft); }
+.facing-thumb { position: relative; display: grid; place-items: center; aspect-ratio: 3 / 2; border-radius: 8px; overflow: hidden; background: var(--facing-soft); }
 .facing-thumb :is(img,video) { width: 100%; height: 100%; object-fit: cover; }
+.facing-asset-check { position: absolute; inset: 6px 6px auto auto; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 50%; border: 1px solid #fff; color: #fff; background: #29203285; }
+.facing-asset-tile[aria-pressed=true] .facing-asset-check { background: var(--facing-accent); }
+.facing-selection-bar { flex: none; display: flex; gap: 10px; align-items: center; justify-content: space-between;
+  padding: 8px 14px max(10px,env(safe-area-inset-bottom)); border-top: 1px solid var(--facing-line); background: var(--facing-card); }
+.facing-selection-bar > span { font-size: calc(13px * var(--app-text-scale,1)); color: var(--facing-muted); }
 .facing-choices { display: flex; flex-wrap: wrap; gap: 5px; }
 .facing-hotspot-preview { min-height: clamp(200px,45dvh,380px); }
 .facing-point-controls { display: grid; gap: 7px; padding: 9px; border-radius: 11px; background: var(--facing-soft); }

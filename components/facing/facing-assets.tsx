@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ChevronRight, ImagePlus, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Check, ChevronRight, ImagePlus, Plus, Sparkles, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import type { Character } from "@/lib/character-types";
 import { loadDwellingLayout } from "@/lib/dwelling-storage";
@@ -54,10 +54,15 @@ function FacingDwellingScenes({ characterId, onSelect }: {
   </button>)}</div>;
 }
 
-export function FacingAssetTile({ asset, onClick }: { asset: FacingAsset; onClick: () => void }) {
+export function FacingAssetTile({ asset, onClick, selected, disabled }: {
+  asset: FacingAsset; onClick: () => void; selected?: boolean; disabled?: boolean;
+}) {
   const url = useFacingMediaUrl(asset);
-  return <button type="button" className="facing-asset-tile" onClick={onClick}>
-    <span className="facing-thumb">{url ? <FacingMedia url={url} mediaType={asset.mediaType} name="" /> : <ImagePlus size={23} aria-hidden />}</span>
+  return <button type="button" className="facing-asset-tile" onClick={onClick} aria-pressed={selected} disabled={disabled}>
+    <span className="facing-thumb">
+      {url ? <FacingMedia url={url} mediaType={asset.mediaType} name="" /> : <ImagePlus size={23} aria-hidden />}
+      {selected !== undefined && <span className="facing-asset-check" aria-hidden="true">{selected && <Check size={14} />}</span>}
+    </span>
     <span>{asset.name}</span>
     <small>{asset.use === "idle" ? "待机" : asset.use === "reaction" ? "反应" : "场景"}{asset.composition === "full" && ` · ${asset.location || "完整画面"}`}</small>
   </button>;
@@ -82,12 +87,13 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
   onBack: () => void;
   onChange: () => void;
   onSelect: (asset: FacingAsset) => Promise<void>;
-  onDelete: (asset: FacingAsset) => Promise<void>;
+  onDelete: (assetIds: readonly string[]) => Promise<void>;
 }) {
   const [category, setCategory] = useState<Category>(initialCategory);
   const [view, setView] = useState<View>("list");
   const [edited, setEdited] = useState<FacingAsset>();
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [selection, setSelection] = useState<Set<string> | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [candidate, setCandidate] = useState<Candidate>();
   const [name, setName] = useState("");
   const [use, setUse] = useState<FacingAsset["use"]>("idle");
@@ -114,6 +120,7 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
   const targetLocation = fullGeneration ? (location === "custom" ? customLocation.trim() : location) : undefined;
   const fullAsset = (candidate ?? edited)?.composition === "full";
   const visible = assets.filter(item => item.category === category);
+  const allVisibleSelected = !!selection && visible.length > 0 && visible.every(asset => selection.has(asset.id));
   const layoutDefaults = { x: 50, y: category === "portrait" && !fullAsset ? 100 : 50, scale: 100 };
 
   useEffect(() => () => control.current?.abort(), []);
@@ -127,7 +134,8 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     setBusy(false);
     setPolishing(false);
     setError("");
-    setConfirmDelete(false);
+    setConfirmDelete(null);
+    setSelection(null);
     setEdited(undefined);
     setCandidate(undefined);
     setName("");
@@ -310,13 +318,38 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     } finally { setBusy(false); }
   }
 
-  async function removeAsset() {
-    if (!edited || busy) return;
-    setConfirmDelete(false);
+  function endSelection() {
+    setSelection(null);
+    setError("");
+  }
+
+  function toggleAsset(id: string) {
+    setSelection(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleVisible() {
+    setSelection(current => {
+      const next = new Set(current);
+      for (const asset of visible) {
+        if (allVisibleSelected) next.delete(asset.id);
+        else next.add(asset.id);
+      }
+      return next;
+    });
+  }
+
+  async function removeAssets() {
+    if (!confirmDelete?.length || busy) return;
+    setConfirmDelete(null);
     setBusy(true);
     setError("");
     try {
-      await onDelete(edited);
+      await onDelete(confirmDelete);
       reset();
     } catch {
       setError("素材删除失败，请重试。");
@@ -326,20 +359,31 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
   const currentUrl = candidate?.url ?? editedUrl;
   const currentType = candidate?.mediaType ?? edited?.mediaType ?? "";
   return <>
-    <header className="facing-header"><button type="button" className="facing-back" onClick={view === "list" ? onBack : reset}
-      aria-label="返回" disabled={view === "edit" && busy}>‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情"
+    <header className="facing-header"><button type="button" className="facing-back" onClick={view === "list" ? selection ? endSelection : onBack : reset}
+      aria-label="返回" disabled={(view === "edit" || view === "list") && busy}>‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情"
         : view === "dwelling" ? "栖所场景" : "立绘与场景"}</h1>
       {view === "edit" && edited && <button type="button" className="facing-icon facing-delete" aria-label="删除素材" title="删除素材"
-        disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={18} /></button>}
+        disabled={busy} onClick={() => setConfirmDelete([edited.id])}><Trash2 size={18} /></button>}
     </header>
     <main className="facing-scroll">
       {view === "list" && <>
         <div className="facing-segments" role="group" aria-label="素材分类">
-          <button type="button" aria-pressed={category === "portrait"} onClick={() => setCategory("portrait")}>立绘</button>
-          <button type="button" aria-pressed={category === "scene"} onClick={() => setCategory("scene")}>场景</button>
+          <button type="button" disabled={busy} aria-pressed={category === "portrait"} onClick={() => setCategory("portrait")}>立绘</button>
+          <button type="button" disabled={busy} aria-pressed={category === "scene"} onClick={() => setCategory("scene")}>场景</button>
         </div>
-        <div className="facing-row"><span>{character.name}</span><button type="button" className="facing-small" onClick={() => setView("add")}><Plus size={16} />添加</button></div>
-        {visible.length ? <div className="facing-grid">{visible.map(asset => <FacingAssetTile key={asset.id} asset={asset} onClick={() => edit(asset)} />)}</div>
+        <div className="facing-row"><span>{character.name}</span><div className="facing-choices">
+          {selection ? <>
+            <button type="button" className="facing-small" disabled={busy || !visible.length} onClick={toggleVisible}>
+              {allVisibleSelected ? "取消本类全选" : "全选本类"}
+            </button>
+            <button type="button" className="facing-small" disabled={busy} onClick={endSelection}>取消选择</button>
+          </> : <>
+            {!!assets.length && <button type="button" className="facing-small" onClick={() => setSelection(new Set())}>选择</button>}
+            <button type="button" className="facing-small" onClick={() => setView("add")}><Plus size={16} />添加</button>
+          </>}
+        </div></div>
+        {visible.length ? <div className="facing-grid">{visible.map(asset => <FacingAssetTile key={asset.id} asset={asset}
+          selected={selection?.has(asset.id)} disabled={busy} onClick={() => selection ? toggleAsset(asset.id) : edit(asset)} />)}</div>
           : <p className="facing-empty">还没有{category === "portrait" ? "立绘" : "场景"}素材</p>}
       </>}
       {view === "vn" && <div className="facing-list">
@@ -433,9 +477,14 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
       </form>}
       {error && <p className="facing-error" role="alert">{error}</p>}
     </main>
-    {confirmDelete && edited && <ConfirmDialog title="删除素材？" message={`要从面对面移除「${edited.name}」吗？`}
+    {view === "list" && selection && <footer className="facing-selection-bar">
+      <span role="status">已选 {selection.size} 项</span>
+      <button type="button" className="facing-soft facing-delete" disabled={busy || !selection.size}
+        onClick={() => setConfirmDelete(Array.from(selection))}><Trash2 size={16} />{busy ? "正在删除…" : "删除所选"}</button>
+    </footer>}
+    {confirmDelete && <ConfirmDialog title="删除素材？" message={edited ? `要从面对面移除「${edited.name}」吗？` : `要从面对面移除选中的 ${confirmDelete.length} 项素材吗？`}
       icon={Trash2} variant="danger" overlayClassName="facing-delete-overlay" confirmLabel="确认删除"
-      onConfirm={() => void removeAsset()} onCancel={() => setConfirmDelete(false)} />}
+      onConfirm={() => void removeAssets()} onCancel={() => setConfirmDelete(null)} />}
     {view === "add" && <div className="facing-overlay" onClick={reset}>
       <section className="facing-sheet" role="dialog" aria-modal="true" aria-label="添加素材" onClick={event => event.stopPropagation()}>
         <header><h2>添加{category === "portrait" ? "立绘" : "场景"}</h2><button type="button" onClick={reset}>完成</button></header>

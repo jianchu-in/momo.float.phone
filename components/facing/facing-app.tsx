@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, PanelsTopLeft, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAsset, FACING_PARTS, facingId, loadFacingAssets, loadFacingMeetings, loadFacingSettings, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAssets, FACING_PARTS, facingId, loadFacingAssets, loadFacingMeetings, loadFacingSettings, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -262,12 +262,13 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       previewPortrait={assetsOpenedFromRoom && savedRoomPortrait?.composition !== "full" ? savedRoomPortrait ?? layeredPortrait : layeredPortrait}
       previewScene={assetsOpenedFromRoom ? selectedRoomScene : defaultScene}
       initialCategory={category} onBack={() => setPage(assetOrigin)} onChange={() => { setAssets(loadFacingAssets(character.id)); }}
-      onDelete={async asset => {
-        await deleteFacingAsset(character.id, asset.id);
+      onDelete={async assetIds => {
+        const removed = new Set(assetIds);
+        await deleteFacingAssets(character.id, assetIds);
         setAssets(loadFacingAssets(character.id));
         setPreferences(loadFacingSettings());
-        setRoomScene(id => id === asset.id ? undefined : id);
-        setRoomPortrait(id => id === asset.id ? undefined : id);
+        setRoomScene(id => id && removed.has(id) ? undefined : id);
+        setRoomPortrait(id => id && removed.has(id) ? undefined : id);
       }}
       onSelect={async asset => {
         await changeSetting(asset.category === "scene" ? { sceneId: asset.id, useScene: true }
