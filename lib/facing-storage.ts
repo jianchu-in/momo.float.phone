@@ -11,6 +11,7 @@ registerKvMigration(FACING_ASSETS_KEY);
 export const FACING_REACTIONS = ["微笑", "开心", "生气", "吃醋", "脸红", "坏笑"];
 export const FACING_PARTS = ["脸颊", "眼睛", "嘴巴", "耳朵", "胸口", "小腹", "手"];
 export const FACING_IMAGE_LOCATIONS = ["客厅", "阳台", "卧室", "书房", "厨房", "户外"] as const;
+export const FACING_DEFAULT_SCENE = "默认场景";
 export const FACING_MEDIA_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/apng,image/avif,video/mp4,video/webm,video/quicktime,.apng";
 const MEDIA_TYPES = new Set(FACING_MEDIA_ACCEPT.split(",").filter(value => !value.startsWith(".")));
 
@@ -27,6 +28,63 @@ export type FacingAsset = {
   composition?: "full";
   location?: string;
 };
+
+export type FacingScenePosition = Pick<FacingTurn, "sceneName" | "portraitId" | "sceneId">;
+export type FacingSceneGroup = {
+  name: string;
+  assets: FacingAsset[];
+  portrait?: FacingAsset;
+  backdrop?: FacingAsset;
+  reactions: FacingAsset[];
+};
+
+export function facingAssetLocation(asset: FacingAsset) {
+  return asset.location?.trim() || (asset.category === "scene" ? asset.name : FACING_DEFAULT_SCENE);
+}
+
+export function facingAssetMood(asset: FacingAsset) {
+  return asset.use === "reaction" ? asset.name : "默认";
+}
+
+export function groupFacingScenes(assets: FacingAsset[], legacyPortraitId?: string): FacingSceneGroup[] {
+  const locations = new Map<string, FacingAsset[]>();
+  for (const asset of assets) {
+    const name = facingAssetLocation(asset);
+    if (!locations.has(name)) locations.set(name, []);
+    locations.get(name)!.push(asset);
+  }
+  const legacyPortrait = assets.find(asset => asset.id === legacyPortraitId && asset.use === "idle" && asset.composition !== "full")
+    ?? assets.find(asset => asset.use === "idle" && asset.composition !== "full");
+  const legacyReactions = assets.filter(asset => asset.use === "reaction" && asset.composition !== "full" && !asset.location);
+  return Array.from(locations, ([name, groupAssets]) => {
+    const full = groupAssets.filter(asset => asset.composition === "full");
+    const backdrop = full.length ? undefined : groupAssets.find(asset => asset.category === "scene");
+    const portrait = full.find(asset => asset.use === "idle")
+      ?? (backdrop ? legacyPortrait : groupAssets.find(asset => asset.id === legacyPortraitId && asset.use === "idle")
+      ?? groupAssets.find(asset => asset.use === "idle"));
+    const reactions = full.length ? full.filter(asset => asset.use === "reaction" && asset.id !== portrait?.id)
+      : backdrop ? legacyReactions : groupAssets.filter(asset => asset.use === "reaction");
+    return { name, assets: groupAssets, portrait, backdrop, reactions };
+  });
+}
+
+export function facingScenePosition(group?: FacingSceneGroup): FacingScenePosition {
+  return { sceneName: group?.name ?? FACING_DEFAULT_SCENE, portraitId: group?.portrait?.id, sceneId: group?.backdrop?.id };
+}
+
+export function facingMeetingPosition(meeting: FacingMeeting): FacingScenePosition {
+  return meeting.scene ?? meeting.turns.at(-1) ?? facingScenePosition();
+}
+
+export function resolveFacingScene(position: FacingScenePosition, groups: FacingSceneGroup[], assets: FacingAsset[]) {
+  const group = groups.find(item => item.name === position.sceneName);
+  const recordedPortrait = assets.find(asset => asset.id === position.portraitId);
+  const recordedBackdrop = assets.find(asset => asset.id === position.sceneId && asset.category === "scene");
+  const portrait = recordedPortrait && (recordedPortrait.composition !== "full" || !recordedPortrait.location || facingAssetLocation(recordedPortrait) === position.sceneName)
+    ? recordedPortrait : group?.portrait;
+  const backdrop = portrait?.composition === "full" ? undefined : recordedBackdrop ?? group?.backdrop;
+  return { portrait, backdrop, position: { sceneName: position.sceneName, portraitId: portrait?.id, sceneId: backdrop?.id } };
+}
 
 export type FacingHotspot = {
   id: string;
@@ -75,6 +133,7 @@ export type FacingMeeting = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  scene?: FacingScenePosition;
   turns: FacingTurn[];
 };
 
@@ -189,6 +248,15 @@ export function createFacingMeeting(
   };
 }
 
+export async function saveFacingMeetingStart(meeting: FacingMeeting, scene: FacingScenePosition): Promise<FacingMeeting> {
+  let started = { ...meeting, scene };
+  await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
+    started = readJson(raw, started);
+    return JSON.stringify(started);
+  });
+  return started;
+}
+
 export async function appendFacingTurn(meeting: FacingMeeting, turn: FacingTurn): Promise<FacingMeeting> {
   let saved = meeting;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
@@ -200,7 +268,9 @@ export async function appendFacingTurn(meeting: FacingMeeting, turn: FacingTurn)
       const replyIndex = turn.replyTo ? turns.findIndex(item => item.id === turn.replyTo) : -1;
       if (replyIndex >= 0) turns.splice(replyIndex + 1, 0, turn);
       else turns.push(turn);
-      saved = { ...current, title: current.title || turn.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at };
+      const last = turns.at(-1)!;
+      saved = { ...current, title: current.title || turn.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
+        scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };
     }
     return JSON.stringify(saved);
   });

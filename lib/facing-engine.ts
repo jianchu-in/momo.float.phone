@@ -3,7 +3,7 @@ import { throwIfAborted } from "./abort-utils";
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
-import { loadFacingMeetings, type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "./facing-storage";
+import { loadFacingMeetings, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -15,8 +15,9 @@ import { cleanStreamText } from "./stream-preview";
 export const FACING_MODE_PROMPT = [
   "你和用户此刻在同一个场景里面对面交流。保持角色人设与你们的关系，用自然的即时短句回答。",
   "语音转写是用户当面说的话，触碰事件是用户在你面前做的动作。根据部位、当前心情与关系作出反应。",
-  "只输出 JSON 对象，dialogue 是实际说出口的台词，reaction_id 是可用立绘反应 ID 或 null。",
-  "动作与神情用 reaction_id 呈现。允许安静时只做动作，也允许说话时保持待机。遵守此界面的输出格式。",
+  "只输出 JSON 对象。dialogue 是实际说出口的台词，scene_id 是已抵达的可选场景 ID 或 null，reaction_id 是所在场景的反应 ID 或 null。",
+  "仅当本轮对话明确表示双方已经转移到另一个地点时填写 scene_id。提到地点、邀请、计划或回忆时保持当前场景。切换时自然衔接对话。",
+  "动作与神情用 reaction_id 呈现。允许安静时只做动作，也允许说话时保持默认画面。",
 ].join("\n");
 
 export const FACING_IMAGE_POLISH_GUIDANCE = [
@@ -36,16 +37,15 @@ export function facingFullImageInstruction(location: string) {
 
 export async function polishFacingImageDescription(options: {
   character: Character;
-  category: FacingAsset["category"];
   purpose: string;
   description: string;
   guidance: string;
-  location?: string;
+  location: string;
   hasReference: boolean;
   loadReference: () => Promise<string | undefined>;
   signal: AbortSignal;
 }): Promise<{ description: string; usedReference: boolean }> {
-  const { character, category, purpose, description, guidance, location, signal } = options;
+  const { character, purpose, description, guidance, location, signal } = options;
   const slot = resolveBinding(loadBindingConfig(), character.id, "facing");
   const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
   if (!api) throw new Error("请先在绑定管理中给「面对面」配置文字 API。");
@@ -56,13 +56,11 @@ export async function polishFacingImageDescription(options: {
     角色名: character.name,
     角色设定: character.persona,
     性格: character.personality,
-    素材类别: location ? "人物与环境的完整画面" : category === "portrait" ? "角色立绘" : "场景背景",
+    素材类别: "人物与环境的完整画面",
     素材用途: purpose,
     用户描述: description,
   });
-  const composition = location
-    ? `${facingFullImageInstruction(location)}\n把场所、人物与构图写进同一段正向提示词。最终正文保留选定地点和 9:16 竖屏构图。`
-    : category === "scene" ? "场景图只呈现环境。让布置与角色设定相符，补充空间、光线、镜头和材质，并留出人物站位。" : "";
+  const composition = `${facingFullImageInstruction(location)}\n把场所、人物与构图写进同一段正向提示词。最终正文保留选定地点和 9:16 竖屏构图。`;
   const result = await sendLLMRequest(api, null, [
     { role: "system", content: [FACING_IMAGE_POLISH_GUIDANCE, guidance.trim(), composition].filter(Boolean).join("\n") },
     { role: "user", content: reference
@@ -82,12 +80,15 @@ function toPromptHistory(meeting: FacingMeeting, useMemory: boolean): ChatMessag
   const earlier = useMemory && meeting.type === "main" ? loadFacingMeetings(meeting.characterId, meeting.identityId)
     .filter(record => record.id !== meeting.id && record.type === "main" && record.createdAt <= meeting.createdAt)
     .slice(0, 2).reverse().flatMap(record => record.turns.slice(-8)) : [];
-  return [...earlier, ...meeting.turns.slice(-40)].map(turn => ({
+  return [...earlier, ...meeting.turns.slice(-40)].map((turn, index, turns) => ({
     id: turn.id,
     sessionId: meeting.id,
     role: turn.role,
-    content: turn.kind === "touch" ? `【用户当面触碰了你的${turn.text}】`
-      : [turn.text, turn.reactionName ? `【当时的反应：${turn.reactionName}】` : ""].filter(Boolean).join("\n"),
+    content: [
+      turn.sceneName && turn.sceneName !== turns[index - 1]?.sceneName ? `【当时的场景：${turn.sceneName}】` : "",
+      turn.kind === "touch" ? `【用户当面触碰了你的${turn.text}】` : turn.text,
+      turn.reactionName ? `【当时的反应：${turn.reactionName}】` : "",
+    ].filter(Boolean).join("\n"),
     createdAt: turn.at,
     status: "sent",
   }));
@@ -98,10 +99,13 @@ export async function generateFacingReply(options: {
   meeting: FacingMeeting;
   settings: FacingCharacterSettings;
   scene: string;
-  reactions: FacingAsset[];
+  scenes: FacingSceneGroup[];
   signal: AbortSignal;
-}): Promise<{ dialogue: string; reaction?: FacingAsset }> {
-  const { character, meeting, settings, scene, reactions, signal } = options;
+}): Promise<{ dialogue: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup }> {
+  const { character, meeting, settings, scene, scenes, signal } = options;
+  const destinations = scenes.filter(item => item.name !== scene);
+  const summarizeReactions = (group?: FacingSceneGroup) => (group?.reactions ?? []).map(asset => ({ id: asset.id, name: asset.name }));
+  const currentScene = scenes.find(item => item.name === scene);
   const identity = resolveUserIdentity(character.id, "facing");
   const slot = resolveBinding(loadBindingConfig(), character.id, "facing");
   const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
@@ -141,7 +145,8 @@ export async function generateFacingReply(options: {
     role: "system",
     content: [FACING_MODE_PROMPT, LENGTH_TEXT[settings.length ?? "short"], JSON.stringify({
       角色: character.name, 用户: identity?.name ?? "用户", 当前场景: scene,
-      可用反应: reactions.map(asset => ({ id: asset.id, name: asset.name })),
+      当前场景反应: summarizeReactions(currentScene),
+      可切换场景: destinations.map(group => ({ id: group.name, 可用反应: summarizeReactions(group) })),
       ...(!hasLatest && history.length > 1 ? { 见面记录: history.slice(-16, -1).map(item => ({ role: item.role, text: item.content })) } : {}),
     })].join("\n"),
   };
@@ -156,15 +161,17 @@ export async function generateFacingReply(options: {
   const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/gi, "");
   let dialogue = unfenced;
   let reaction: FacingAsset | undefined;
+  let nextScene: FacingSceneGroup | undefined;
   if (unfenced.startsWith("{")) {
     try {
-      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; reaction_id?: unknown };
+      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; reaction_id?: unknown; scene_id?: unknown };
       dialogue = typeof parsed.dialogue === "string" ? parsed.dialogue.trim() : "";
-      reaction = reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
+      nextScene = destinations.find(group => group.name === parsed.scene_id);
+      reaction = (nextScene ?? currentScene)?.reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
     } catch {
       throw new Error("角色回应格式有误，可以重试。");
     }
   }
-  if (!dialogue && !reaction) throw new Error("这一轮没有可显示的回应，可以重试。");
-  return { dialogue, reaction };
+  if (!dialogue && !reaction && !nextScene) throw new Error("这一轮没有可显示的回应，可以重试。");
+  return { dialogue, reaction, nextScene };
 }

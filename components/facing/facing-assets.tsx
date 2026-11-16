@@ -6,19 +6,17 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import type { Character } from "@/lib/character-types";
 import { loadDwellingLayout } from "@/lib/dwelling-storage";
 import { facingFullImageInstruction, polishFacingImageDescription } from "@/lib/facing-engine";
-import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingId, facingMediaType, saveFacingAsset, updateFacingAsset,
-  type FacingAsset, type FacingCharacterSettings } from "@/lib/facing-storage";
+import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingAssetLocation, facingAssetMood, facingId, facingMediaType, saveFacingAsset, updateFacingAsset,
+  type FacingAsset, type FacingSceneGroup } from "@/lib/facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "@/lib/image-generation-service";
-import { removeConnectedEdgeBackgroundFromDataUrl } from "@/lib/image-background-removal";
 import { loadMediaBlob } from "@/lib/media-cache-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
 import { fileToUserAvatarDataUrl } from "@/lib/user-avatar-image";
 import { loadVnScenes, loadVnSprites, type VnAssetLayout } from "@/lib/vn-asset-storage";
 import { FacingMedia, FacingStage, useFacingMediaUrl } from "./facing-stage";
 
-type Category = FacingAsset["category"];
 type View = "list" | "add" | "vn" | "dwelling" | "edit" | "generate";
-type Candidate = { blob: Blob; url: string; mediaType: string } & Pick<FacingAsset, "composition" | "location">;
+type Candidate = { blob: Blob; url: string; mediaType: string };
 
 function FacingDwellingScenes({ characterId, onSelect }: {
   characterId: string;
@@ -54,7 +52,7 @@ function FacingDwellingScenes({ characterId, onSelect }: {
   </button>)}</div>;
 }
 
-export function FacingAssetTile({ asset, onClick, selected, disabled }: {
+function FacingAssetTile({ asset, onClick, selected, disabled }: {
   asset: FacingAsset; onClick: () => void; selected?: boolean; disabled?: boolean;
 }) {
   const url = useFacingMediaUrl(asset);
@@ -63,8 +61,7 @@ export function FacingAssetTile({ asset, onClick, selected, disabled }: {
       {url ? <FacingMedia url={url} mediaType={asset.mediaType} name="" /> : <ImagePlus size={23} aria-hidden />}
       {selected !== undefined && <span className="facing-asset-check" aria-hidden="true">{selected && <Check size={14} />}</span>}
     </span>
-    <span>{asset.name}</span>
-    <small>{asset.use === "idle" ? "待机" : asset.use === "reaction" ? "反应" : "场景"}{asset.composition === "full" && ` · ${asset.location || "完整画面"}`}</small>
+    <span>{facingAssetLocation(asset)} · {facingAssetMood(asset)}</span>
   </button>;
 }
 
@@ -77,26 +74,21 @@ function readFile(file: Blob): Promise<string> {
   });
 }
 
-export function FacingAssets({ character, assets, settings, previewPortrait, previewScene, initialCategory, onBack, onChange, onSelect, onDelete }: {
+export function FacingAssets({ character, assets, groups, onBack, onChange, onDelete }: {
   character: Character;
   assets: FacingAsset[];
-  settings: FacingCharacterSettings;
-  previewPortrait?: FacingAsset;
-  previewScene?: FacingAsset;
-  initialCategory: Category;
+  groups: FacingSceneGroup[];
   onBack: () => void;
   onChange: () => void;
-  onSelect: (asset: FacingAsset) => Promise<void>;
   onDelete: (assetIds: readonly string[]) => Promise<void>;
 }) {
-  const [category, setCategory] = useState<Category>(initialCategory);
   const [view, setView] = useState<View>("list");
   const [edited, setEdited] = useState<FacingAsset>();
   const [selection, setSelection] = useState<Set<string> | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [candidate, setCandidate] = useState<Candidate>();
-  const [name, setName] = useState("");
-  const [use, setUse] = useState<FacingAsset["use"]>("idle");
+  const [mood, setMood] = useState("默认");
+  const [customMood, setCustomMood] = useState("");
   const [duration, setDuration] = useState(3);
   const [layout, setLayout] = useState<VnAssetLayout>({});
   const [description, setDescription] = useState("");
@@ -113,15 +105,15 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
   const control = useRef<AbortController | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const editedUrl = useFacingMediaUrl(edited);
-  const fullGeneration = category === "portrait" && settings.useScene === false;
-  const layeredPortrait = assets.find(item => item.id === settings.portraitId && item.use === "idle");
-  const fullPortrait = assets.find(item => item.id === settings.fullPortraitId && item.use === "idle");
-  const currentPortrait = settings.useScene === false ? fullPortrait ?? layeredPortrait : layeredPortrait;
-  const targetLocation = fullGeneration ? (location === "custom" ? customLocation.trim() : location) : undefined;
-  const fullAsset = (candidate ?? edited)?.composition === "full";
-  const visible = assets.filter(item => item.category === category);
-  const allVisibleSelected = !!selection && visible.length > 0 && visible.every(asset => selection.has(asset.id));
+  const locations = Array.from(new Set([...FACING_IMAGE_LOCATIONS, ...groups.map(group => group.name)]));
+  const targetLocation = location === "custom" ? customLocation.trim() : location;
+  const emotion = mood === "custom" ? customMood.trim() : mood;
+  const targetGroup = groups.find(group => group.name === targetLocation);
+  const currentPortrait = targetGroup?.portrait;
+  const category = edited?.category ?? "portrait";
+  const fullAsset = !edited || edited.composition === "full";
   const layoutDefaults = { x: 50, y: category === "portrait" && !fullAsset ? 100 : 50, scale: 100 };
+  const allSelected = !!selection && assets.length > 0 && assets.every(asset => selection.has(asset.id));
 
   useEffect(() => () => control.current?.abort(), []);
   useEffect(() => () => {
@@ -138,46 +130,67 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     setSelection(null);
     setEdited(undefined);
     setCandidate(undefined);
-    setName("");
-    setUse(category === "scene" ? "scene" : "idle");
+    setMood("默认");
+    setCustomMood("");
     setLayout({});
     setDuration(3);
     setView("list");
   }
 
-  function newAsset(file: Blob, filename: string, sourceLayout?: VnAssetLayout) {
+  function chooseLocation(place: string) {
+    const preset = locations.includes(place);
+    setLocation(preset ? place : "custom");
+    setCustomLocation(preset ? "" : place);
+  }
+
+  function openAdd(place?: string) {
+    chooseLocation(place ?? FACING_IMAGE_LOCATIONS[0]);
+    const existing = groups.find(group => group.name === place)?.assets.filter(asset => asset.composition === "full") ?? [];
+    const usedMoods = new Set(existing.map(facingAssetMood));
+    setMood(usedMoods.has("默认") ? FACING_REACTIONS.find(item => !usedMoods.has(item)) ?? "custom" : "默认");
+    setCustomMood("");
+    setView("add");
+  }
+
+  function newAsset(file: Blob, filename: string, place?: string) {
     const mediaType = facingMediaType(file, filename);
     if (!mediaType) {
       setError("请选择支持的图片、动图或视频。");
       return;
     }
+    if (place) {
+      chooseLocation(place);
+      setMood("默认");
+      setCustomMood("");
+    }
     setEdited(undefined);
-    setCandidate({ blob: file, url: URL.createObjectURL(file), mediaType, composition: fullGeneration ? "full" : undefined });
-    setName(filename.replace(/\.[^./]+$/, "").slice(0, 50));
-    setUse(category === "scene" ? "scene" : visible.some(item => item.use === "idle" && (item.composition === "full") === fullGeneration) ? "reaction" : "idle");
+    setCandidate({ blob: file, url: URL.createObjectURL(file), mediaType });
     setDuration(3);
-    setLayout(fullGeneration ? {} : sourceLayout ?? {});
+    setLayout({});
     setError("");
     setView("edit");
   }
 
-  async function chooseVn(item: { name: string; id: string; layout?: VnAssetLayout }) {
+  async function chooseVn(item: { name: string; id: string; place?: string }) {
     setBusy(true);
     setError("");
     try {
       const url = await getThemeAssetDataUrl(item.id);
       if (!url?.startsWith("data:")) throw new Error("找不到此漫卷素材。");
-      newAsset(await (await fetch(url)).blob(), item.name, item.layout);
+      newAsset(await (await fetch(url)).blob(), item.name, item.place);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "读取漫卷素材失败。");
     } finally { setBusy(false); }
   }
 
   function edit(asset: FacingAsset) {
+    const label = facingAssetMood(asset);
+    const preset = ["默认", ...FACING_REACTIONS].includes(label);
+    chooseLocation(facingAssetLocation(asset));
+    setMood(preset ? label : "custom");
+    setCustomMood(preset ? "" : label);
     setEdited(asset);
     setCandidate(undefined);
-    setName(asset.name);
-    setUse(asset.use);
     setDuration(asset.durationMs / 1000);
     setLayout(asset.layout ?? {});
     setError("");
@@ -188,20 +201,14 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     setEdited(undefined);
     setCandidate(undefined);
     const canGenerateFromReference = resolveConfiguredImageGenerationSettings(character.id, "facing").provider !== "novelai";
-    setReference(category === "portrait" && canGenerateFromReference && currentPortrait && !currentPortrait.mediaType.startsWith("video/") ? "portrait"
-      : category === "portrait" && canGenerateFromReference && character.avatar ? "avatar" : "text");
+    setReference(canGenerateFromReference && currentPortrait && !currentPortrait.mediaType.startsWith("video/") ? "portrait"
+      : canGenerateFromReference && character.avatar ? "avatar" : "text");
     setReferenceFile(undefined);
     setDescription("");
-    const previousLocation = fullPortrait?.location;
-    const presetLocation = FACING_IMAGE_LOCATIONS.find(item => item === previousLocation);
-    setLocation(presetLocation ?? (previousLocation ? "custom" : FACING_IMAGE_LOCATIONS[0]));
-    setCustomLocation(previousLocation && !presetLocation ? previousLocation : "");
     setOriginalDescription(undefined);
     setPolishNotice("");
-    setName(category === "portrait" ? "待机" : "");
-    setUse(category === "portrait" ? "idle" : "scene");
     setDuration(3);
-    setLayout(category === "portrait" ? (fullGeneration ? fullPortrait : layeredPortrait)?.layout ?? {} : {});
+    setLayout(currentPortrait?.composition === "full" ? currentPortrait.layout ?? {} : {});
     setError("");
     setView("generate");
   }
@@ -224,7 +231,7 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
 
   async function polish() {
     if (busy || control.current) return;
-    if (fullGeneration && !targetLocation) { setError("请填写画面地点。"); return; }
+    if (!targetLocation || !emotion) { setError("请设置场景和情绪。"); return; }
     if (reference === "file" && !referenceFile) { setError("请先上传参考图。"); return; }
     const run = new AbortController();
     control.current = run;
@@ -235,7 +242,7 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     setPolishNotice("");
     try {
       const result = await polishFacingImageDescription({
-        character, category, purpose: name.trim() || (use === "reaction" ? "表情或动作" : use === "idle" ? "待机" : "场景"),
+        character, purpose: emotion === "默认" ? "平时的自然神情" : emotion,
         description, guidance: polishGuidance, location: targetLocation, hasReference, loadReference: () => loadReference(true, run.signal), signal: run.signal,
       });
       if (run.signal.aborted) return;
@@ -257,26 +264,24 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
 
   async function generate(event: FormEvent) {
     event.preventDefault();
-    if (control.current || (fullGeneration ? !targetLocation : !description.trim())) return;
+    if (control.current || !targetLocation || !emotion) return;
     setBusy(true);
     setError("");
     const run = new AbortController();
     control.current = run;
     try {
       const ref = await loadReference(false, run.signal);
-      const instruction = targetLocation ? facingFullImageInstruction(targetLocation) : category === "scene"
-        ? "生成竖屏场景背景，镜头平视，预留人物站位，画面中没有人物。"
-        : "生成竖屏角色前景立绘，人物边缘完整。沿用参考图的脸部特征、发型、服装、镜头高度和站位。输出透明底。若只能生成实底，请使用单一纯色底。";
+      const moodInstruction = emotion === "默认" ? "角色保持平时自然的神情。" : `角色表现「${emotion}」，保持该场景的构图与环境。`;
       const result = await generateImageFromConfiguredApi({
-        characterId: character.id, appId: "facing", description: [instruction, `用途：${name.trim() || (category === "portrait" ? "人物待机" : "场景")}`, description.trim()].filter(Boolean).join("\n"),
+        characterId: character.id, appId: "facing",
+        description: [facingFullImageInstruction(targetLocation), moodInstruction, description.trim()].filter(Boolean).join("\n"),
         referenceSelection: { character: false, user: false }, explicitReferenceImage: ref ?? undefined,
-        portraitOutput: Boolean(targetLocation),
+        portraitOutput: true,
         signal: run.signal,
       });
       if (run.signal.aborted) return;
       if (!result) throw new Error("先在设置里启用生图并为「面对面」绑定配置。");
-      setCandidate({ blob: result.blob, url: result.dataUrl, mediaType: facingMediaType(result.blob) || "image/png",
-        composition: targetLocation ? "full" : undefined, location: targetLocation });
+      setCandidate({ blob: result.blob, url: result.dataUrl, mediaType: facingMediaType(result.blob) || "image/png" });
     } catch (cause) {
       if (!run.signal.aborted) setError(cause instanceof Error ? cause.message : "生图失败，请重试。");
     } finally {
@@ -284,34 +289,26 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     }
   }
 
-  async function removeBackground() {
-    if (!candidate) return;
+  async function save() {
+    if (busy || !emotion || !targetLocation || (!candidate && !edited)) return;
+    if (!edited && emotion !== "默认" && !(targetGroup?.portrait?.composition === "full")) {
+      setError("请先为这个场景保存一张默认画面，再添加情绪素材。");
+      return;
+    }
+    if (category === "portrait" && fullAsset && targetGroup?.assets.some(asset => asset.id !== edited?.id
+      && asset.composition === "full" && facingAssetMood(asset) === emotion)) {
+      setError(`「${targetLocation}」已有「${emotion}」画面，请选择其他情绪或删除原素材后再保存。`);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const result = await removeConnectedEdgeBackgroundFromDataUrl(candidate.url, { tolerance: 42, feather: 2 });
-      if (!result.removedPixels) throw new Error("没有找到可去除的边缘底色。");
-      setCandidate({ ...candidate, blob: result.blob, url: URL.createObjectURL(result.blob), mediaType: "image/png" });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "去底失败。");
-    } finally { setBusy(false); }
-  }
-
-  async function save(activate: boolean) {
-    if (busy || !name.trim() || (!candidate && !edited)) return;
-    setBusy(true);
-    setError("");
-    try {
-      const changes = { category, characterId: character.id, name: name.trim(), use, layout, durationMs: duration * 1000 };
-      const asset = edited ? { ...edited, ...changes } : await saveFacingAsset({ ...changes, id: facingId(),
-        composition: candidate!.composition, location: candidate!.location }, candidate!.blob, candidate!.mediaType);
-      if (edited) await updateFacingAsset(asset);
-      // Keep the saved asset available even if setting it active needs a retry.
-      setEdited(asset);
-      setCandidate(undefined);
-      setView("edit");
+      const use = category === "scene" ? "scene" : emotion === "默认" ? "idle" : "reaction";
+      const changes = { category, characterId: character.id, name: category === "scene" ? targetLocation : emotion, use, layout,
+        durationMs: duration * 1000, composition: fullAsset ? "full" as const : undefined, location: targetLocation } as const;
+      if (edited) await updateFacingAsset({ ...edited, ...changes });
+      else await saveFacingAsset({ ...changes, id: facingId() }, candidate!.blob, candidate!.mediaType);
       onChange();
-      if (activate && use !== "reaction") await onSelect(asset);
       reset();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败。");
@@ -332,11 +329,11 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
     });
   }
 
-  function toggleVisible() {
+  function toggleAll() {
     setSelection(current => {
       const next = new Set(current);
-      for (const asset of visible) {
-        if (allVisibleSelected) next.delete(asset.id);
+      for (const asset of assets) {
+        if (allSelected) next.delete(asset.id);
         else next.add(asset.id);
       }
       return next;
@@ -358,48 +355,69 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
 
   const currentUrl = candidate?.url ?? editedUrl;
   const currentType = candidate?.mediaType ?? edited?.mediaType ?? "";
+  function clearGeneratedPreview() {
+    if (view === "generate") setCandidate(undefined);
+  }
+  const sceneFields = <>
+    <label>场景<select value={location} disabled={busy} onChange={event => {
+      setLocation(event.target.value);
+      clearGeneratedPreview();
+      if (reference === "portrait") setReference(character.avatar ? "avatar" : "text");
+    }}>
+      {locations.map(place => <option key={place}>{place}</option>)}
+      <option value="custom">自定义场景</option>
+    </select></label>
+    {location === "custom" && <label>场景名称<input value={customLocation} disabled={busy} maxLength={60}
+      placeholder="例如雨夜酒店" onChange={event => { setCustomLocation(event.target.value); clearGeneratedPreview(); }} /></label>}
+    {category === "portrait" && <label>画面情绪<select value={mood} disabled={busy} onChange={event => { setMood(event.target.value); clearGeneratedPreview(); }}>
+      {["默认", ...FACING_REACTIONS].map(item => <option key={item}>{item}</option>)}
+      <option value="custom">自定义情绪</option>
+    </select></label>}
+    {mood === "custom" && category === "portrait" && <label>情绪名称<input value={customMood} disabled={busy} maxLength={24}
+      placeholder="例如害羞" onChange={event => { setCustomMood(event.target.value); clearGeneratedPreview(); }} /></label>}
+  </>;
   return <>
     <header className="facing-header"><button type="button" className="facing-back" onClick={view === "list" ? selection ? endSelection : onBack : reset}
       aria-label="返回" disabled={(view === "edit" || view === "list") && busy}>‹</button><h1>{view === "generate" ? "AI 生图" : view === "edit" ? "素材详情"
-        : view === "dwelling" ? "栖所场景" : "立绘与场景"}</h1>
+        : view === "dwelling" ? "栖所场景" : "场景素材"}</h1>
       {view === "edit" && edited && <button type="button" className="facing-icon facing-delete" aria-label="删除素材" title="删除素材"
         disabled={busy} onClick={() => setConfirmDelete([edited.id])}><Trash2 size={18} /></button>}
     </header>
     <main className="facing-scroll">
       {view === "list" && <>
-        <div className="facing-segments" role="group" aria-label="素材分类">
-          <button type="button" disabled={busy} aria-pressed={category === "portrait"} onClick={() => setCategory("portrait")}>立绘</button>
-          <button type="button" disabled={busy} aria-pressed={category === "scene"} onClick={() => setCategory("scene")}>场景</button>
-        </div>
         <div className="facing-row"><span>{character.name}</span><div className="facing-choices">
           {selection ? <>
-            <button type="button" className="facing-small" disabled={busy || !visible.length} onClick={toggleVisible}>
-              {allVisibleSelected ? "取消本类全选" : "全选本类"}
+            <button type="button" className="facing-small" disabled={busy || !assets.length} onClick={toggleAll}>
+              {allSelected ? "取消全选" : "全选"}
             </button>
             <button type="button" className="facing-small" disabled={busy} onClick={endSelection}>取消选择</button>
           </> : <>
             {!!assets.length && <button type="button" className="facing-small" onClick={() => setSelection(new Set())}>选择</button>}
-            <button type="button" className="facing-small" onClick={() => setView("add")}><Plus size={16} />添加</button>
+            <button type="button" className="facing-small" onClick={() => openAdd()}><Plus size={16} />添加场景素材</button>
           </>}
         </div></div>
-        {visible.length ? <div className="facing-grid">{visible.map(asset => <FacingAssetTile key={asset.id} asset={asset}
-          selected={selection?.has(asset.id)} disabled={busy} onClick={() => selection ? toggleAsset(asset.id) : edit(asset)} />)}</div>
-          : <p className="facing-empty">还没有{category === "portrait" ? "立绘" : "场景"}素材</p>}
+        {groups.map(group => <section className="facing-material-group" key={group.name} aria-label={group.name}>
+          <div className="facing-row"><h2>{group.name}</h2>
+            {!selection && <button type="button" className="facing-small" aria-label={`添加${group.name}素材`} onClick={() => openAdd(group.name)}><Plus size={15} />添加</button>}
+          </div>
+          <div className="facing-grid">{group.assets.map(asset => <FacingAssetTile key={asset.id} asset={asset}
+            selected={selection?.has(asset.id)} disabled={busy} onClick={() => selection ? toggleAsset(asset.id) : edit(asset)} />)}</div>
+        </section>)}
+        {!groups.length && <p className="facing-empty">还没有场景素材</p>}
       </>}
       {view === "vn" && <div className="facing-list">
-        {category === "portrait"
-          ? loadVnSprites(character.id).map(item => <button type="button" key={item.id} disabled={busy} onClick={() =>
-            void chooseVn({ name: item.key, id: item.assetId, layout: item.layout })}>{item.key}<ChevronRight size={16} /></button>)
-          : loadVnScenes(character.id).map(item => <button type="button" key={item.id} disabled={busy} onClick={() =>
-            void chooseVn({ name: item.name, id: item.assetId, layout: item.layout })}>{item.name}<ChevronRight size={16} /></button>)}
-        {(category === "portrait" ? loadVnSprites(character.id) : loadVnScenes(character.id)).length === 0 && <p className="facing-empty">漫卷里暂无可导入的素材</p>}
+        {loadVnScenes(character.id).map(item => <button type="button" key={item.id} disabled={busy} onClick={() =>
+          void chooseVn({ name: item.name, id: item.assetId, place: item.name })}>{item.name}<ChevronRight size={16} /></button>)}
+        {loadVnSprites(character.id).map(item => <button type="button" key={item.id} disabled={busy} onClick={() =>
+          void chooseVn({ name: item.key, id: item.assetId })}>{item.key}<ChevronRight size={16} /></button>)}
+        {!loadVnScenes(character.id).length && !loadVnSprites(character.id).length && <p className="facing-empty">漫卷里暂无可导入的素材</p>}
       </div>}
-      {view === "dwelling" && <FacingDwellingScenes characterId={character.id} onSelect={newAsset} />}
+      {view === "dwelling" && <FacingDwellingScenes characterId={character.id} onSelect={(blob, place) => newAsset(blob, place, place)} />}
       {view === "edit" && <div className="facing-form">
         {currentUrl && <div className="facing-layout-preview" role="group" aria-label="画面实时预览">
-          <FacingStage draft={{ category, name, url: currentUrl, mediaType: currentType, layout, composition: fullAsset ? "full" : undefined }}
-            scene={category === "portrait" && !fullAsset ? previewScene : undefined}
-            portrait={category === "scene" ? previewPortrait : undefined}
+          <FacingStage draft={{ category, name: `${targetLocation} · ${emotion}`, url: currentUrl, mediaType: currentType, layout, composition: fullAsset ? "full" : undefined }}
+            scene={category === "portrait" && !fullAsset ? targetGroup?.backdrop : undefined}
+            portrait={category === "scene" ? targetGroup?.portrait : undefined}
             fallback={category === "scene" ? character.avatar : undefined} name={character.name} />
         </div>}
         <div className="facing-form-layout">
@@ -408,37 +426,16 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
           <label>缩放<input type="range" min={category === "scene" || fullAsset ? 100 : 40} max={180} value={layout.scale ?? layoutDefaults.scale} onChange={event => setLayout({ ...layout, scale: +event.target.value })} /></label>
         </div>
         {(category === "scene" || fullAsset) && <p className="facing-layout-help">放大后可上下左右调整裁切位置。</p>}
-        <label>名称<input value={name} onChange={event => setName(event.target.value)} maxLength={50} /></label>
-        {category === "portrait" && <label>用途<select aria-label="用途" value={use} onChange={event => setUse(event.target.value as FacingAsset["use"])}>
-          <option value="idle">待机立绘</option><option value="reaction">表情或动作</option>
-        </select></label>}
-        {use === "reaction" && <>
-          <div className="facing-choices">{FACING_REACTIONS.map(item => <button type="button" key={item} className="facing-small" onClick={() => setName(item)}>{item}</button>)}</div>
-          <label>播放时长（秒）<input type="number" min={1} max={30} value={duration} onChange={event => setDuration(Math.max(1, Math.min(30, Number(event.target.value) || 1)))} /></label>
-        </>}
-        <div className="facing-pair"><button type="button" className="facing-soft" disabled={busy || !name.trim()} onClick={() => void save(false)}>保存到资源</button>
-          {use !== "reaction" && <button type="button" className="facing-primary" disabled={busy || !name.trim()} onClick={() => void save(true)}>
-            {category === "scene" ? "设为当前场景" : "设为待机"}
-          </button>}
-        </div>
+        {sceneFields}
+        {category === "portrait" && emotion && emotion !== "默认" &&
+          <label>播放时长（秒）<input type="number" min={1} max={30} value={duration} onChange={event => setDuration(Math.max(1, Math.min(30, Number(event.target.value) || 1)))} /></label>}
+        <button type="button" className="facing-primary" disabled={busy || !targetLocation || !emotion} onClick={() => void save()}>保存素材</button>
       </div>}
       {view === "generate" && <form className="facing-form" onSubmit={generate}>
-        <label>素材名称<input value={name} placeholder={category === "scene" ? "例如雨夜窗边" : "例如微笑"} onChange={event => setName(event.target.value)} maxLength={50} /></label>
-        {category === "portrait" && <label>用途<select aria-label="用途" value={use} onChange={event => setUse(event.target.value as FacingAsset["use"])}>
-          <option value="idle">待机立绘</option><option value="reaction">表情或动作</option>
-        </select></label>}
-        {use === "reaction" && <div className="facing-choices">{FACING_REACTIONS.map(item => <button type="button" key={item} className="facing-small" onClick={() => setName(item)}>{item}</button>)}</div>}
-        {fullGeneration && <>
-          <label>画面地点<select value={location} disabled={busy} onChange={event => setLocation(event.target.value)}>
-            {FACING_IMAGE_LOCATIONS.map(place => <option key={place}>{place}</option>)}
-            <option value="custom">自定义</option>
-          </select></label>
-          {location === "custom" && <label>自定义地点<input value={customLocation} disabled={busy} required maxLength={100}
-            placeholder="例如深夜的酒店落地窗边" onChange={event => setCustomLocation(event.target.value)} /></label>}
-        </>}
+        {sceneFields}
         <label>出图方式<select aria-label="出图方式" value={reference} onChange={event => setReference(event.target.value)}>
           <option value="text">文字生成</option>
-          {currentPortrait && !currentPortrait.mediaType.startsWith("video/") && <option value="portrait">{currentPortrait.composition === "full" ? "参考当前完整画面" : "参考当前待机立绘"}</option>}
+          {currentPortrait && !currentPortrait.mediaType.startsWith("video/") && <option value="portrait">参考该场景的默认画面</option>}
           {character.avatar && <option value="avatar">参考角色头像</option>}
           <option value="file">上传参考图</option>
         </select></label>
@@ -451,7 +448,7 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
             </button>
           </div>
           <textarea id="facing-image-description" value={description} onChange={event => setDescription(event.target.value)}
-            rows={4} disabled={polishing} required={!fullGeneration} placeholder={fullGeneration ? "可补充光线、衣着或动作" : undefined} />
+            rows={4} disabled={polishing} placeholder="可补充光线、衣着或动作" />
           {polishNotice && <div className="facing-polish-result">
             <span role="status">{polishNotice}</span>
             {originalDescription !== undefined && <button type="button" className="facing-link" disabled={busy} onClick={() => {
@@ -466,13 +463,10 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
               rows={2} disabled={busy} placeholder="例如保留现有构图，突出冷蓝光" /></label>
           </details>
         </div>
-        <button className="facing-primary" disabled={busy || (fullGeneration ? !targetLocation : !description.trim())}>{busy && !polishing ? "正在生成…" : candidate ? "再生成一张" : "生成预览"}</button>
+        <button className="facing-primary" disabled={busy || !targetLocation || !emotion}>{busy && !polishing ? "正在生成…" : candidate ? "再生成一张" : "生成预览"}</button>
         {candidate && <>
           <div className="facing-material-preview"><FacingMedia url={candidate.url} mediaType={candidate.mediaType} name="候选素材" /></div>
-          <div className={fullAsset ? "facing-form" : "facing-pair"}>
-            {category === "portrait" && !fullAsset && <button type="button" className="facing-soft" disabled={busy} onClick={() => void removeBackground()}>去底</button>}
-            <button type="button" className="facing-primary" disabled={busy} onClick={() => setView("edit")}>使用这张</button>
-          </div>
+          <button type="button" className="facing-primary" disabled={busy} onClick={() => setView("edit")}>使用这张</button>
         </>}
       </form>}
       {error && <p className="facing-error" role="alert">{error}</p>}
@@ -482,16 +476,16 @@ export function FacingAssets({ character, assets, settings, previewPortrait, pre
       <button type="button" className="facing-soft facing-delete" disabled={busy || !selection.size}
         onClick={() => setConfirmDelete(Array.from(selection))}><Trash2 size={16} />{busy ? "正在删除…" : "删除所选"}</button>
     </footer>}
-    {confirmDelete && <ConfirmDialog title="删除素材？" message={edited ? `要从面对面移除「${edited.name}」吗？` : `要从面对面移除选中的 ${confirmDelete.length} 项素材吗？`}
+    {confirmDelete && <ConfirmDialog title="删除素材？" message={edited ? `要从面对面移除「${facingAssetLocation(edited)} · ${facingAssetMood(edited)}」吗？` : `要从面对面移除选中的 ${confirmDelete.length} 项素材吗？`}
       icon={Trash2} variant="danger" overlayClassName="facing-delete-overlay" confirmLabel="确认删除"
       onConfirm={() => void removeAssets()} onCancel={() => setConfirmDelete(null)} />}
     {view === "add" && <div className="facing-overlay" onClick={reset}>
       <section className="facing-sheet" role="dialog" aria-modal="true" aria-label="添加素材" onClick={event => event.stopPropagation()}>
-        <header><h2>添加{category === "portrait" ? "立绘" : "场景"}</h2><button type="button" onClick={reset}>完成</button></header>
+        <header><h2>添加场景素材</h2><button type="button" onClick={reset}>完成</button></header>
         <div className="facing-list">
           <button type="button" onClick={() => upload.current?.click()}>从手机导入<ChevronRight size={16} /></button>
           <button type="button" onClick={() => setView("vn")}>从漫卷资源选<ChevronRight size={16} /></button>
-          {category === "scene" && <button type="button" onClick={() => setView("dwelling")}>从角色栖所选<ChevronRight size={16} /></button>}
+          <button type="button" onClick={() => setView("dwelling")}>从角色栖所选<ChevronRight size={16} /></button>
           <button type="button" onClick={openGeneration}>AI 生图<ChevronRight size={16} /></button>
         </div>
       </section>

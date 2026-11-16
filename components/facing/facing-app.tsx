@@ -1,19 +1,19 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, History, Images, PanelsTopLeft, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, History, Images, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAssets, FACING_PARTS, facingId, loadFacingAssets, loadFacingMeetings, loadFacingSettings, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_SCENE, FACING_PARTS, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
-import { FacingAssets, FacingAssetTile } from "./facing-assets";
+import { FacingAssets } from "./facing-assets";
 import { FacingRoom } from "./facing-room";
 import { FacingStage } from "./facing-stage";
 
 type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record";
-type Sheet = "characters" | "scene" | "end" | null;
+type Sheet = "characters" | "new" | "end" | null;
 
 function Header({ title, onBack, children }: { title: string; onBack: () => void; children?: ReactNode }) {
   return <header className="facing-header">
@@ -102,7 +102,7 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
   return <>
     <Header title="记录详情" onBack={onBack} />
     <main className="facing-scroll">
-      <h2 className="facing-record-title">{record.title}</h2>
+      <h2 className="facing-record-title">{record.title || facingMeetingPosition(record).sceneName}</h2>
       <div className="facing-record-meta">{character.name} · {RECORD_TABS[record.type]} · {new Date(record.updatedAt).toLocaleString("zh-CN")}</div>
       <ol className="facing-turns">
         {record.turns.map(turn => <li key={turn.id} data-role={turn.role}>
@@ -126,36 +126,26 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [page, setPage] = useState<Page>("home");
   const [sheet, setSheet] = useState<Sheet>(() => !character && characters.length ? "characters" : null);
   const [settingOrigin, setSettingOrigin] = useState<"home" | "room">("home");
-  const [category, setCategory] = useState<FacingAsset["category"]>("portrait");
-  const [sceneOrigin, setSceneOrigin] = useState<"home" | "room">("home");
   const [assetOrigin, setAssetOrigin] = useState<"settings" | "home">("settings");
   const [meeting, setMeeting] = useState<FacingMeeting>();
-  const [roomScene, setRoomScene] = useState<string>();
-  const [roomPortrait, setRoomPortrait] = useState<string>();
+  const [draftMeeting, setDraftMeeting] = useState<FacingMeeting>();
+  const [openingScene, setOpeningScene] = useState(FACING_DEFAULT_SCENE);
+  const [starting, setStarting] = useState(false);
   const [record, setRecord] = useState<FacingMeeting>();
   const [recordType, setRecordType] = useState<FacingMeeting["type"]>("main");
   const [error, setError] = useState("");
   const [assets, setAssets] = useState(() => character ? loadFacingAssets(character.id) : []);
   const current = character ? preferences.characters[character.id] ?? {} : {};
-  const useScene = current.useScene !== false;
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
-  const layeredPortrait = assets.find(item => item.id === current.portraitId && item.use === "idle");
-  const fullPortrait = assets.find(item => item.id === current.fullPortraitId && item.use === "idle");
-  const portrait = useScene ? layeredPortrait : fullPortrait ?? layeredPortrait;
-  const defaultScene = assets.find(item => item.id === current.sceneId && item.category === "scene");
-  const scene = useScene ? defaultScene : undefined;
-  const savedRoomPortrait = assets.find(item => item.id === roomPortrait && item.use === "idle");
-  const activePortrait = savedRoomPortrait && (savedRoomPortrait.composition === "full") === !useScene ? savedRoomPortrait : portrait;
-  const selectedRoomScene = assets.find(item => item.id === roomScene && item.category === "scene");
-  const activeScene = useScene ? selectedRoomScene : undefined;
-  const usesFullPortrait = activePortrait ? activePortrait.composition === "full" : !useScene;
-  const reactions = assets.filter(item => item.use === "reaction" && (item.composition === "full") === usesFullPortrait &&
-    (!item.location || !activePortrait?.location || item.location === activePortrait.location));
-  const scenes = assets.filter(item => item.category === "scene");
-  const records = page === "records" && character ? loadFacingMeetings(character.id, identityId).filter(item => item.type === recordType) : [];
-  const currentPortrait = settingOrigin === "room" && meeting ? activePortrait : portrait;
-  const currentScene = settingOrigin === "room" && meeting ? activeScene : scene;
-  const assetsOpenedFromRoom = assetOrigin === "settings" && settingOrigin === "room" && !!meeting;
+  const groups = groupFacingScenes(assets, current.portraitId);
+  const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId) : [], [character, identityId, meeting]);
+  const latest = meetings[0];
+  const initialAsset = assets.find(item => item.id === (current.useScene === false ? current.fullPortraitId ?? current.portraitId : current.sceneId ?? current.portraitId));
+  const initialGroup = groups.find(group => group.name === (initialAsset ? facingAssetLocation(initialAsset) : undefined)) ?? groups[0];
+  const homeScene = resolveFacingScene(latest ? facingMeetingPosition(latest) : facingScenePosition(initialGroup), groups, assets);
+  const room = meeting ? resolveFacingScene(facingMeetingPosition(meeting), groups, assets) : homeScene;
+  const hotspotScene = settingOrigin === "room" ? room : homeScene;
+  const records = page === "records" ? meetings.filter(item => item.type === recordType) : [];
 
   async function selectCharacter(id: string) {
     setError("");
@@ -172,42 +162,44 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     void changeSetting(patch).catch(() => setError("设置保存失败。"));
   }
 
-  function openAssets(from: "settings" | "home", type: FacingAsset["category"]) {
+  function openAssets(from: "settings" | "home") {
     setAssetOrigin(from);
-    setCategory(type);
     setPage("assets");
   }
 
   function openRoom(item: FacingMeeting) {
     unlockAudioPlayback();
-    const last = item.turns.at(-1);
     setMeeting(item);
-    setRoomScene(last && last.useScene !== false ? last.sceneId : current.sceneId);
-    setRoomPortrait(last ? last.portraitId : portrait?.id);
     setRecordType(item.type);
     setPage("room");
   }
 
-  function newMeeting(type: FacingMeeting["type"], parent?: FacingMeeting) {
-    if (character) openRoom(createFacingMeeting(character.id, identityId, type, parent));
+  function prepareMeeting(type: FacingMeeting["type"], parent?: FacingMeeting) {
+    if (!character) return;
+    setError("");
+    const preferred = parent ? facingMeetingPosition(parent).sceneName : homeScene.position.sceneName;
+    setOpeningScene(groups.some(group => group.name === preferred) ? preferred : initialGroup?.name ?? FACING_DEFAULT_SCENE);
+    setDraftMeeting(createFacingMeeting(character.id, identityId, type, parent));
+    setSheet("new");
+  }
+
+  async function startMeeting() {
+    if (!draftMeeting || starting) return;
+    setStarting(true);
+    setError("");
+    try {
+      const position = facingScenePosition(groups.find(group => group.name === openingScene));
+      const started = await saveFacingMeetingStart(draftMeeting, position);
+      setSheet(null);
+      openRoom(started);
+    } catch {
+      setError("新对话保存失败，请重试。");
+    } finally { setStarting(false); }
   }
 
   function openSettings(origin: "home" | "room") {
     setSettingOrigin(origin);
     setPage("settings");
-  }
-
-  function openScene(origin: "home" | "room") {
-    setSceneOrigin(origin);
-    setSheet("scene");
-  }
-
-  function sceneSelected(id?: string) {
-    if (sceneOrigin === "room") {
-      setRoomScene(id);
-      if (!useScene) commitSetting({ useScene: true });
-    } else commitSetting({ sceneId: id, useScene: true });
-    setSheet(null);
   }
 
   return <div className="facing-app">
@@ -217,18 +209,18 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       </Header>
       {character ? <>
         <div className="facing-home-stage">
-          <FacingStage portrait={portrait} scene={scene} name={character.name} fallback={character.avatar}>
-            <div className="facing-home-label"><small>{useScene ? scene?.name ?? "默认场景" : portrait?.location ?? "不使用场景"}</small><strong>{character.name}</strong></div>
+          <FacingStage portrait={homeScene.portrait} scene={homeScene.backdrop} name={character.name} fallback={character.avatar}>
+            <div className="facing-home-label"><small>{homeScene.position.sceneName}</small><strong>{character.name}</strong></div>
           </FacingStage>
         </div>
         <footer className="facing-home-actions">
-          {!(useScene ? portrait : fullPortrait) && <button type="button" className="facing-link" onClick={() => openAssets("home", "portrait")}><Images size={16} />{useScene ? "设置立绘" : "设置完整画面"}</button>}
+          {!groups.length && <button type="button" className="facing-link" onClick={() => openAssets("home")}><Images size={16} />添加场景素材</button>}
+          {latest && <button type="button" className="facing-primary" onClick={() => openRoom(latest)}>继续上次对话<ChevronRight size={18} /></button>}
+          <button type="button" className={latest ? "facing-soft" : "facing-primary"} onClick={() => prepareMeeting("main")}><Plus size={17} />开启新对话</button>
           <div className="facing-pair">
-            <button type="button" className="facing-soft" onClick={() => setSheet("characters")}><UserRound size={17} />换角色</button>
-            <button type="button" className="facing-soft" onClick={() => openScene("home")}><PanelsTopLeft size={17} />换场景</button>
+            <button type="button" className="facing-link" onClick={() => setSheet("characters")}><UserRound size={17} />换角色</button>
+            <button type="button" className="facing-link" onClick={() => { setRecordType(latest?.type ?? "main"); setPage("records"); }}><History size={16} />见面记录</button>
           </div>
-          <button type="button" className="facing-primary" onClick={() => newMeeting("main")}>开始面对面<ChevronRight size={18} /></button>
-          <button type="button" className="facing-link" onClick={() => { setRecordType("main"); setPage("records"); }}><History size={16} />见面记录</button>
         </footer>
       </> : <div className="facing-home-empty"><UserRound size={48} strokeWidth={1.2} />
         <button type="button" className="facing-primary" onClick={() => setSheet("characters")} disabled={!characters.length}>选择角色</button>
@@ -236,19 +228,18 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       </div>}
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
-      portrait={activePortrait} scene={activeScene} reactions={reactions} onMeeting={setMeeting}
-      onScene={() => openScene("room")} onSettings={() => openSettings("room")} onEnd={() => setSheet("end")}
+      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
+      onSettings={() => openSettings("room")} onEnd={() => setSheet("end")}
       onVoice={value => commitSetting({ voice: value })} />}
     {page === "settings" && character && <>
       <Header title="角色设置" onBack={() => setPage(settingOrigin)} />
       <main className="facing-scroll facing-form">
         <h2 className="facing-record-title">{character.name}</h2>
         <div className="facing-list">
-          <button type="button" onClick={() => openAssets("settings", "portrait")}><Images size={18} /><span>立绘与场景</span><ChevronRight size={17} /></button>
+          <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => setPage("hotspots")}><ScanLine size={18} /><span>虚拟体感</span><ChevronRight size={17} /></button>
         </div>
         <div className="facing-list facing-settings-list">
-          <label>使用场景<input type="checkbox" role="switch" checked={useScene} onChange={event => commitSetting({ useScene: event.target.checked })} /></label>
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             <option value="short">简短</option><option value="normal">自然</option><option value="expanded">展开</option>
           </select></label>
@@ -258,29 +249,16 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         </div>
       </main>
     </>}
-    {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} settings={current}
-      previewPortrait={assetsOpenedFromRoom && savedRoomPortrait?.composition !== "full" ? savedRoomPortrait ?? layeredPortrait : layeredPortrait}
-      previewScene={assetsOpenedFromRoom ? selectedRoomScene : defaultScene}
-      initialCategory={category} onBack={() => setPage(assetOrigin)} onChange={() => { setAssets(loadFacingAssets(character.id)); }}
+    {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} groups={groups}
+      onBack={() => setPage(assetOrigin)} onChange={() => setAssets(loadFacingAssets(character.id))}
       onDelete={async assetIds => {
-        const removed = new Set(assetIds);
         await deleteFacingAssets(character.id, assetIds);
         setAssets(loadFacingAssets(character.id));
         setPreferences(loadFacingSettings());
-        setRoomScene(id => id && removed.has(id) ? undefined : id);
-        setRoomPortrait(id => id && removed.has(id) ? undefined : id);
-      }}
-      onSelect={async asset => {
-        await changeSetting(asset.category === "scene" ? { sceneId: asset.id, useScene: true }
-          : asset.composition === "full" ? { fullPortraitId: asset.id, useScene: false } : { portraitId: asset.id, useScene: true });
-        if (assetOrigin === "settings" && settingOrigin === "room") {
-          if (asset.category === "scene") setRoomScene(asset.id);
-          else setRoomPortrait(asset.id);
-        }
       }} />}
-    {page === "hotspots" && character && <HotspotEditor character={character} portrait={currentPortrait} scene={currentScene}
-      points={current.hotspots?.[currentPortrait?.id ?? "avatar"] ?? []} onBack={() => setPage("settings")} onSave={async points => {
-        await changeSetting({ hotspots: { ...current.hotspots, [currentPortrait?.id ?? "avatar"]: points } });
+    {page === "hotspots" && character && <HotspotEditor character={character} portrait={hotspotScene.portrait} scene={hotspotScene.backdrop}
+      points={current.hotspots?.[hotspotScene.portrait?.id ?? "avatar"] ?? []} onBack={() => setPage("settings")} onSave={async points => {
+        await changeSetting({ hotspots: { ...current.hotspots, [hotspotScene.portrait?.id ?? "avatar"]: points } });
         setPage("settings");
       }} />}
     {page === "records" && character && <>
@@ -290,12 +268,12 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
           {Object.entries(RECORD_TABS).map(([key, label]) => <button type="button" key={key} aria-pressed={recordType === key}
             onClick={() => setRecordType(key as FacingMeeting["type"])}>{label}</button>)}
         </div>
-        <div className="facing-row"><span>{character.name}</span><button type="button" className="facing-small" onClick={() => newMeeting("independent")}><Plus size={16} />新开独立见面</button></div>
+        <div className="facing-row"><span>{character.name}</span><button type="button" className="facing-small" onClick={() => prepareMeeting("independent")}><Plus size={16} />新开独立见面</button></div>
         <div className="facing-list">
           {records.map(item =>
             <button type="button" key={item.id} onClick={() => { setRecord(item); setPage("record"); }}>
-              <span className="facing-record-row"><strong>{item.title}</strong>
-                <small>{item.turns.at(-1)?.sceneName} · {new Date(item.updatedAt).toLocaleDateString("zh-CN")}</small></span><ChevronRight size={17} />
+              <span className="facing-record-row"><strong>{item.title || facingMeetingPosition(item).sceneName}</strong>
+                <small>{facingMeetingPosition(item).sceneName} · {new Date(item.updatedAt).toLocaleDateString("zh-CN")}</small></span><ChevronRight size={17} />
             </button>)}
           {!records.length &&
             <p className="facing-empty">暂无{RECORD_TABS[recordType]}见面记录</p>}
@@ -303,7 +281,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       </main>
     </>}
     {page === "record" && character && record && <MeetingTranscript record={record} character={character}
-      onBack={() => setPage("records")} onContinue={() => openRoom(record)} onFork={() => newMeeting("branch", record)} />}
+      onBack={() => setPage("records")} onContinue={() => openRoom(record)} onFork={() => prepareMeeting("branch", record)} />}
     {sheet === "characters" && <FacingSheet title="选择角色" close={() => setSheet(null)}>
       <div className="facing-list">
         {characters.map(item => <button type="button" key={item.id} onClick={() => void selectCharacter(item.id)}>
@@ -312,19 +290,11 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         </button>)}
       </div>
     </FacingSheet>}
-    {sheet === "scene" && <FacingSheet title="更换场景" close={() => setSheet(null)}>
-      <div className="facing-list">
-        <button type="button" onClick={() => { commitSetting({ useScene: false }); setSheet(null); }}>
-          <span>不使用场景</span>{!useScene && <small>当前</small>}
-        </button>
-      </div>
-      {scenes.length > 0 && <div className="facing-grid">{scenes.map(item => <FacingAssetTile key={item.id} asset={item} onClick={() => sceneSelected(item.id)} />)}</div>}
-      <div className="facing-pair">
-        <button type="button" className="facing-soft" onClick={() => sceneSelected()}>默认场景</button>
-        {sceneOrigin === "home"
-          ? <button type="button" className="facing-primary" onClick={() => { setSheet(null); openAssets("home", "scene"); }}>设置场景</button>
-          : <button type="button" className="facing-soft" onClick={() => { setSheet(null); openSettings("room"); }}>角色设置</button>}
-      </div>
+    {sheet === "new" && <FacingSheet title="选择开场场景" close={() => { if (!starting) setSheet(null); }}>
+      <label className="facing-opening-scene">开场场景<select value={openingScene} disabled={starting} onChange={event => setOpeningScene(event.target.value)}>
+        {groups.length ? groups.map(group => <option key={group.name}>{group.name}</option>) : <option>{FACING_DEFAULT_SCENE}</option>}
+      </select></label>
+      <button type="button" className="facing-primary" disabled={starting} onClick={() => void startMeeting()}>开始对话</button>
     </FacingSheet>}
     {sheet === "end" && <FacingSheet title="结束这次见面？" center close={() => setSheet(null)}>
       <div className="facing-pair"><button type="button" className="facing-soft" onClick={() => setSheet(null)}>继续</button>

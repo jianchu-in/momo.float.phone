@@ -1,26 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowUp, ChevronLeft, Keyboard, Mic, PanelsTopLeft, PhoneOff, Settings2, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, ChevronLeft, Keyboard, Mic, PhoneOff, Settings2, Volume2, VolumeX } from "lucide-react";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { useCallKeyboardOffsetStyle } from "@/components/chat/use-call-keyboard-offset";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
-import { appendFacingTurn, facingId, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingTurn } from "@/lib/facing-storage";
+import { appendFacingTurn, facingId, facingScenePosition, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, type STTSession } from "@/lib/stt-service";
 import { playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingStage } from "./facing-stage";
 
-export function FacingRoom({ character, meeting, settings, portrait, scene, reactions, onMeeting, onScene, onSettings, onEnd, onVoice }: {
+export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, onMeeting, onSettings, onEnd, onVoice }: {
   character: Character;
   meeting: FacingMeeting;
   settings: FacingCharacterSettings;
   portrait?: FacingAsset;
   scene?: FacingAsset;
-  reactions: FacingAsset[];
+  position: FacingScenePosition;
+  scenes: FacingSceneGroup[];
   onMeeting: (meeting: FacingMeeting) => void;
-  onScene: () => void;
   onSettings: () => void;
   onEnd: () => void;
   onVoice: (enabled: boolean) => void;
@@ -94,21 +94,17 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, reac
     setError("");
     stopReaction();
     let stored = Boolean(retry);
-    const useScene = settings.useScene !== false;
-    const fields = {
-      useScene, sceneId: scene?.id, sceneName: useScene ? scene?.name ?? "默认场景" : portrait?.location ?? "未指定地点",
-      portraitId: portrait?.id,
-    };
-    const user: FacingTurn = retry ?? { ...fields, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString() };
+    const user: FacingTurn = retry ?? { ...position, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString() };
     try {
       const current = retry ? meeting : await appendFacingTurn(meeting, user);
       stored = true;
       if (run.signal.aborted) return;
       onMeeting(current);
-      const result = await generateFacingReply({ character, meeting: current, settings, scene: fields.sceneName, reactions, signal: run.signal });
+      const result = await generateFacingReply({ character, meeting: current, settings, scene: position.sceneName, scenes, signal: run.signal });
       if (run.signal.aborted) return;
       const saved = await appendFacingTurn(current, {
-        ...fields, id: facingId(), role: "assistant", kind: "reply", text: result.dialogue,
+        ...(result.nextScene ? facingScenePosition(result.nextScene) : position),
+        id: facingId(), role: "assistant", kind: "reply", text: result.dialogue,
         at: new Date().toISOString(), replyTo: user.id, reactionId: result.reaction?.id, reactionName: result.reaction?.name,
       });
       if (run.signal.aborted) return;
@@ -171,6 +167,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, reac
       onReactionEnd={stopReaction} />
     <header className="facing-room-top">
       <button type="button" className="facing-glass facing-icon" aria-label="返回" onClick={onEnd}><ChevronLeft size={22} /></button>
+      <span className="facing-glass facing-room-scene" aria-label="当前场景">{position.sceneName}</span>
       <div>
         <button type="button" className="facing-glass facing-icon" aria-label={voiceOn ? "关闭角色语音" : "开启角色语音"}
           aria-pressed={voiceOn} onClick={() => { unlockAudioPlayback(); onVoice(!voiceOn); }}>{voiceOn ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
@@ -206,10 +203,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, reac
               <button type="submit" className="facing-glass facing-icon facing-send" aria-label="发送" disabled={busy || !draft.trim()}><ArrowUp size={20} /></button>
             </>}
         </form>
-        <div className="facing-pair">
-          <button type="button" className="facing-glass" disabled={busy || listening} onClick={onScene}><PanelsTopLeft size={16} />换场景</button>
-          <button type="button" className="facing-glass facing-end" onClick={onEnd}><PhoneOff size={16} />结束</button>
-        </div>
+        <button type="button" className="facing-glass facing-end" onClick={onEnd}><PhoneOff size={16} />结束</button>
       </div>
     </div>
   </section>;
