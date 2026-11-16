@@ -76,7 +76,10 @@ export function FacingStage({ portrait, scene, reaction, fallback, name, points 
   const mediaKey = foreground?.mediaId ?? fallback ?? "";
   const ratioValue = ratio?.key === mediaKey ? ratio.value : 0.72;
   const layout = foreground?.layout ?? portrait?.layout;
-  const width = Math.min(size.width, size.height * ratioValue) * (layout?.scale ?? 100) / 100;
+  const full = foreground?.composition === "full" && Boolean(mediaUrl);
+  const fitWidth = full ? Math.max(size.width, size.height * ratioValue) : Math.min(size.width, size.height * ratioValue);
+  const width = fitWidth * (layout?.scale ?? 100) / 100;
+  const height = width / ratioValue;
   const hasMedia = Boolean(mediaUrl || fallback);
 
   useEffect(() => {
@@ -96,8 +99,12 @@ export function FacingStage({ portrait, scene, reaction, fallback, name, points 
       "--facing-scene-y": `${scene.layout?.y ?? 50}%`, "--facing-scene-scale": (scene.layout?.scale ?? 100) / 100 } as React.CSSProperties}>
       <FacingMedia url={sceneUrl} mediaType={scene.mediaType} name={scene.name} />
     </div>}
-    <div ref={figure} className="facing-figure" style={{
-      width: width || "78%", height: width ? width / ratioValue : "91%",
+    <div ref={figure} className="facing-figure" style={full ? {
+      width, height, transform: "none",
+      left: (size.width - width) * (layout?.x ?? 50) / 100,
+      top: (size.height - height) * (layout?.y ?? 50) / 100,
+    } : {
+      width: width || "78%", height: width ? height : "91%",
       left: `${layout?.x ?? 50}%`, top: `${layout?.y ?? 100}%`,
     }}>
       {mediaUrl && foreground

@@ -13,6 +13,7 @@ import { faceCropPixels, type FaceCrop } from "./face-crop";
 import { descriptionNeedsUserReference } from "./image-reference-selection";
 import {
   NOVELAI_COMMON_MODELS,
+  NOVELAI_DEFAULT_RESOLUTION,
   getNovelAiResolution,
   normalizeNovelAiModel,
   normalizeNovelAiNoiseSchedule,
@@ -869,6 +870,7 @@ export async function generateImageFromConfiguredApi(params: {
   includeUserReferenceImage?: boolean;
   referenceSelection?: ImageReferenceSelection;
   explicitReferenceImage?: string;
+  portraitOutput?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult | null> {
@@ -890,7 +892,11 @@ export async function generateImageFromConfiguredApi(params: {
     const presets = settings.novelai?.presets && settings.novelai.presets.length > 0
       ? settings.novelai.presets
       : [DEFAULT_NOVELAI_PRESET];
-    const activePreset = presets.find(p => p.id === settings.novelai?.activePresetId) || presets[0];
+    const selectedPreset = presets.find(p => p.id === settings.novelai?.activePresetId) || presets[0];
+    const { width, height } = getNovelAiResolution(selectedPreset.resolution);
+    const activePreset = params.portraitOutput && width >= height
+      ? { ...selectedPreset, resolution: width > height ? `${height}x${width}` : NOVELAI_DEFAULT_RESOLUTION }
+      : selectedPreset;
 
     // 本轮画面描述必须排在最前面。NovelAI 对提示词顺序较敏感；此前把预设、
     // 人物外观和锚点放在描述前面，长提示词下会让聊天/朋友圈的当前场景失去权重。
@@ -941,7 +947,10 @@ export async function generateImageFromConfiguredApi(params: {
   // OpenAI 兼容模式：使用当前激活预设（旧配置由存储层迁移后仍保持兼容）
   const openaiPreset = settings.openaiPresets?.find(preset => preset.id === settings.activeOpenAiPresetId)
     || settings.openaiPresets?.[0];
-  const openaiSettings = openaiPreset ? { ...settings, ...openaiPreset } : settings;
+  const selectedSettings = openaiPreset ? { ...settings, ...openaiPreset } : settings;
+  const dimensions = /^(\d+)x(\d+)$/.exec(selectedSettings.size);
+  const openaiSettings = params.portraitOutput && (!dimensions || Number(dimensions[1]) >= Number(dimensions[2]))
+    ? { ...selectedSettings, size: "1024x1536" } : selectedSettings;
   if (!openaiSettings.apiKey.trim() || !openaiSettings.baseUrl.trim() || !openaiSettings.model.trim()) return null;
 
   const reference = params.characterId ? settings.characterReferences?.[params.characterId] : undefined;

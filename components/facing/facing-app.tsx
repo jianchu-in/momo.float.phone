@@ -137,12 +137,18 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [assets, setAssets] = useState(() => character ? loadFacingAssets(character.id) : []);
   const current = character ? preferences.characters[character.id] ?? {} : {};
+  const useScene = current.useScene !== false;
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
-  const portrait = assets.find(item => item.id === current.portraitId && item.use === "idle");
-  const scene = assets.find(item => item.id === current.sceneId && item.category === "scene");
-  const activePortrait = assets.find(item => item.id === roomPortrait && item.category === "portrait");
-  const activeScene = assets.find(item => item.id === roomScene && item.category === "scene");
-  const reactions = assets.filter(item => item.use === "reaction");
+  const layeredPortrait = assets.find(item => item.id === current.portraitId && item.use === "idle");
+  const fullPortrait = assets.find(item => item.id === current.fullPortraitId && item.use === "idle");
+  const portrait = useScene ? layeredPortrait : fullPortrait ?? layeredPortrait;
+  const scene = useScene ? assets.find(item => item.id === current.sceneId && item.category === "scene") : undefined;
+  const savedRoomPortrait = assets.find(item => item.id === roomPortrait && item.use === "idle");
+  const activePortrait = savedRoomPortrait && (savedRoomPortrait.composition === "full") === !useScene ? savedRoomPortrait : portrait;
+  const activeScene = useScene ? assets.find(item => item.id === roomScene && item.category === "scene") : undefined;
+  const usesFullPortrait = activePortrait ? activePortrait.composition === "full" : !useScene;
+  const reactions = assets.filter(item => item.use === "reaction" && (item.composition === "full") === usesFullPortrait &&
+    (!item.location || !activePortrait?.location || item.location === activePortrait.location));
   const scenes = assets.filter(item => item.category === "scene");
   const records = page === "records" && character ? loadFacingMeetings(character.id, identityId).filter(item => item.type === recordType) : [];
   const currentPortrait = settingOrigin === "room" && meeting ? activePortrait : portrait;
@@ -173,8 +179,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     unlockAudioPlayback();
     const last = item.turns.at(-1);
     setMeeting(item);
-    setRoomScene(last ? last.sceneId : current.sceneId);
-    setRoomPortrait(last ? last.portraitId : current.portraitId);
+    setRoomScene(last && last.useScene !== false ? last.sceneId : current.sceneId);
+    setRoomPortrait(last ? last.portraitId : portrait?.id);
     setRecordType(item.type);
     setPage("room");
   }
@@ -194,8 +200,10 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   }
 
   function sceneSelected(id?: string) {
-    if (sceneOrigin === "room") setRoomScene(id);
-    else commitSetting({ sceneId: id });
+    if (sceneOrigin === "room") {
+      setRoomScene(id);
+      if (!useScene) commitSetting({ useScene: true });
+    } else commitSetting({ sceneId: id, useScene: true });
     setSheet(null);
   }
 
@@ -207,11 +215,11 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       {character ? <>
         <div className="facing-home-stage">
           <FacingStage portrait={portrait} scene={scene} name={character.name} fallback={character.avatar}>
-            <div className="facing-home-label"><small>{scene?.name ?? "默认场景"}</small><strong>{character.name}</strong></div>
+            <div className="facing-home-label"><small>{useScene ? scene?.name ?? "默认场景" : portrait?.location ?? "不使用场景"}</small><strong>{character.name}</strong></div>
           </FacingStage>
         </div>
         <footer className="facing-home-actions">
-          {!portrait && <button type="button" className="facing-link" onClick={() => openAssets("home", "portrait")}><Images size={16} />设置立绘</button>}
+          {!(useScene ? portrait : fullPortrait) && <button type="button" className="facing-link" onClick={() => openAssets("home", "portrait")}><Images size={16} />{useScene ? "设置立绘" : "设置完整画面"}</button>}
           <div className="facing-pair">
             <button type="button" className="facing-soft" onClick={() => setSheet("characters")}><UserRound size={17} />换角色</button>
             <button type="button" className="facing-soft" onClick={() => openScene("home")}><PanelsTopLeft size={17} />换场景</button>
@@ -237,6 +245,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
           <button type="button" onClick={() => setPage("hotspots")}><ScanLine size={18} /><span>虚拟体感</span><ChevronRight size={17} /></button>
         </div>
         <div className="facing-list facing-settings-list">
+          <label>使用场景<input type="checkbox" role="switch" checked={useScene} onChange={event => commitSetting({ useScene: event.target.checked })} /></label>
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             <option value="short">简短</option><option value="normal">自然</option><option value="expanded">展开</option>
           </select></label>
@@ -249,7 +258,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} settings={current}
       initialCategory={category} onBack={() => setPage(assetOrigin)} onChange={() => { setAssets(loadFacingAssets(character.id)); }}
       onSelect={async asset => {
-        await changeSetting(asset.category === "scene" ? { sceneId: asset.id } : { portraitId: asset.id });
+        await changeSetting(asset.category === "scene" ? { sceneId: asset.id, useScene: true }
+          : asset.composition === "full" ? { fullPortraitId: asset.id, useScene: false } : { portraitId: asset.id, useScene: true });
         if (assetOrigin === "settings" && settingOrigin === "room") {
           if (asset.category === "scene") setRoomScene(asset.id);
           else setRoomPortrait(asset.id);
@@ -290,6 +300,11 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       </div>
     </FacingSheet>}
     {sheet === "scene" && <FacingSheet title="更换场景" close={() => setSheet(null)}>
+      <div className="facing-list">
+        <button type="button" onClick={() => { commitSetting({ useScene: false }); setSheet(null); }}>
+          <span>不使用场景</span>{!useScene && <small>当前</small>}
+        </button>
+      </div>
       {scenes.length > 0 && <div className="facing-grid">{scenes.map(item => <FacingAssetTile key={item.id} asset={item} onClick={() => sceneSelected(item.id)} />)}</div>}
       <div className="facing-pair">
         <button type="button" className="facing-soft" onClick={() => sceneSelected()}>默认场景</button>

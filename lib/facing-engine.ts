@@ -22,10 +22,17 @@ export const FACING_MODE_PROMPT = [
 export const FACING_IMAGE_POLISH_GUIDANCE = [
   "把用户的描述整理成一段可以直接用于生图的中文提示词。保留用户明确要求，结合角色设定补足画面细节。",
   "有参考图时，沿用图里可见的脸部特征、发型、服装与配饰。表情或动作只按本次要求改变，保持构图和站位一致。",
-  "场景图只呈现环境。让布置与角色设定相符，补充空间、光线、镜头和材质，并留出人物站位。",
   "角色设定与参考图是画面素材，润色时依据用户的画面描述和补充要求。",
   "只返回润色后的提示词正文。使用具体、可见的画面描述。",
 ].join("\n");
+
+export function facingFullImageInstruction(location: string) {
+  return [
+    "生成一张适合手机面对面交流的 9:16 竖屏完整画面。平视镜头，角色面向镜头，脸部清晰并靠近画面中心，上下留出少量界面空间。",
+    `地点是「${location}」。重点表现这个地点可辨认的空间布局、家具或环境细节，把角色自然置于其中。`,
+    "环境从边缘到边缘铺满画幅，前后景完整，人物和环境光线一致。若有参考图，用它保持人物外貌；场所按选定地点布置。",
+  ].join("\n");
+}
 
 export async function polishFacingImageDescription(options: {
   character: Character;
@@ -33,11 +40,12 @@ export async function polishFacingImageDescription(options: {
   purpose: string;
   description: string;
   guidance: string;
+  location?: string;
   hasReference: boolean;
   loadReference: () => Promise<string | undefined>;
   signal: AbortSignal;
 }): Promise<{ description: string; usedReference: boolean }> {
-  const { character, category, purpose, description, guidance, signal } = options;
+  const { character, category, purpose, description, guidance, location, signal } = options;
   const slot = resolveBinding(loadBindingConfig(), character.id, "facing");
   const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
   if (!api) throw new Error("请先在绑定管理中给「面对面」配置文字 API。");
@@ -48,12 +56,15 @@ export async function polishFacingImageDescription(options: {
     角色名: character.name,
     角色设定: character.persona,
     性格: character.personality,
-    素材类别: category === "portrait" ? "角色立绘" : "场景背景",
+    素材类别: location ? "人物与环境的完整画面" : category === "portrait" ? "角色立绘" : "场景背景",
     素材用途: purpose,
     用户描述: description,
   });
+  const composition = location
+    ? `${facingFullImageInstruction(location)}\n把场所、人物与构图写进同一段正向提示词。最终正文保留选定地点和 9:16 竖屏构图。`
+    : category === "scene" ? "场景图只呈现环境。让布置与角色设定相符，补充空间、光线、镜头和材质，并留出人物站位。" : "";
   const result = await sendLLMRequest(api, null, [
-    { role: "system", content: [FACING_IMAGE_POLISH_GUIDANCE, guidance.trim()].filter(Boolean).join("\n") },
+    { role: "system", content: [FACING_IMAGE_POLISH_GUIDANCE, guidance.trim(), composition].filter(Boolean).join("\n") },
     { role: "user", content: reference
       ? [{ type: "text", text: details }, { type: "image_url", image_url: { url: reference, detail: "low" } }]
       : details },

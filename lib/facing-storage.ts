@@ -10,6 +10,7 @@ registerKvMigration(FACING_ASSETS_KEY);
 
 export const FACING_REACTIONS = ["微笑", "开心", "生气", "吃醋", "脸红", "坏笑"];
 export const FACING_PARTS = ["脸颊", "眼睛", "嘴巴", "耳朵", "胸口", "小腹", "手"];
+export const FACING_IMAGE_LOCATIONS = ["客厅", "阳台", "卧室", "书房", "厨房", "户外"] as const;
 export const FACING_MEDIA_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/apng,image/avif,video/mp4,video/webm,video/quicktime,.apng";
 const MEDIA_TYPES = new Set(FACING_MEDIA_ACCEPT.split(",").filter(value => !value.startsWith(".")));
 
@@ -23,6 +24,8 @@ export type FacingAsset = {
   mediaType: string;
   durationMs: number;
   layout?: VnAssetLayout;
+  composition?: "full";
+  location?: string;
 };
 
 export type FacingHotspot = {
@@ -36,7 +39,9 @@ export type FacingHotspot = {
 
 export type FacingCharacterSettings = {
   portraitId?: string;
+  fullPortraitId?: string;
   sceneId?: string;
+  useScene?: boolean;
   length?: "short" | "normal" | "expanded";
   voice?: boolean;
   touch?: boolean;
@@ -54,6 +59,7 @@ export type FacingTurn = {
   at: string;
   sceneId?: string;
   sceneName: string;
+  useScene?: boolean;
   portraitId?: string;
   reactionId?: string;
   reactionName?: string;

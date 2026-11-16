@@ -4,10 +4,10 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ChevronRight, ImagePlus, Plus, Sparkles } from "lucide-react";
 import type { Character } from "@/lib/character-types";
 import { loadDwellingLayout } from "@/lib/dwelling-storage";
-import { polishFacingImageDescription } from "@/lib/facing-engine";
-import { FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingId, facingMediaType, saveFacingAsset, updateFacingAsset,
+import { facingFullImageInstruction, polishFacingImageDescription } from "@/lib/facing-engine";
+import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingId, facingMediaType, saveFacingAsset, updateFacingAsset,
   type FacingAsset, type FacingCharacterSettings } from "@/lib/facing-storage";
-import { generateImageFromConfiguredApi } from "@/lib/image-generation-service";
+import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "@/lib/image-generation-service";
 import { removeConnectedEdgeBackgroundFromDataUrl } from "@/lib/image-background-removal";
 import { loadMediaBlob } from "@/lib/media-cache-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
@@ -17,6 +17,7 @@ import { FacingMedia, useFacingMediaUrl } from "./facing-stage";
 
 type Category = FacingAsset["category"];
 type View = "list" | "add" | "vn" | "dwelling" | "edit" | "generate";
+type Candidate = { blob: Blob; url: string; mediaType: string } & Pick<FacingAsset, "composition" | "location">;
 
 function FacingDwellingScenes({ characterId, onSelect }: {
   characterId: string;
@@ -57,7 +58,7 @@ export function FacingAssetTile({ asset, onClick }: { asset: FacingAsset; onClic
   return <button type="button" className="facing-asset-tile" onClick={onClick}>
     <span className="facing-thumb">{url ? <FacingMedia url={url} mediaType={asset.mediaType} name="" /> : <ImagePlus size={23} aria-hidden />}</span>
     <span>{asset.name}</span>
-    <small>{asset.use === "idle" ? "待机" : asset.use === "reaction" ? "反应" : "场景"}</small>
+    <small>{asset.use === "idle" ? "待机" : asset.use === "reaction" ? "反应" : "场景"}{asset.composition === "full" && ` · ${asset.location || "完整画面"}`}</small>
   </button>;
 }
 
@@ -82,12 +83,14 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
   const [category, setCategory] = useState<Category>(initialCategory);
   const [view, setView] = useState<View>("list");
   const [edited, setEdited] = useState<FacingAsset>();
-  const [candidate, setCandidate] = useState<{ blob: Blob; url: string; mediaType: string }>();
+  const [candidate, setCandidate] = useState<Candidate>();
   const [name, setName] = useState("");
   const [use, setUse] = useState<FacingAsset["use"]>("idle");
   const [duration, setDuration] = useState(3);
   const [layout, setLayout] = useState<VnAssetLayout>({});
   const [description, setDescription] = useState("");
+  const [location, setLocation] = useState<string>(FACING_IMAGE_LOCATIONS[0]);
+  const [customLocation, setCustomLocation] = useState("");
   const [originalDescription, setOriginalDescription] = useState<string>();
   const [polishGuidance, setPolishGuidance] = useState("");
   const [polishNotice, setPolishNotice] = useState("");
@@ -99,9 +102,14 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
   const control = useRef<AbortController | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const editedUrl = useFacingMediaUrl(edited);
-  const currentPortrait = assets.find(item => item.id === settings.portraitId && item.category === "portrait" && item.use === "idle");
+  const fullGeneration = category === "portrait" && settings.useScene === false;
+  const layeredPortrait = assets.find(item => item.id === settings.portraitId && item.use === "idle");
+  const fullPortrait = assets.find(item => item.id === settings.fullPortraitId && item.use === "idle");
+  const currentPortrait = settings.useScene === false ? fullPortrait ?? layeredPortrait : layeredPortrait;
+  const targetLocation = fullGeneration ? (location === "custom" ? customLocation.trim() : location) : undefined;
+  const fullAsset = (candidate ?? edited)?.composition === "full";
   const visible = assets.filter(item => item.category === category);
-  const layoutDefaults = { x: 50, y: category === "portrait" ? 100 : 50, scale: 100 };
+  const layoutDefaults = { x: 50, y: category === "portrait" && !fullAsset ? 100 : 50, scale: 100 };
 
   useEffect(() => () => control.current?.abort(), []);
   useEffect(() => () => {
@@ -130,11 +138,11 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
       return;
     }
     setEdited(undefined);
-    setCandidate({ blob: file, url: URL.createObjectURL(file), mediaType });
+    setCandidate({ blob: file, url: URL.createObjectURL(file), mediaType, composition: fullGeneration ? "full" : undefined });
     setName(filename.replace(/\.[^./]+$/, "").slice(0, 50));
-    setUse(category === "scene" ? "scene" : visible.some(item => item.use === "idle") ? "reaction" : "idle");
+    setUse(category === "scene" ? "scene" : visible.some(item => item.use === "idle" && (item.composition === "full") === fullGeneration) ? "reaction" : "idle");
     setDuration(3);
-    setLayout(sourceLayout ?? {});
+    setLayout(fullGeneration ? {} : sourceLayout ?? {});
     setError("");
     setView("edit");
   }
@@ -165,16 +173,21 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
   function openGeneration() {
     setEdited(undefined);
     setCandidate(undefined);
-    setReference(category === "portrait" && currentPortrait && !currentPortrait.mediaType.startsWith("video/") ? "portrait"
-      : category === "portrait" && character.avatar ? "avatar" : "text");
+    const canGenerateFromReference = resolveConfiguredImageGenerationSettings(character.id, "facing").provider !== "novelai";
+    setReference(category === "portrait" && canGenerateFromReference && currentPortrait && !currentPortrait.mediaType.startsWith("video/") ? "portrait"
+      : category === "portrait" && canGenerateFromReference && character.avatar ? "avatar" : "text");
     setReferenceFile(undefined);
     setDescription("");
+    const previousLocation = fullPortrait?.location;
+    const presetLocation = FACING_IMAGE_LOCATIONS.find(item => item === previousLocation);
+    setLocation(presetLocation ?? (previousLocation ? "custom" : FACING_IMAGE_LOCATIONS[0]));
+    setCustomLocation(previousLocation && !presetLocation ? previousLocation : "");
     setOriginalDescription(undefined);
     setPolishNotice("");
     setName(category === "portrait" ? "待机" : "");
     setUse(category === "portrait" ? "idle" : "scene");
     setDuration(3);
-    setLayout(category === "portrait" ? currentPortrait?.layout ?? {} : {});
+    setLayout(category === "portrait" ? (fullGeneration ? fullPortrait : layeredPortrait)?.layout ?? {} : {});
     setError("");
     setView("generate");
   }
@@ -197,6 +210,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
 
   async function polish() {
     if (busy || control.current) return;
+    if (fullGeneration && !targetLocation) { setError("请填写画面地点。"); return; }
     if (reference === "file" && !referenceFile) { setError("请先上传参考图。"); return; }
     const run = new AbortController();
     control.current = run;
@@ -207,8 +221,8 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
     setPolishNotice("");
     try {
       const result = await polishFacingImageDescription({
-        character, category, purpose: name.trim() || (use === "reaction" ? "表情或动作" : use === "idle" ? "待机立绘" : "场景"),
-        description, guidance: polishGuidance, hasReference, loadReference: () => loadReference(true, run.signal), signal: run.signal,
+        character, category, purpose: name.trim() || (use === "reaction" ? "表情或动作" : use === "idle" ? "待机" : "场景"),
+        description, guidance: polishGuidance, location: targetLocation, hasReference, loadReference: () => loadReference(true, run.signal), signal: run.signal,
       });
       if (run.signal.aborted) return;
       setOriginalDescription(description);
@@ -229,24 +243,26 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
 
   async function generate(event: FormEvent) {
     event.preventDefault();
-    if (control.current || !description.trim()) return;
+    if (control.current || (fullGeneration ? !targetLocation : !description.trim())) return;
     setBusy(true);
     setError("");
     const run = new AbortController();
     control.current = run;
     try {
       const ref = await loadReference(false, run.signal);
-      const instruction = category === "scene"
+      const instruction = targetLocation ? facingFullImageInstruction(targetLocation) : category === "scene"
         ? "生成竖屏场景背景，镜头平视，预留人物站位，画面中没有人物。"
         : "生成竖屏角色前景立绘，人物边缘完整。沿用参考图的脸部特征、发型、服装、镜头高度和站位。输出透明底。若只能生成实底，请使用单一纯色底。";
       const result = await generateImageFromConfiguredApi({
-        characterId: character.id, appId: "facing", description: `${instruction}\n用途：${name || "场景"}\n${description.trim()}`,
+        characterId: character.id, appId: "facing", description: [instruction, `用途：${name.trim() || (category === "portrait" ? "人物待机" : "场景")}`, description.trim()].filter(Boolean).join("\n"),
         referenceSelection: { character: false, user: false }, explicitReferenceImage: ref ?? undefined,
+        portraitOutput: Boolean(targetLocation),
         signal: run.signal,
       });
       if (run.signal.aborted) return;
       if (!result) throw new Error("先在设置里启用生图并为「面对面」绑定配置。");
-      setCandidate({ blob: result.blob, url: result.dataUrl, mediaType: facingMediaType(result.blob) || "image/png" });
+      setCandidate({ blob: result.blob, url: result.dataUrl, mediaType: facingMediaType(result.blob) || "image/png",
+        composition: targetLocation ? "full" : undefined, location: targetLocation });
     } catch (cause) {
       if (!run.signal.aborted) setError(cause instanceof Error ? cause.message : "生图失败，请重试。");
     } finally {
@@ -273,7 +289,8 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
     setError("");
     try {
       const changes = { category, characterId: character.id, name: name.trim(), use, layout, durationMs: duration * 1000 };
-      const asset = edited ? { ...edited, ...changes } : await saveFacingAsset({ ...changes, id: facingId() }, candidate!.blob, candidate!.mediaType);
+      const asset = edited ? { ...edited, ...changes } : await saveFacingAsset({ ...changes, id: facingId(),
+        composition: candidate!.composition, location: candidate!.location }, candidate!.blob, candidate!.mediaType);
       if (edited) await updateFacingAsset(asset);
       // Keep the saved asset available even if setting it active needs a retry.
       setEdited(asset);
@@ -325,7 +342,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
         <div className="facing-form-layout">
           <label>横向位置<input type="range" min={0} max={100} value={layout.x ?? layoutDefaults.x} onChange={event => setLayout({ ...layout, x: +event.target.value })} /></label>
           <label>纵向位置<input type="range" min={0} max={100} value={layout.y ?? layoutDefaults.y} onChange={event => setLayout({ ...layout, y: +event.target.value })} /></label>
-          <label>缩放<input type="range" min={category === "scene" ? 100 : 40} max={180} value={layout.scale ?? layoutDefaults.scale} onChange={event => setLayout({ ...layout, scale: +event.target.value })} /></label>
+          <label>缩放<input type="range" min={category === "scene" || fullAsset ? 100 : 40} max={180} value={layout.scale ?? layoutDefaults.scale} onChange={event => setLayout({ ...layout, scale: +event.target.value })} /></label>
         </div>
         <div className="facing-pair"><button type="button" className="facing-soft" disabled={busy || !name.trim()} onClick={() => void save(false)}>保存到资源</button>
           {use !== "reaction" && <button type="button" className="facing-primary" disabled={busy || !name.trim()} onClick={() => void save(true)}>
@@ -339,9 +356,17 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
           <option value="idle">待机立绘</option><option value="reaction">表情或动作</option>
         </select></label>}
         {use === "reaction" && <div className="facing-choices">{FACING_REACTIONS.map(item => <button type="button" key={item} className="facing-small" onClick={() => setName(item)}>{item}</button>)}</div>}
+        {fullGeneration && <>
+          <label>画面地点<select value={location} disabled={busy} onChange={event => setLocation(event.target.value)}>
+            {FACING_IMAGE_LOCATIONS.map(place => <option key={place}>{place}</option>)}
+            <option value="custom">自定义</option>
+          </select></label>
+          {location === "custom" && <label>自定义地点<input value={customLocation} disabled={busy} required maxLength={100}
+            placeholder="例如深夜的酒店落地窗边" onChange={event => setCustomLocation(event.target.value)} /></label>}
+        </>}
         <label>出图方式<select aria-label="出图方式" value={reference} onChange={event => setReference(event.target.value)}>
           <option value="text">文字生成</option>
-          {currentPortrait && !currentPortrait.mediaType.startsWith("video/") && <option value="portrait">参考当前待机立绘</option>}
+          {currentPortrait && !currentPortrait.mediaType.startsWith("video/") && <option value="portrait">{currentPortrait.composition === "full" ? "参考当前完整画面" : "参考当前待机立绘"}</option>}
           {character.avatar && <option value="avatar">参考角色头像</option>}
           <option value="file">上传参考图</option>
         </select></label>
@@ -354,7 +379,7 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
             </button>
           </div>
           <textarea id="facing-image-description" value={description} onChange={event => setDescription(event.target.value)}
-            rows={4} disabled={polishing} required />
+            rows={4} disabled={polishing} required={!fullGeneration} placeholder={fullGeneration ? "可补充光线、衣着或动作" : undefined} />
           {polishNotice && <div className="facing-polish-result">
             <span role="status">{polishNotice}</span>
             {originalDescription !== undefined && <button type="button" className="facing-link" disabled={busy} onClick={() => {
@@ -369,11 +394,11 @@ export function FacingAssets({ character, assets, settings, initialCategory, onB
               rows={2} disabled={busy} placeholder="例如保留现有构图，突出冷蓝光" /></label>
           </details>
         </div>
-        <button className="facing-primary" disabled={busy || !description.trim()}>{busy && !polishing ? "正在生成…" : candidate ? "再生成一张" : "生成预览"}</button>
+        <button className="facing-primary" disabled={busy || (fullGeneration ? !targetLocation : !description.trim())}>{busy && !polishing ? "正在生成…" : candidate ? "再生成一张" : "生成预览"}</button>
         {candidate && <>
           <div className="facing-material-preview"><FacingMedia url={candidate.url} mediaType={candidate.mediaType} name="候选素材" /></div>
-          <div className="facing-pair">
-            {category === "portrait" && <button type="button" className="facing-soft" disabled={busy} onClick={() => void removeBackground()}>去底</button>}
+          <div className={fullAsset ? "facing-form" : "facing-pair"}>
+            {category === "portrait" && !fullAsset && <button type="button" className="facing-soft" disabled={busy} onClick={() => void removeBackground()}>去底</button>}
             <button type="button" className="facing-primary" disabled={busy} onClick={() => setView("edit")}>使用这张</button>
           </div>
         </>}

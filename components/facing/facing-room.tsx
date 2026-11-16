@@ -94,7 +94,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, reac
     setError("");
     stopReaction();
     let stored = Boolean(retry);
-    const fields = { sceneId: scene?.id, sceneName: scene?.name ?? "默认场景", portraitId: portrait?.id };
+    const useScene = settings.useScene !== false;
+    const fields = {
+      useScene, sceneId: scene?.id, sceneName: useScene ? scene?.name ?? "默认场景" : portrait?.location ?? "未指定地点",
+      portraitId: portrait?.id,
+    };
     const user: FacingTurn = retry ?? { ...fields, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString() };
     try {
       const current = retry ? meeting : await appendFacingTurn(meeting, user);
