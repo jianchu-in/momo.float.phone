@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_SCENE, FACING_PARTS, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -107,6 +107,7 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
       <ol className="facing-turns">
         {record.turns.map(turn => <li key={turn.id} data-role={turn.role}>
           <small>{turn.role === "assistant" ? character.name : "你"} · {turn.sceneName}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
+          {turn.action && <p className="facing-action">{turn.action}</p>}
           {turn.text && <p>{turn.kind === "touch" ? `触碰了${turn.text}` : turn.text}</p>}
           {turn.reactionName && <em>{turn.reactionName}</em>}
         </li>)}
@@ -241,7 +242,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         </div>
         <div className="facing-list facing-settings-list">
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
-            <option value="short">简短</option><option value="normal">自然</option><option value="expanded">展开</option>
+            {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}
           </select></label>
           <label>角色语音<input type="checkbox" role="switch" checked={current.voice !== false} onChange={event => commitSetting({ voice: event.target.checked })} /></label>
           <label>启用触碰区域<input type="checkbox" role="switch" checked={current.touch !== false} onChange={event => commitSetting({ touch: event.target.checked })} /></label>

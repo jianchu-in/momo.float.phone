@@ -66,6 +66,8 @@ export type ChatSession = {
     autoReplied?: boolean; // Whether the initial greeting auto-reply has been triggered
     alias?: string;
     videoBackground?: string;
+    /** 视频通话的可见动作描述，按会话保存。未设置时关闭。 */
+    videoCallActions?: boolean;
     voiceBackground?: string;
     isBlacklisted?: boolean;
     customCSS?: string;

@@ -12,6 +12,11 @@ export const FACING_REACTIONS = ["微笑", "开心", "生气", "吃醋", "脸红
 export const FACING_PARTS = ["脸颊", "眼睛", "嘴巴", "耳朵", "胸口", "小腹", "手"];
 export const FACING_IMAGE_LOCATIONS = ["客厅", "阳台", "卧室", "书房", "厨房", "户外"] as const;
 export const FACING_DEFAULT_SCENE = "默认场景";
+export const FACING_REPLY_LENGTHS = {
+  short: { label: "简短", characters: 50 },
+  normal: { label: "自然", characters: 150 },
+  expanded: { label: "展开", characters: 300 },
+} as const;
 export const FACING_MEDIA_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/apng,image/avif,video/mp4,video/webm,video/quicktime,.apng";
 const MEDIA_TYPES = new Set(FACING_MEDIA_ACCEPT.split(",").filter(value => !value.startsWith(".")));
 
@@ -100,7 +105,7 @@ export type FacingCharacterSettings = {
   fullPortraitId?: string;
   sceneId?: string;
   useScene?: boolean;
-  length?: "short" | "normal" | "expanded";
+  length?: keyof typeof FACING_REPLY_LENGTHS;
   voice?: boolean;
   touch?: boolean;
   memory?: boolean;
@@ -114,6 +119,7 @@ export type FacingTurn = {
   role: "user" | "assistant";
   kind: "text" | "voice" | "touch" | "reply";
   text: string;
+  action?: string;
   at: string;
   sceneId?: string;
   sceneName: string;

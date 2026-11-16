@@ -1,9 +1,10 @@
 import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
+import { splitVisibleCallActions } from "./call-action-text";
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
-import { loadFacingMeetings, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { FACING_REPLY_LENGTHS, loadFacingMeetings, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -15,9 +16,10 @@ import { cleanStreamText } from "./stream-preview";
 export const FACING_MODE_PROMPT = [
   "你和用户此刻在同一个场景里面对面交流。保持角色人设与你们的关系，用自然的即时短句回答。",
   "语音转写是用户当面说的话，触碰事件是用户在你面前做的动作。根据部位、当前心情与关系作出反应。",
-  "只输出 JSON 对象。dialogue 是实际说出口的台词，scene_id 是已抵达的可选场景 ID 或 null，reaction_id 是所在场景的反应 ID 或 null。",
+  "只输出 JSON 对象。dialogue 只写实际说出口的台词。action 写看得见的动作或表情，每段用中文括号（），例如（放下杯子，朝你笑了笑）。没有可见动作时填空字符串，不写心理活动。",
+  "scene_id 是已抵达的可选场景 ID 或 null，reaction_id 是所在场景的反应 ID 或 null。",
   "仅当本轮对话明确表示双方已经转移到另一个地点时填写 scene_id。提到地点、邀请、计划或回忆时保持当前场景。切换时自然衔接对话。",
-  "动作与神情用 reaction_id 呈现。允许安静时只做动作，也允许说话时保持默认画面。",
+  "有对应反应素材时可同时填写 reaction_id。允许安静时只做动作，也允许说话时保持默认画面。",
 ].join("\n");
 
 export const FACING_IMAGE_POLISH_GUIDANCE = [
@@ -74,8 +76,6 @@ export async function polishFacingImageDescription(options: {
   return { description: polished, usedReference: !!reference };
 }
 
-const LENGTH_TEXT = { short: "默认一到两句。", normal: "通常两到三句。", expanded: "可回三到五句，保持当面对话节奏。" };
-
 function toPromptHistory(meeting: FacingMeeting, useMemory: boolean): ChatMessage[] {
   const earlier = useMemory && meeting.type === "main" ? loadFacingMeetings(meeting.characterId, meeting.identityId)
     .filter(record => record.id !== meeting.id && record.type === "main" && record.createdAt <= meeting.createdAt)
@@ -86,6 +86,7 @@ function toPromptHistory(meeting: FacingMeeting, useMemory: boolean): ChatMessag
     role: turn.role,
     content: [
       turn.sceneName && turn.sceneName !== turns[index - 1]?.sceneName ? `【当时的场景：${turn.sceneName}】` : "",
+      turn.action,
       turn.kind === "touch" ? `【用户当面触碰了你的${turn.text}】` : turn.text,
       turn.reactionName ? `【当时的反应：${turn.reactionName}】` : "",
     ].filter(Boolean).join("\n"),
@@ -101,7 +102,7 @@ export async function generateFacingReply(options: {
   scene: string;
   scenes: FacingSceneGroup[];
   signal: AbortSignal;
-}): Promise<{ dialogue: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup }> {
+}): Promise<{ dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup }> {
   const { character, meeting, settings, scene, scenes, signal } = options;
   const destinations = scenes.filter(item => item.name !== scene);
   const summarizeReactions = (group?: FacingSceneGroup) => (group?.reactions ?? []).map(asset => ({ id: asset.id, name: asset.name }));
@@ -143,7 +144,8 @@ export async function generateFacingReply(options: {
   const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
   const mode: LLMMessage = {
     role: "system",
-    content: [FACING_MODE_PROMPT, LENGTH_TEXT[settings.length ?? "short"], JSON.stringify({
+    content: [FACING_MODE_PROMPT,
+      `每轮回复约 ${(FACING_REPLY_LENGTHS[settings.length ?? "short"] ?? FACING_REPLY_LENGTHS.short).characters} 个中文字，台词和动作合计。字数是目标，保持当面说话的节奏，可按语境缩短。`, JSON.stringify({
       角色: character.name, 用户: identity?.name ?? "用户", 当前场景: scene,
       当前场景反应: summarizeReactions(currentScene),
       可切换场景: destinations.map(group => ({ id: group.name, 可用反应: summarizeReactions(group) })),
@@ -160,18 +162,23 @@ export async function generateFacingReply(options: {
   const text = cleanStreamText(output, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] }).trim();
   const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/gi, "");
   let dialogue = unfenced;
+  let action = "";
   let reaction: FacingAsset | undefined;
   let nextScene: FacingSceneGroup | undefined;
   if (unfenced.startsWith("{")) {
     try {
-      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; reaction_id?: unknown; scene_id?: unknown };
+      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown };
       dialogue = typeof parsed.dialogue === "string" ? parsed.dialogue.trim() : "";
+      action = typeof parsed.action === "string" ? parsed.action.trim() : "";
       nextScene = destinations.find(group => group.name === parsed.scene_id);
       reaction = (nextScene ?? currentScene)?.reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
     } catch {
       throw new Error("角色回应格式有误，可以重试。");
     }
   }
-  if (!dialogue && !reaction && !nextScene) throw new Error("这一轮没有可显示的回应，可以重试。");
-  return { dialogue, reaction, nextScene };
+  const line = splitVisibleCallActions(dialogue);
+  const movement = splitVisibleCallActions(action);
+  const visibleAction = [...new Set([...movement.actions, ...(movement.speech ? [`（${movement.speech}）`] : []), ...line.actions])].join(" ");
+  if (!line.speech && !visibleAction && !reaction && !nextScene) throw new Error("这一轮没有可显示的回应，可以重试。");
+  return { dialogue: line.speech, action: visibleAction || undefined, reaction, nextScene };
 }

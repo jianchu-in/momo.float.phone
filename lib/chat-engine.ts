@@ -3,6 +3,7 @@
 import { createSseJsonParser } from "./sse-json";
 import { maybeAppendShortcutCapability } from "./offline-shortcut-capability";
 import { loadCharacters } from "./character-storage";
+import { videoCallActionInstruction } from "./call-action-text";
 import { buildScreenEffectPromptHint } from "./chat-screen-effects";
 import { emitChatPluginEvent, runChatPluginTransform } from "./chat-plugin-hooks";
 import { buildChatPluginPromptFragments } from "./chat-plugin-storage";
@@ -2103,6 +2104,9 @@ export async function buildChatPromptMessages(
             role: "system",
             content: "本次自定义 APP AI 任务只输出严格 JSON。不要输出 Markdown 代码块、解释文字或聊天富媒体指令。",
         });
+    }
+    if (!isOfflineMode && effectiveAppTags?.includes("video")) {
+        llmMessages.push({ role: "system", content: videoCallActionInstruction(session.videoCallActions === true) });
     }
     appendEmptyGenerateGuardMessage(llmMessages, config, historyForPrompt);
 

@@ -6162,6 +6162,18 @@
 .gcall-topbar-sub[data-anim] {
   animation: voicecall-pulse 1.5s ease-in-out infinite;
 }
+.videocall-actions-toggle {
+  min-height: 32px;
+  margin-top: 7px;
+  padding: 4px 10px;
+  border: 1px solid #ffffff46;
+  border-radius: 999px;
+  background: #1a152f80;
+  color: #fff;
+  font-size: calc(12px * var(--app-text-scale,1));
+}
+.videocall-actions-toggle[aria-checked="true"] { background: #ebe2ff; color: #2f2544; }
+.videocall-actions-toggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* ── Participant grid ── */
 .gcall-grid {

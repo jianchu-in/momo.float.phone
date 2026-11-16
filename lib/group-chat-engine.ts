@@ -5,6 +5,7 @@ import { ChatSession, ChatMessage, loadChatAppSettings, createResponseBatchId, c
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, RegexConfig } from "./settings-types";
 import { loadCharacters } from "./character-storage";
+import { videoCallActionInstruction } from "./call-action-text";
 import { buildScreenEffectPromptHint } from "./chat-screen-effects";
 import { runChatPluginTransform } from "./chat-plugin-hooks";
 import { buildChatPluginPromptFragments } from "./chat-plugin-storage";
@@ -526,6 +527,9 @@ async function buildGroupChatPromptMessages(
             role: "system",
             content: "本次自定义 APP AI 任务只输出严格 JSON。不要输出 Markdown 代码块、解释文字或聊天富媒体指令。",
         });
+    }
+    if (!isOfflineMode && activeAppTags.includes("video")) {
+        llmMessages.push({ role: "system", content: videoCallActionInstruction(session.videoCallActions === true) });
     }
     appendEmptyGenerateGuardMessage(llmMessages, config, history);
 

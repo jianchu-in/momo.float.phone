@@ -4,12 +4,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowUp, ChevronLeft, Keyboard, Mic, PhoneOff, Settings2, Volume2, VolumeX } from "lucide-react";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { useCallKeyboardOffsetStyle } from "@/components/chat/use-call-keyboard-offset";
+import { isAndroidBrowser, isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
 import { appendFacingTurn, facingId, facingScenePosition, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, type STTSession } from "@/lib/stt-service";
-import { playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
+import { playAudioBlob, playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingStage } from "./facing-stage";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, onMeeting, onSettings, onEnd, onVoice }: {
@@ -25,23 +26,30 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   onEnd: () => void;
   onVoice: (enabled: boolean) => void;
 }) {
-  const prior = meeting.turns.filter(turn => turn.role === "assistant").at(-1);
-  const [reply, setReply] = useState(prior?.text ?? "");
-  const [reactionLabel, setReactionLabel] = useState("");
   const [reaction, setReaction] = useState<FacingAsset>();
   const [draft, setDraft] = useState("");
   const [voiceInput, setVoiceInput] = useState(false);
   const [browserListening, setBrowserListening] = useState(false);
+  const [interimText, setInterimText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
   const recording = useRef<STTSession | null>(null);
+  const interim = useRef("");
+  const log = useRef<HTMLDivElement>(null);
+  const followLog = useRef(true);
   const playback = useRef<ReturnType<typeof playAudioBlobViaMediaElement> | null>(null);
   const audioRequest = useRef(0);
-  const cloudStt = !!resolveCloudSttConfig(character.id, "facing") && isCallRecordingSupported();
+  const iosDevice = useRef(isIOSDevice()).current;
+  const cloudStt = !iosDevice && isCallRecordingSupported() && !!resolveCloudSttConfig(character.id);
+  const androidTextOnly = isAndroidBrowser() && !cloudStt;
   const voiceOn = settings.voice !== false;
   const points = settings.touch === false ? [] : settings.hotspots?.[portrait?.id ?? "avatar"] ?? [];
   const failedTurn = meeting.turns.at(-1);
+
+  useEffect(() => {
+    if (log.current && (followLog.current || failedTurn?.role === "user")) log.current.scrollTop = log.current.scrollHeight;
+  }, [failedTurn, busy, interimText, error]);
 
   useEffect(() => () => {
     controller.current?.abort();
@@ -52,7 +60,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   useEffect(() => {
     if (!reaction) return;
-    const timer = window.setTimeout(() => { setReaction(undefined); setReactionLabel(""); }, reaction.durationMs);
+    const timer = window.setTimeout(() => setReaction(undefined), reaction.durationMs);
     return () => window.clearTimeout(timer);
   }, [reaction]);
 
@@ -64,7 +72,6 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   function stopReaction() {
     setReaction(undefined);
-    setReactionLabel("");
   }
 
   async function speak(text: string, run: AbortSignal) {
@@ -75,7 +82,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     try {
       const audio = await synthesizeSpeech(text, voice);
       if (!audio || audioRequest.current !== request || run.aborted) return;
-      playback.current = playAudioBlobViaMediaElement(audio);
+      playback.current = (iosDevice ? playAudioBlob : playAudioBlobViaMediaElement)(audio);
       await playback.current.promise;
     } catch {
       if (audioRequest.current === request && !run.aborted) setError("角色语音播放失败，台词已保存。");
@@ -93,6 +100,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     setBusy(true);
     setError("");
     stopReaction();
+    if (!retry) followLog.current = true;
     let stored = Boolean(retry);
     const user: FacingTurn = retry ?? { ...position, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString() };
     try {
@@ -104,14 +112,12 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (run.signal.aborted) return;
       const saved = await appendFacingTurn(current, {
         ...(result.nextScene ? facingScenePosition(result.nextScene) : position),
-        id: facingId(), role: "assistant", kind: "reply", text: result.dialogue,
+        id: facingId(), role: "assistant", kind: "reply", text: result.dialogue, action: result.action,
         at: new Date().toISOString(), replyTo: user.id, reactionId: result.reaction?.id, reactionName: result.reaction?.name,
       });
       if (run.signal.aborted) return;
       onMeeting(saved);
-      setReply(result.dialogue);
       setReaction(result.reaction);
-      setReactionLabel(result.reaction?.name ?? "");
       void speak(result.dialogue, run.signal);
     } catch (cause) {
       if (!run.signal.aborted) {
@@ -127,7 +133,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   }
 
   const hold = useHoldToTalk({
-    characterId: character.id, appId: "facing", canStart: () => !controller.current,
+    characterId: character.id, canStart: () => !controller.current,
     onRecordingStart: () => { audioRequest.current++; playback.current?.abort(); setError(""); },
     onTranscript: text => { void send(text, "voice"); },
     onError: setError,
@@ -140,14 +146,23 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     playback.current?.abort();
     unlockAudioPlayback();
     setError("");
-    const finish = () => { setBrowserListening(false); recording.current = null; };
+    interim.current = "";
+    const finish = (text = "", issue = "") => {
+      if (recording.current !== session) return;
+      recording.current = null;
+      interim.current = "";
+      setInterimText("");
+      setBrowserListening(false);
+      if (text.trim()) void send(text, "voice");
+      else setError(issue || "没有识别到语音，请再说一次。");
+    };
     const session = createSTTSession({
-      onInterim: () => {},
-      onFinal: text => { finish(); void send(text, "voice"); },
-      onError: message => { finish(); setError(message); },
-      onEnd: finish,
-      onNoSpeech: () => { finish(); setError("没有识别到语音，请再说一次。"); },
-    });
+      onInterim: text => { interim.current = text; setInterimText(text); },
+      onFinal: text => finish(text),
+      onError: message => { finish("", message); setVoiceInput(false); },
+      onEnd: () => finish(interim.current),
+      onNoSpeech: () => finish(),
+    }, "zh-CN");
     recording.current = session;
     setBrowserListening(session.isSupported);
     session.start();
@@ -175,20 +190,31 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       </div>
     </header>
     <div className="facing-room-bottom">
-      {(reply || reactionLabel || busy || error) && <div className="facing-caption facing-glass" aria-live="polite">
-        <small>{character.name}{reactionLabel ? ` · ${reactionLabel}` : ""}</small>
-        {reply && <p>{reply}</p>}
-        {busy && <p>正在回应…</p>}
-        {error && <p role="alert">{error}</p>}
-        {!busy && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"
+      {(meeting.turns.length > 0 || busy || error || interimText) && <div ref={log} className="facing-room-log" role="log"
+        aria-label="对话记录" tabIndex={0} onScroll={event => {
+          const area = event.currentTarget;
+          followLog.current = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
+        }}>
+        {meeting.turns.map(turn => <article key={turn.id} className="facing-glass facing-message" data-role={turn.role}>
+          <small>{turn.role === "assistant" ? character.name : "你"}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
+          {turn.action && <p className="facing-action">{turn.action}</p>}
+          {turn.text && <p>{turn.kind === "touch" ? `（触碰了${turn.text}）` : turn.text}</p>}
+          {!turn.action && !turn.text && <p className="facing-action">{turn.reactionName ? `（${turn.reactionName}）` : `来到${turn.sceneName}`}</p>}
+        </article>)}
+        {interimText && <div className="facing-glass facing-message" data-role="user"><small>语音识别中</small><p>{interimText}</p></div>}
+        {busy && <div className="facing-glass facing-message facing-log-status">正在回应…</div>}
+        {error && <p className="facing-glass facing-message facing-log-status" role="alert">{error}</p>}
+        {!busy && !listening && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"
           onClick={() => void send(failedTurn.text, failedTurn.kind, failedTurn)}>重试回复</button>}
       </div>}
-      {!reply && !reactionLabel && !busy && !error && failedTurn?.role === "user" &&
-        <button type="button" className="facing-glass facing-retry" onClick={() => void send(failedTurn.text, failedTurn.kind, failedTurn)}>重试回复</button>}
       <div className="facing-controls facing-glass">
         <form onSubmit={submit}>
           <button type="button" className="facing-glass facing-icon" disabled={listening}
-            aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => { setVoiceInput(!voiceInput); setError(""); }}>
+            aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
+              if (androidTextOnly) { setError("配置云端语音识别后可按住说话，也可以继续打字。"); return; }
+              setVoiceInput(!voiceInput);
+              setError("");
+            }}>
             {voiceInput ? <Keyboard size={18} /> : <Mic size={18} />}
           </button>
           {voiceInput ? cloudStt
