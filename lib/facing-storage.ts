@@ -107,6 +107,7 @@ export type FacingCharacterSettings = {
   useScene?: boolean;
   length?: keyof typeof FACING_REPLY_LENGTHS;
   voice?: boolean;
+  speechInput?: "browser" | "cloud";
   touch?: boolean;
   memory?: boolean;
   hotspots?: Record<string, FacingHotspot[]>;

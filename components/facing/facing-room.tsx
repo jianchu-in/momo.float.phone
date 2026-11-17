@@ -4,16 +4,16 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowUp, ChevronLeft, Keyboard, Mic, PhoneOff, Settings2, Volume2, VolumeX } from "lucide-react";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { useCallKeyboardOffsetStyle } from "@/components/chat/use-call-keyboard-offset";
-import { isAndroidBrowser, isIOSDevice } from "@/components/chat/voice-input-platform";
+import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
 import { appendFacingTurn, facingId, facingScenePosition, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
-import { createSTTSession, type STTSession } from "@/lib/stt-service";
+import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
 import { playAudioBlob, playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingStage } from "./facing-stage";
 
-export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, onMeeting, onSettings, onEnd, onVoice }: {
+export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, onMeeting, onSettings, onEnd, onVoice, onSpeechInput }: {
   character: Character;
   meeting: FacingMeeting;
   settings: FacingCharacterSettings;
@@ -25,6 +25,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   onSettings: () => void;
   onEnd: () => void;
   onVoice: (enabled: boolean) => void;
+  onSpeechInput: (mode: NonNullable<FacingCharacterSettings["speechInput"]>) => void;
 }) {
   const [reaction, setReaction] = useState<FacingAsset>();
   const [draft, setDraft] = useState("");
@@ -41,8 +42,9 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const playback = useRef<ReturnType<typeof playAudioBlobViaMediaElement> | null>(null);
   const audioRequest = useRef(0);
   const iosDevice = useRef(isIOSDevice()).current;
-  const cloudStt = !iosDevice && isCallRecordingSupported() && !!resolveCloudSttConfig(character.id);
-  const androidTextOnly = isAndroidBrowser() && !cloudStt;
+  const cloudAvailable = !iosDevice && isCallRecordingSupported() && !!resolveCloudSttConfig(character.id);
+  const browserAvailable = isBrowserSpeechRecognitionSupported();
+  const useCloudStt = cloudAvailable && (settings.speechInput !== "browser" || !browserAvailable);
   const voiceOn = settings.voice !== false;
   const points = settings.touch === false ? [] : settings.hotspots?.[portrait?.id ?? "avatar"] ?? [];
   const failedTurn = meeting.turns.at(-1);
@@ -136,7 +138,18 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     characterId: character.id, canStart: () => !controller.current,
     onRecordingStart: () => { audioRequest.current++; playback.current?.abort(); setError(""); },
     onTranscript: text => { void send(text, "voice"); },
-    onError: setError,
+    onError: message => {
+      if (/^语音识别 API 错误 (401|403)\b|令牌无效|invalid (?:token|api[ _-]?key)/i.test(message)) {
+        if (browserAvailable) {
+          onSpeechInput("browser");
+          setError("云端语音识别认证失败，已切换到浏览器识别，请重新说一次。");
+        } else {
+          setError("云端语音识别认证失败，请检查语音识别配置的地址和密钥。");
+        }
+        return;
+      }
+      setError(message);
+    },
   });
   const keyboardOffset = useCallKeyboardOffsetStyle();
 
@@ -211,13 +224,13 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         <form onSubmit={submit}>
           <button type="button" className="facing-glass facing-icon" disabled={listening}
             aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
-              if (androidTextOnly) { setError("配置云端语音识别后可按住说话，也可以继续打字。"); return; }
+              if (!cloudAvailable && !browserAvailable) { setError("当前浏览器无法直接识别语音。可以配置云端语音识别，或使用文字输入。"); return; }
               setVoiceInput(!voiceInput);
               setError("");
             }}>
             {voiceInput ? <Keyboard size={18} /> : <Mic size={18} />}
           </button>
-          {voiceInput ? cloudStt
+          {voiceInput ? useCloudStt
             ? <button type="button" className="facing-glass facing-hold" disabled={busy || hold.recState === "transcribing"} {...hold.pressHandlers}>
                 {hold.recState === "recording" ? "松开发送" : hold.recState === "transcribing" ? "正在识别…" : "按住说话"}
               </button>
@@ -229,6 +242,10 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
               <button type="submit" className="facing-glass facing-icon facing-send" aria-label="发送" disabled={busy || !draft.trim()}><ArrowUp size={20} /></button>
             </>}
         </form>
+        {voiceInput && cloudAvailable && browserAvailable && <button type="button" className="facing-glass facing-stt-mode" disabled={busy || listening}
+          onClick={() => { onSpeechInput(useCloudStt ? "browser" : "cloud"); setError(""); }}>
+          {useCloudStt ? "改用浏览器识别" : "改用云端识别"}
+        </button>}
         <button type="button" className="facing-glass facing-end" onClick={onEnd}><PhoneOff size={16} />结束</button>
       </div>
     </div>

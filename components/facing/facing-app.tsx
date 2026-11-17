@@ -231,7 +231,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
       portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
       onSettings={() => openSettings("room")} onEnd={() => setSheet("end")}
-      onVoice={value => commitSetting({ voice: value })} />}
+      onVoice={value => commitSetting({ voice: value })} onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
       <Header title="角色设置" onBack={() => setPage(settingOrigin)} />
       <main className="facing-scroll facing-form">

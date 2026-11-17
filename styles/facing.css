@@ -94,6 +94,7 @@
 .facing-controls form input::placeholder { color: #eee2f1cf; }
 .facing-controls .facing-send { background: #e1cbedba; color: #271d32; }
 .facing-controls .facing-hold { flex: 1; min-height: 44px; border-radius: 11px; touch-action: none; user-select: none; }
+.facing-controls .facing-stt-mode { min-height: 34px; border-radius: 10px; font-size: calc(12px * var(--app-text-scale,1)); }
 .facing-controls .facing-end { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 38px;
   border-radius: 10px; color: #ffd0dc; }
 .facing-point { position: absolute; transform: translate(-50%,-50%); border-radius: 999px; min-width: 32px; min-height: 32px; padding: 0; }
