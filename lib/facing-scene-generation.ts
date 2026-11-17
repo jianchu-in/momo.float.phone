@@ -1,13 +1,10 @@
-import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
-import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
 import { facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "./image-generation-service";
-import { loadApiConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { analyzeSceneImage, canIllustrateScene } from "./scene-image-analysis";
 import { loadShownImageDataUrl } from "./shown-image";
-import { cleanStreamText } from "./stream-preview";
 import { getThemeAssetDataUrl } from "./theme-storage";
 import { fileToUserAvatarDataUrl } from "./user-avatar-image";
 
@@ -19,10 +16,18 @@ type ScenePlan = {
   asset?: FacingAsset;
 };
 
+function facingVisualContext(character: Character, meeting: FacingMeeting) {
+  return { 角色: character.name, 人设: character.persona?.slice(0, 1800), 当前地点: meeting.turns.at(-1)?.sceneName,
+    最近互动: meeting.turns.slice(-10).map(turn => ({ 说话者: turn.role, 地点: turn.sceneName, 内容: facingTurnText(turn).slice(0, 1600) })),
+  };
+}
+
+export function canIllustrateFacingScene(character: Character, meeting: FacingMeeting, signal: AbortSignal) {
+  return canIllustrateScene({ characterId: character.id, characterName: character.name, appId: "facing",
+    context: JSON.stringify(facingVisualContext(character, meeting)), signal });
+}
+
 export async function planFacingVisual(character: Character, meeting: FacingMeeting, groups: FacingSceneGroup[], signal: AbortSignal): Promise<ScenePlan | undefined> {
-  const slot = resolveBinding(loadBindingConfig(), character.id, "facing");
-  const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
-  if (!api) throw new Error("请为面对面配置文字 API。");
   const current = meeting.turns.at(-1)?.sceneName;
   if (!current) return;
   const instructions = [
@@ -33,20 +38,15 @@ export async function planFacingVisual(character: Character, meeting: FacingMeet
     "找不到合适素材时，才写供生图用的 description。描述要具体可见，体现当下服装、表情和动作。摸头或牵手必须用用户第一视角，可见用户的手，勿画成旁观第三人称。新地点的基础图使用自然待机姿态。",
     '只返回 JSON：{"mode":"keep|scene|hold|brief","location":"当前或已抵达地点","name":"简短素材名","asset_id":null,"description":"没有对应素材时的画面描述"}。',
   ].join("\n");
-  const content = JSON.stringify({ 角色: character.name, 人设: character.persona?.slice(0, 1800), 当前地点: current,
-    最近互动: meeting.turns.slice(-10).map(turn => ({ 说话者: turn.role, 地点: turn.sceneName, 内容: facingTurnText(turn).slice(0, 1600) })),
+  const context = JSON.stringify({ ...facingVisualContext(character, meeting),
     已有素材: groups.map(group => ({ 地点: group.name, 默认: (group.portrait ?? group.backdrop)?.id,
       反应: group.reactions.map(asset => ({ id: asset.id, 名称: asset.name })) })),
   });
-  const result = await sendLLMRequest(api, null, [
-    { role: "system", content: instructions }, { role: "user", content },
-  ], [], { characterName: character.name }, { appId: "facing_scene_plan", signal });
-  throwIfAborted(signal);
-  const cleaned = cleanStreamText(result, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] })
-    .replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();
-  let data: { mode?: unknown; location?: unknown; name?: unknown; asset_id?: unknown; description?: unknown };
-  try { data = JSON.parse(jsonrepair(cleaned)); } catch { throw new Error("本轮画面检查结果无法读取。"); }
-  const mode = data?.mode;
+  const data = await analyzeSceneImage<{ mode?: unknown; location?: unknown; name?: unknown; asset_id?: unknown; description?: unknown }>({
+    appId: "facing", task: "plan", characterId: character.id, characterName: character.name, instructions, context, signal,
+  });
+  if (!data) throw new Error("本轮画面检查结果无法读取。");
+  const mode = data.mode;
   if (mode !== "scene" && mode !== "hold" && mode !== "brief") return;
   const location = mode === "scene" && typeof data.location === "string" ? data.location.trim().slice(0, 36) : current;
   if (!location || (mode === "scene" && location === current)) return;

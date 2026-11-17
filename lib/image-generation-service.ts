@@ -872,6 +872,7 @@ export async function generateImageFromConfiguredApi(params: {
   explicitReferenceImage?: string;
   explicitReferenceImages?: readonly { dataUrl: string; label: string }[];
   portraitOutput?: boolean;
+  landscapeOutput?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult | null> {
@@ -950,8 +951,12 @@ export async function generateImageFromConfiguredApi(params: {
     || settings.openaiPresets?.[0];
   const selectedSettings = openaiPreset ? { ...settings, ...openaiPreset } : settings;
   const dimensions = /^(\d+)x(\d+)$/.exec(selectedSettings.size);
-  const openaiSettings = params.portraitOutput && (!dimensions || Number(dimensions[1]) >= Number(dimensions[2]))
-    ? { ...selectedSettings, size: "1024x1536" } : selectedSettings;
+  let openaiSettings = selectedSettings;
+  if (params.portraitOutput && (!dimensions || Number(dimensions[1]) >= Number(dimensions[2]))) {
+    openaiSettings = { ...selectedSettings, size: "1024x1536" };
+  } else if (params.landscapeOutput && (!dimensions || Number(dimensions[1]) <= Number(dimensions[2]))) {
+    openaiSettings = { ...selectedSettings, size: "1536x1024" };
+  }
   if (!openaiSettings.apiKey.trim() || !openaiSettings.baseUrl.trim() || !openaiSettings.model.trim()) return null;
 
   const reference = params.characterId ? settings.characterReferences?.[params.characterId] : undefined;

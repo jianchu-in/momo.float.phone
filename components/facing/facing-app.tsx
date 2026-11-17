@@ -257,6 +257,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
           <div className="facing-list facing-settings-list facing-auto-settings">
             <label>自动检查并补图<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
               onChange={event => commitSetting({ autoVisual: { enabled: event.target.checked } })} /></label>
+            <label>生图前跳过 NSFW 场景<input type="checkbox" role="switch" checked={current.autoVisual?.skipNsfw === true}
+              onChange={event => commitSetting({ autoVisual: { skipNsfw: event.target.checked } })} /></label>
             <label>画面检查间隔（轮）<input type="number" min={1} step={1} inputMode="numeric" defaultValue={current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL}
               onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
               onBlur={event => {

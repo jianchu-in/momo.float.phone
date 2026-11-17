@@ -7,7 +7,7 @@ import { useCallKeyboardOffsetStyle } from "@/components/chat/use-call-keyboard-
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
-import { appendFacingTurn, changeFacingTurns, facingId, facingReplyVersion, facingScenePosition, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
+import { appendFacingTurn, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
 import { playAudioBlob, playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
@@ -154,14 +154,16 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (end < 0) throw new Error("找不到要重试的原消息。");
       const context = { ...current, turns: current.turns.slice(0, end + 1) };
       const activity = options?.retry || !settings.autoVisual?.enabled ? undefined : pendingActivity ?? existingActivity;
+      const deferVisual = !options?.previous && end === current.turns.length - 1 && settings.autoVisual?.skipNsfw === true
+        && shouldCheckFacingVisual(facingCompletedRounds(current) + 1, settings.autoVisual);
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
-        signal: run.signal, retryInstruction: options?.instruction, visualActivity: activity?.label });
+        signal: run.signal, retryInstruction: options?.instruction, visualActivity: activity?.label, deferVisual });
       if (run.signal.aborted) return;
       const response: FacingTurn = {
         ...(result.nextScene ? facingScenePosition(result.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
         id: facingId(), role: "assistant", kind: "reply", text: result.dialogue, action: result.action,
         at: new Date().toISOString(), replyTo: user.id, reactionId: result.reaction?.id, reactionName: result.reaction?.name,
-        visualContinuityId: result.visualContinues ? activity?.id : undefined,
+        visualContinuityId: deferVisual && existingActivity ? existingActivity.id : result.visualContinues ? activity?.id : undefined,
       };
       const previous = options?.previous;
       const saved = previous ? await changeFacingTurns(current, turns => turns.map(turn => {

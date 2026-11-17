@@ -100,9 +100,10 @@ export async function generateFacingReply(options: {
   signal: AbortSignal;
   retryInstruction?: string;
   visualActivity?: string;
+  deferVisual?: boolean;
 }): Promise<{ dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup; visualContinues?: boolean }> {
   const { character, meeting, settings, scene, scenes, signal } = options;
-  const destinations = scenes.filter(item => item.name !== scene);
+  const destinations = options.deferVisual ? [] : scenes.filter(item => item.name !== scene);
   const summarizeReactions = (group?: FacingSceneGroup) => (group?.reactions ?? []).map(asset => ({ id: asset.id, name: asset.name }));
   const currentScene = scenes.find(item => item.name === scene);
   const identity = resolveUserIdentity(character.id, "facing");
@@ -143,10 +144,11 @@ export async function generateFacingReply(options: {
   const mode: LLMMessage = {
     role: "system",
     content: [FACING_MODE_PROMPT,
+      options.deferVisual && "本轮画面由独立流程处理。scene_id 和 reaction_id 一律填写 null，仍要自然描写剧情中发生的动作与地点。",
       options.visualActivity && `另加一个后台 JSON 字段 visual_continues。紧接本轮动作后，「${options.visualActivity}」确定仍在继续时填 true，已经结束、换场或不确定时填 false。不要在台词或动作中提到画面处理。`,
       `每轮回复约 ${(FACING_REPLY_LENGTHS[settings.length ?? "short"] ?? FACING_REPLY_LENGTHS.short).characters} 个中文字，台词和动作合计。字数是目标，保持当面说话的节奏，可按语境缩短。`, JSON.stringify({
       角色: character.name, 用户: identity?.name ?? "用户", 当前场景: scene,
-      当前场景反应: summarizeReactions(currentScene),
+      当前场景反应: options.deferVisual ? undefined : summarizeReactions(currentScene),
       可切换场景: destinations.map(group => ({ id: group.name, 可用反应: summarizeReactions(group) })),
       ...(!hasLatest && history.length > 1 ? { 见面记录: history.slice(-16, -1).map(item => ({ role: item.role, text: item.content })) } : {}),
     })].filter(Boolean).join("\n"),
@@ -189,7 +191,7 @@ export async function generateFacingReply(options: {
       dialogue = typeof parsed.dialogue === "string" ? parsed.dialogue.trim() : "";
       action = typeof parsed.action === "string" ? parsed.action.trim() : "";
       nextScene = destinations.find(group => group.name === parsed.scene_id);
-      reaction = (nextScene ?? currentScene)?.reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
+      if (!options.deferVisual) reaction = (nextScene ?? currentScene)?.reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
       visualContinues = parsed.visual_continues === true && !nextScene;
     } catch {
       throw new Error("角色回应格式有误，可以重试。");

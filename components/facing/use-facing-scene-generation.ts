@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Character } from "@/lib/character-types";
-import { planFacingVisual, renderFacingVisual } from "@/lib/facing-scene-generation";
-import { applyFacingVisual, facingCompletedRounds, facingId, facingMediaType, facingVisualMatches, FACING_VISUAL_INTERVAL,
-  findFacingVisualAsset, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingSettings, saveFacingAsset,
+import { canIllustrateFacingScene, planFacingVisual, renderFacingVisual } from "@/lib/facing-scene-generation";
+import { applyFacingVisual, facingCompletedRounds, facingId, facingMediaType, facingVisualMatches,
+  findFacingVisualAsset, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingSettings, saveFacingAsset, shouldCheckFacingVisual,
   type FacingAsset, type FacingMeeting } from "@/lib/facing-storage";
 
 type Check = { meeting: FacingMeeting; character: Character };
@@ -34,6 +34,9 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
     const { signal } = job.controller;
     let notice: string | undefined;
     try {
+      if (settings.autoVisual.skipNsfw && !await canIllustrateFacingScene(character, meeting, signal)) return;
+      const screenedMeeting = loadFacingMeeting(meeting.id);
+      if (signal.aborted || !screenedMeeting || !facingVisualMatches(screenedMeeting, anchor, "")) return;
       const assets = loadFacingAssets(character.id);
       const groups = groupFacingScenes(assets, settings.portraitId);
       const plan = await planFacingVisual(character, meeting, groups, signal);
@@ -78,10 +81,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
 
   function check(meeting: FacingMeeting, character: Character) {
     const settings = loadFacingSettings().characters[character.id]?.autoVisual;
-    if (!settings?.enabled) return;
-    const rounds = facingCompletedRounds(meeting);
-    const interval = settings.interval && Number.isSafeInteger(settings.interval) && settings.interval > 0 ? settings.interval : FACING_VISUAL_INTERVAL;
-    if (rounds < 1 || rounds % interval !== 0) return;
+    if (!shouldCheckFacingVisual(facingCompletedRounds(meeting), settings)) return;
     const job = jobs.current.get(meeting.id);
     const next = { meeting, character };
     if (job) job.next = next;

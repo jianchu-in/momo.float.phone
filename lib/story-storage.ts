@@ -46,7 +46,19 @@ export type StoryGlobalSettings = {
   streamingEnabled: boolean;
   /** 每轮明确注入当前日期时间，并让历史消息按时间语义参与判断。 */
   timeAware: boolean;
+  illustration?: StoryIllustrationSettings;
 };
+
+export type StoryIllustrationSettings = { enabled?: boolean; interval?: number; extraPrompt?: string; includeUserReference?: boolean; skipNsfw?: boolean };
+export const STORY_ILLUSTRATION_INTERVAL = 5;
+
+function normalizeStoryIllustration(value?: StoryIllustrationSettings): StoryIllustrationSettings | undefined {
+  if (!value) return;
+  const interval = value.interval;
+  return { enabled: value.enabled === true, interval: interval && Number.isSafeInteger(interval) && interval > 0 ? interval : STORY_ILLUSTRATION_INTERVAL,
+    extraPrompt: typeof value.extraPrompt === "string" ? value.extraPrompt.slice(0, 3000) : "",
+    includeUserReference: value.includeUserReference === true, skipNsfw: value.skipNsfw === true };
+}
 
 export const STORY_GLOBAL_SETTINGS_EVENT = "story-global-settings-updated";
 const STORY_GLOBAL_SETTINGS_KEY = "ai_phone_story_global_settings_v1";
@@ -65,6 +77,7 @@ export function loadStoryGlobalSettings(): StoryGlobalSettings {
       interruptProactiveDuringStory: parsed.interruptProactiveDuringStory === true,
       streamingEnabled: parsed.streamingEnabled === true,
       timeAware: parsed.timeAware !== false,
+      illustration: normalizeStoryIllustration(parsed.illustration),
     };
   } catch {
     return { ...DEFAULT_STORY_GLOBAL_SETTINGS };
@@ -76,6 +89,7 @@ export function saveStoryGlobalSettings(settings: StoryGlobalSettings): void {
     interruptProactiveDuringStory: settings.interruptProactiveDuringStory === true,
     streamingEnabled: settings.streamingEnabled === true,
     timeAware: settings.timeAware !== false,
+    illustration: normalizeStoryIllustration(settings.illustration),
   };
   kvSet(STORY_GLOBAL_SETTINGS_KEY, JSON.stringify(normalized));
   if (typeof window !== "undefined") {
@@ -484,6 +498,7 @@ export type StorySession = {
   lastMessageId?: string;
   lastMessagePreview?: string;
   lastMessageAt?: string;
+  completedRounds?: number;
 };
 
 export type StoryMessageRole = "user" | "assistant" | "system";
@@ -497,11 +512,24 @@ export type StoryMessage = {
   rawContent: string;
   renderedContent?: string;
   imageRef?: string;
+  illustration?: StoryIllustration;
+  round?: number;
+  activeReplyVersionId?: string;
+  replyVersions?: StoryReplyVersion[];
   storySummary?: string;
   regexSignature?: string;
   parserVersion?: number;
   createdAt: string;
 };
+
+export type StoryIllustration = { state: "ready"; mediaRef: string } | { state: "failed" };
+export type StoryReplyContent = Pick<StoryMessage, "rawContent" | "renderedContent" | "storySummary" | "regexSignature" | "parserVersion" | "illustration">;
+export type StoryReplyVersion = StoryReplyContent & { id: string };
+
+export function storyReplyVersion(message: StoryMessage): StoryReplyVersion {
+  const { rawContent, renderedContent, storySummary, regexSignature, parserVersion, illustration } = message;
+  return { id: message.activeReplyVersionId ?? message.id, rawContent, renderedContent, storySummary, regexSignature, parserVersion, illustration };
+}
 
 export type StoryProjectionEntry = {
   id: string;
@@ -1004,10 +1032,14 @@ export function updateStorySession(sessionId: string, updates: Partial<StorySess
 }
 
 export function pushStoryMessage(
-  input: Omit<StoryMessage, "id" | "createdAt">
+  input: Omit<StoryMessage, "id" | "createdAt">,
+  countRound = false,
 ): StoryMessage {
+  const session = _sessionsCache.find(item => item.id === input.sessionId);
+  const rounds = countRound && session ? (session.completedRounds ?? 0) + 1 : undefined;
   const message: StoryMessage = {
     ...input,
+    round: rounds ?? input.round,
     id: generateId("story_msg"),
     createdAt: new Date().toISOString(),
   };
@@ -1021,9 +1053,54 @@ export function pushStoryMessage(
     lastMessagePreview: preview,
     lastMessageAt: message.createdAt,
     updatedAt: message.createdAt,
+    ...(rounds === undefined ? {} : { completedRounds: rounds }),
   });
 
   return message;
+}
+
+export function saveStoryReplyVersion(messageId: string, content: StoryReplyContent): StoryMessage | undefined {
+  const current = _messagesCache.find(message => message.id === messageId && message.role === "assistant");
+  if (!current) return;
+  const { id, ...initial } = storyReplyVersion(current);
+  const versionId = generateId("story_reply");
+  const next = { ...current, ...content, illustration: content.illustration, activeReplyVersionId: versionId,
+    replyVersions: [...(current.replyVersions ?? [{ id, ...initial }]), { id: versionId, ...content }] };
+  const messages = loadStoryMessages(current.sessionId);
+  const tail = new Set(messages.slice(messages.findIndex(message => message.id === current.id) + 1).map(message => message.id));
+  _messagesCache = _messagesCache.filter(message => !tail.has(message.id)).map(message => message.id === current.id ? next : message);
+  void storyDb.transaction("rw", storyDb.messages, async () => {
+    await storyDb.messages.bulkDelete([...tail]);
+    await storyDb.messages.put(next);
+  }).catch(() => undefined);
+  updateStorySession(next.sessionId, { lastMessageId: next.id, lastMessagePreview: next.rawContent.replace(/\s+/g, " ").trim().slice(0, 64), lastMessageAt: next.createdAt });
+  return next;
+}
+
+export function selectStoryReplyVersion(messageId: string, versionId: string) {
+  const index = _messagesCache.findIndex(message => message.id === messageId);
+  const current = _messagesCache[index];
+  const version = current?.replyVersions?.find(item => item.id === versionId);
+  if (!current || !version) return;
+  const { id, ...content } = version;
+  const next = { ...current, ...content, activeReplyVersionId: id };
+  _messagesCache[index] = next;
+  storyDb.messages.put(next).catch(() => undefined);
+  return next;
+}
+
+export function saveStoryIllustration(messageId: string, versionId: string, rawContent: string, illustration?: StoryIllustration) {
+  const index = _messagesCache.findIndex(message => message.id === messageId);
+  const current = _messagesCache[index];
+  if (!current) return false;
+  const active = storyReplyVersion(current);
+  const target = active.id === versionId ? active : current.replyVersions?.find(item => item.id === versionId);
+  if (!target || target.rawContent !== rawContent) return false;
+  const next = { ...current, illustration: active.id === versionId ? illustration : current.illustration,
+    replyVersions: current.replyVersions?.map(item => item.id === versionId ? { ...item, illustration } : item) };
+  _messagesCache[index] = next;
+  storyDb.messages.put(next).catch(() => undefined);
+  return true;
 }
 
 /** 把指定分页设为剧情 APP 下次打开的目标页，可由聊天邀请等跨 APP 流程调用。 */
@@ -1066,14 +1143,18 @@ export function deleteStoryMessagesFrom(sessionId: string, messageId: string): v
 export function editStoryMessage(messageId: string, newRawContent: string): void {
     const idx = _messagesCache.findIndex(m => m.id === messageId);
     if (idx === -1) return;
-    _messagesCache[idx] = {
-        ..._messagesCache[idx],
+    const previous = _messagesCache[idx];
+    const changed = {
+        ...previous,
         rawContent: newRawContent,
         renderedContent: undefined,
         regexSignature: undefined,
         parserVersion: undefined,
     };
-    storyDb.messages.put(_messagesCache[idx]).catch(() => undefined);
+    const version = storyReplyVersion(changed);
+    changed.replyVersions = changed.replyVersions?.map(item => item.id === version.id ? version : item);
+    _messagesCache[idx] = changed;
+    storyDb.messages.put(changed).catch(() => undefined);
 }
 
 export function replaceStoryMessages(sessionId: string, messages: StoryMessage[]): void {

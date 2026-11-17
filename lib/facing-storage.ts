@@ -122,11 +122,18 @@ export type FacingCharacterSettings = {
 export type FacingAutoVisualSettings = {
   enabled?: boolean;
   interval?: number;
+  skipNsfw?: boolean;
   referenceSource?: "character" | "avatar" | "upload";
   referenceMediaRef?: string;
 };
 
 export const FACING_VISUAL_INTERVAL = 5;
+
+export function shouldCheckFacingVisual(round: number, settings?: FacingAutoVisualSettings) {
+  const interval = settings?.interval;
+  const step = interval && Number.isSafeInteger(interval) && interval > 0 ? interval : FACING_VISUAL_INTERVAL;
+  return settings?.enabled === true && round > 0 && round % step === 0;
+}
 
 export type FacingSettings = { characterId?: string; characters: Record<string, FacingCharacterSettings> };
 
