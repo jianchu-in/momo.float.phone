@@ -6202,6 +6202,17 @@
 .phone-tools-anchor .phone-tools-drag-handle { touch-action: none; cursor: grab; }
 .phone-tools-anchor .phone-tools-drag-handle:active { cursor: grabbing; }
 .phone-tools-radial .phone-tools-satellite { position: absolute; inset: 0; touch-action: manipulation; }
+.phone-tools-radial { transition: left .22s ease, transform .22s ease; }
+.phone-tools-radial[data-dragging="true"] { transition: none; }
+.phone-tools-radial[data-dock-side="left"] { transform: translateX(-36px); }
+.phone-tools-radial[data-dock-side="right"] { transform: translateX(36px); }
+.phone-tools-radial .phone-tools-drag-handle[aria-expanded="false"] {
+  background: color-mix(in srgb, var(--c-bg-card, #fff) 64%, transparent); backdrop-filter: blur(9px);
+  box-shadow: 0 3px 12px rgba(35, 28, 65, .11);
+}
+.phone-tools-radial[data-dock-side="left"] .phone-tools-drag-handle svg { transform: translateX(8px); }
+.phone-tools-radial[data-dock-side="right"] .phone-tools-drag-handle svg { transform: translateX(-8px); }
+@media (prefers-reduced-motion: reduce) { .phone-tools-radial { transition: none; } }
 
 .roleplay-discussion-backdrop {
   position: absolute;

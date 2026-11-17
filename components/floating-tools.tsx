@@ -35,6 +35,7 @@ function loadBallPosition(key: string): BallPosition | null {
 
 function useBallDrag(key: string, onActivate: () => void, onDragStart?: () => void) {
   const [position, setPosition] = useState(() => loadBallPosition(key));
+  const [dragging, setDragging] = useState(false);
   const gesture = useRef<{
     id: number; startX: number; startY: number; left: number; top: number;
     scaleX: number; scaleY: number; maxX: number; maxY: number; position: BallPosition | null;
@@ -67,6 +68,7 @@ function useBallDrag(key: string, onActivate: () => void, onDragStart?: () => vo
     const dy = event.clientY - drag.startY;
     if (!drag.position) {
       if (Math.hypot(dx, dy) < 5) return;
+      setDragging(true);
       onDragStart?.();
     }
     drag.position = {
@@ -82,6 +84,8 @@ function useBallDrag(key: string, onActivate: () => void, onDragStart?: () => vo
     gesture.current = null;
     if (drag.position) {
       suppressClick.current = true;
+      setDragging(false);
+      setPosition(drag.position);
       kvSet(key, JSON.stringify(drag.position));
     } else if (event.type === "pointerup" && event.pointerType === "touch") {
       // A touch released under pointer capture may end without a native click.
@@ -98,13 +102,14 @@ function useBallDrag(key: string, onActivate: () => void, onDragStart?: () => vo
   }
 
   return {
+    position, dragging, setPosition,
     style: position ? {
       left: `calc(${position.x * 100}% + ${EDGE_GAP - position.x * (BALL_SIZE + EDGE_GAP * 2)}px)`,
       top: `calc(${position.y * 100}% + ${TOP_GAP - position.y * (BALL_SIZE + EDGE_GAP + TOP_GAP)}px)`,
       right: "auto",
     } : undefined,
-    onPointerDown, onPointerMove, onPointerUp: onPointerEnd, onPointerCancel: onPointerEnd,
-    onLostPointerCapture: onPointerEnd, onClick,
+    handlers: { onPointerDown, onPointerMove, onPointerUp: onPointerEnd, onPointerCancel: onPointerEnd,
+      onLostPointerCapture: onPointerEnd, onClick },
   };
 }
 
@@ -118,11 +123,30 @@ export function FloatingTools() {
   const [settings, setSettings] = useState(loadChatAppSettings);
   const [expanded, setExpanded] = useState<{ x: number; y: number } | null>(null);
   const [discussion, setDiscussion] = useState<MascotPageContext | null>(null);
+  const combined = settings.combinedFloatingTools === true;
+  const enabled = [settings.promptViewerEnabled, settings.quickActionEnabled, settings.roleplayDiscussionEnabled];
+  const hasCombinedBall = combined && enabled.some(Boolean) && !discussion;
   const context = useSyncExternalStore(subscribeMascotContext, getMascotContext, getMascotContext);
   const fan = useRef<HTMLDivElement>(null);
   const launcher = useRef<HTMLButtonElement>(null);
-  const { style: radialStyle, ...radialDrag } = useBallDrag("ai_phone_combined_ball_position_v1", toggleRadial, () => setExpanded(null));
-  const { style: discussionStyle, ...discussionDrag } = useBallDrag("ai_phone_discussion_ball_position_v1", () => setDiscussion(context));
+  const radialKey = "ai_phone_combined_ball_position_v1";
+  const { style: radialStyle, position: radialPosition, dragging: radialDragging, setPosition: setRadialPosition, handlers: radialDrag } = useBallDrag(radialKey, toggleRadial, () => setExpanded(null));
+  const { style: discussionStyle, handlers: discussionDrag } = useBallDrag("ai_phone_discussion_ball_position_v1", () => setDiscussion(context));
+
+  useEffect(() => {
+    if (!hasCombinedBall || expanded || radialDragging || radialPosition?.x === 0 || radialPosition?.x === 1) return;
+    const timer = window.setTimeout(() => {
+      const ball = fan.current;
+      const parent = ball?.offsetParent;
+      if (!ball || !(parent instanceof HTMLElement)) return;
+      const x = ball.offsetLeft + BALL_SIZE / 2 < parent.clientWidth / 2 ? 0 : 1;
+      const y = radialPosition?.y ?? clampRatio((ball.offsetTop - TOP_GAP) / Math.max(1, parent.clientHeight - BALL_SIZE - EDGE_GAP - TOP_GAP));
+      const docked = { x, y };
+      setRadialPosition(docked);
+      kvSet(radialKey, JSON.stringify(docked));
+    }, 2600);
+    return () => window.clearTimeout(timer);
+  }, [hasCombinedBall, expanded, radialDragging, radialPosition, setRadialPosition]);
 
   useEffect(() => {
     const sync = () => {
@@ -167,12 +191,12 @@ export function FloatingTools() {
     window.requestAnimationFrame(() => launcher.current?.focus());
   }
 
-  const enabled = [settings.promptViewerEnabled, settings.quickActionEnabled, settings.roleplayDiscussionEnabled];
-  const combined = settings.combinedFloatingTools === true;
   return <>
     <DebugPromptPanel combined={combined} />
     <QuickActionFloat combined={combined} />
-    {combined && enabled.some(Boolean) && !discussion && <div className="phone-tools-anchor phone-tools-radial" ref={fan} style={radialStyle}>
+    {hasCombinedBall && <div className="phone-tools-anchor phone-tools-radial" ref={fan} style={radialStyle}
+      data-dragging={radialDragging ? "true" : undefined}
+      data-dock-side={!expanded && !radialDragging ? radialPosition?.x === 0 ? "left" : radialPosition?.x === 1 ? "right" : undefined : undefined}>
       {expanded && floatItems.map(({ id, label, Icon, offset }, index) => enabled[index] && <button type="button"
         className="phone-tools-satellite" key={id} aria-label={label} title={label}
         style={{ transform: `translate(${offset[0] * expanded.x}px, ${offset[1] * expanded.y}px)` }} onClick={() => {
