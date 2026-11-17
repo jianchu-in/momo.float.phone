@@ -65,12 +65,13 @@ export function groupFacingScenes(assets: FacingAsset[], legacyPortraitId?: stri
   const legacyReactions = assets.filter(asset => asset.use === "reaction" && asset.composition !== "full" && !asset.location);
   return Array.from(locations, ([name, groupAssets]) => {
     const full = groupAssets.filter(asset => asset.composition === "full");
-    const backdrop = full.length ? undefined : groupAssets.find(asset => asset.category === "scene");
-    const portrait = full.find(asset => asset.use === "idle")
+    const fullPortrait = full.find(asset => asset.use === "idle");
+    const backdrop = fullPortrait ? undefined : groupAssets.find(asset => asset.category === "scene");
+    const portrait = fullPortrait
       ?? (backdrop ? legacyPortrait : groupAssets.find(asset => asset.id === legacyPortraitId && asset.use === "idle")
       ?? groupAssets.find(asset => asset.use === "idle"));
-    const reactions = full.length ? full.filter(asset => asset.use === "reaction" && asset.id !== portrait?.id)
-      : backdrop ? legacyReactions : groupAssets.filter(asset => asset.use === "reaction");
+    const reactions = fullPortrait ? full.filter(asset => asset.use === "reaction")
+      : backdrop ? [...full.filter(asset => asset.use === "reaction"), ...legacyReactions] : groupAssets.filter(asset => asset.use === "reaction");
     return { name, assets: groupAssets, portrait, backdrop, reactions };
   });
 }
@@ -114,8 +115,18 @@ export type FacingCharacterSettings = {
   touchMode?: "instant" | "collect" | "double";
   appearance?: { bubbleColor?: string; opacity?: number; textColor?: string; textSize?: number };
   memory?: boolean;
+  autoVisual?: FacingAutoVisualSettings;
   hotspots?: Record<string, FacingHotspot[]>;
 };
+
+export type FacingAutoVisualSettings = {
+  enabled?: boolean;
+  interval?: number;
+  referenceSource?: "character" | "avatar" | "upload";
+  referenceMediaRef?: string;
+};
+
+export const FACING_VISUAL_INTERVAL = 5;
 
 export type FacingSettings = { characterId?: string; characters: Record<string, FacingCharacterSettings> };
 
@@ -134,16 +145,17 @@ export type FacingTurn = {
   portraitId?: string;
   reactionId?: string;
   reactionName?: string;
+  visualContinuityId?: string;
   replyTo?: string;
   versions?: FacingReplyVersion[];
   versionIndex?: number;
 };
 
-export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName">;
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName" | "visualContinuityId">;
 
 export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
-  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName } = turn;
-  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName };
+  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId } = turn;
+  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId };
 }
 
 export function facingTurnText(turn: FacingTurn): string {
@@ -163,7 +175,13 @@ export type FacingMeeting = {
   updatedAt: string;
   scene?: FacingScenePosition;
   turns: FacingTurn[];
+  completedRounds?: number;
+  visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number };
 };
+
+export function facingCompletedRounds(meeting: FacingMeeting) {
+  return meeting.completedRounds ?? meeting.turns.filter(turn => turn.role === "assistant").length;
+}
 
 export function facingId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -181,8 +199,11 @@ export async function saveFacingSettings(characterId: string, patch?: Partial<Fa
   let saved: FacingSettings = { characters: {} };
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
     const current = readJson<FacingSettings>(raw, { characters: {} });
+    const previous = current.characters[characterId];
+    const next = { ...previous, ...patch };
+    if (patch?.autoVisual) next.autoVisual = { ...previous?.autoVisual, ...patch.autoVisual };
     saved = patch
-      ? { ...current, characters: { ...current.characters, [characterId]: { ...current.characters[characterId], ...patch } } }
+      ? { ...current, characters: { ...current.characters, [characterId]: next } }
       : { ...current, characterId };
     return JSON.stringify(saved);
   });
@@ -204,18 +225,32 @@ export async function saveFacingAsset(
   asset: Omit<FacingAsset, "mediaId" | "mediaType">,
   blob: Blob,
   mediaType: string,
+  reuseMatching = false,
 ): Promise<FacingAsset> {
   if (!MEDIA_TYPES.has(mediaType) || !blob.size) throw new Error("请选择支持的图片、动图或视频。");
   if (blob.size > 30 * 1024 * 1024) throw new Error("单个素材最大 30 MB。");
   const mediaId = await saveThemeAssetFromBlob(blob.slice(0, blob.size, mediaType), "facing_media");
   const result = { ...asset, mediaId, mediaType };
+  let saved = result;
   try {
-    await kvUpdatePersisted(FACING_ASSETS_KEY, raw => JSON.stringify([...readJson<FacingAsset[]>(raw, []), result]));
-    return result;
+    await kvUpdatePersisted(FACING_ASSETS_KEY, raw => {
+      const assets = readJson<FacingAsset[]>(raw, []);
+      const match = reuseMatching ? findFacingVisualAsset(assets.filter(item => item.characterId === asset.characterId), facingAssetLocation(result), asset.name, asset.use === "idle") : undefined;
+      saved = match ?? result;
+      return JSON.stringify(match ? assets : [...assets, result]);
+    });
   } catch (error) {
     await deleteThemeAsset(mediaId).catch(() => {});
     throw error;
   }
+  if (saved.mediaId !== mediaId) await deleteThemeAsset(mediaId).catch(() => {});
+  return saved;
+}
+
+export function findFacingVisualAsset(assets: FacingAsset[], location: string, name: string, idle: boolean) {
+  const key = (value: string) => value.normalize("NFKC").replace(/\s/g, "").toLowerCase();
+  const group = groupFacingScenes(assets).find(item => key(item.name) === key(location));
+  return idle ? group?.portrait ?? group?.backdrop : group?.reactions.find(asset => key(asset.name) === key(name));
 }
 
 export async function updateFacingAsset(asset: FacingAsset) {
@@ -287,6 +322,41 @@ export function loadFacingMeetings(characterId: string, identityId?: string | nu
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+export function loadFacingMeeting(id: string): FacingMeeting | null {
+  return readJson(kvGet(FACING_MEETING_PREFIX + id), null);
+}
+
+export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, activityId: string) {
+  const latest = meeting.turns.at(-1);
+  return latest?.role === "assistant" && latest.sceneName === anchor.sceneName && (
+    (latest.id === anchor.id && latest.versionIndex === anchor.versionIndex && latest.text === anchor.text && latest.action === anchor.action)
+    || latest.visualContinuityId === activityId);
+}
+
+export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, activityId: string, location: string,
+  asset: FacingAsset, mode: "scene" | "hold" | "brief"): Promise<FacingMeeting | undefined> {
+  let saved: FacingMeeting | undefined;
+  await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
+    const meeting = readJson<FacingMeeting | null>(raw, null);
+    if (!meeting || !facingVisualMatches(meeting, anchor, activityId)) return raw ?? "null";
+    const assets = loadFacingAssets(meeting.characterId);
+    if (!assets.some(item => item.id === asset.id)) return raw!;
+    if (mode === "scene") {
+      const group = groupFacingScenes(assets).find(item => item.name === location);
+      if (!group || (group.portrait?.id !== asset.id && group.backdrop?.id !== asset.id)) return raw!;
+      const scene = facingScenePosition(group);
+      const last = meeting.turns.at(-1)!;
+      const turns = [...meeting.turns.slice(0, -1), { ...last, ...scene }];
+      saved = { ...meeting, turns, scene, visual: undefined };
+    } else if (location === anchor.sceneName) {
+      saved = { ...meeting, visual: { assetId: asset.id, activityId, sceneName: location,
+        expiresAt: mode === "brief" ? Date.now() + asset.durationMs : undefined } };
+    }
+    return saved ? JSON.stringify(saved) : raw!;
+  });
+  return saved;
+}
+
 export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: FacingTurn[]) => FacingTurn[]): Promise<FacingMeeting> {
   let saved = meeting;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
@@ -294,7 +364,11 @@ export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: 
     const turns = update(current.turns);
     const last = turns.at(-1);
     const scene = last ? facingReplyVersion(last) : current.scene;
-    saved = { ...current, turns, scene: scene && { sceneName: scene.sceneName, portraitId: scene.portraitId, sceneId: scene.sceneId } };
+    const previous = current.turns.at(-1);
+    const visual = last?.id === previous?.id && last?.action === previous?.action && last?.text === previous?.text && last?.versionIndex === previous?.versionIndex
+      ? current.visual : undefined;
+    saved = { ...current, turns, completedRounds: facingCompletedRounds(current), visual,
+      scene: scene && { sceneName: scene.sceneName, portraitId: scene.portraitId, sceneId: scene.sceneId } };
     return JSON.stringify(saved);
   });
   return saved;
@@ -306,7 +380,7 @@ export function createFacingMeeting(
   const now = new Date().toISOString();
   return {
     id: facingId(), characterId, identityId, type, createdAt: now, updatedAt: now,
-    parentId: parent?.id, title: parent ? `分线 · ${parent.title}` : "", turns: parent?.turns.slice() ?? [],
+    parentId: parent?.id, title: parent ? `分线 · ${parent.title}` : "", turns: parent?.turns.slice() ?? [], completedRounds: 0,
   };
 }
 
@@ -331,7 +405,10 @@ export async function appendFacingTurn(meeting: FacingMeeting, turn: FacingTurn)
       if (replyIndex >= 0) turns.splice(replyIndex + 1, 0, turn);
       else turns.push(turn);
       const last = turns.at(-1)!;
+      const visual = current.visual && last.id === turn.id && turn.role === "assistant" && (current.visual.sceneName !== last.sceneName
+        || (current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
       saved = { ...current, title: current.title || turn.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
+        visual, completedRounds: facingCompletedRounds(current) + Number(turn.role === "assistant"),
         scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };
     }
     return JSON.stringify(saved);

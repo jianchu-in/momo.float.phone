@@ -17,7 +17,8 @@ import { ShownImage } from "@/components/ui/shown-image";
 import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
-export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, onMeeting, onSettings, onEnd, onVoice, onSpeechInput }: {
+export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, autoAsset, autoProgress, onCompleted,
+  onMeeting, onSettings, onEnd, onVoice, onSpeechInput }: {
   character: Character;
   meeting: FacingMeeting;
   settings: FacingCharacterSettings;
@@ -25,6 +26,9 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   scene?: FacingAsset;
   position: FacingScenePosition;
   scenes: FacingSceneGroup[];
+  autoAsset?: FacingAsset;
+  autoProgress?: { message?: string; activity?: { id: string; label: string; sceneName: string } };
+  onCompleted: (meeting: FacingMeeting) => void;
   onMeeting: (meeting: FacingMeeting) => void;
   onSettings: () => void;
   onEnd: () => void;
@@ -32,6 +36,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   onSpeechInput: (mode: NonNullable<FacingCharacterSettings["speechInput"]>) => void;
 }) {
   const [reaction, setReaction] = useState<FacingAsset>();
+  const [expiredVisual, setExpiredVisual] = useState<string>();
   const [draft, setDraft] = useState("");
   const [hidden, setHidden] = useState(false);
   const [photo, setPhoto] = useState<File>();
@@ -64,6 +69,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const voiceOn = settings.voice !== false;
   const points = settings.touch === false ? [] : settings.hotspots?.[portrait?.id ?? "avatar"] ?? [];
   const failedTurn = meeting.turns.at(-1);
+  const displayedVisual = settings.autoVisual?.enabled && meeting.visual?.sceneName === position.sceneName && meeting.visual.activityId !== expiredVisual
+    && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? autoAsset : undefined;
+  const pendingActivity = autoProgress?.activity?.sceneName === position.sceneName ? autoProgress.activity : undefined;
+  const existingActivity = displayedVisual && meeting.visual && meeting.visual.expiresAt === undefined
+    ? { id: meeting.visual.activityId, label: displayedVisual.name } : undefined;
 
   useEffect(() => {
     if (log.current && (followLog.current || failedTurn?.role === "user")) log.current.scrollTop = log.current.scrollHeight;
@@ -81,6 +91,13 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     const timer = window.setTimeout(() => setReaction(undefined), reaction.durationMs);
     return () => window.clearTimeout(timer);
   }, [reaction]);
+
+  useEffect(() => {
+    if (!meeting.visual?.expiresAt) return;
+    const { activityId, expiresAt } = meeting.visual;
+    const timer = window.setTimeout(() => setExpiredVisual(activityId), Math.max(0, expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [meeting.visual]);
 
   useEffect(() => {
     if (voiceOn) return;
@@ -136,13 +153,15 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       const end = current.turns.findIndex(turn => turn.id === user.id);
       if (end < 0) throw new Error("找不到要重试的原消息。");
       const context = { ...current, turns: current.turns.slice(0, end + 1) };
+      const activity = options?.retry || !settings.autoVisual?.enabled ? undefined : pendingActivity ?? existingActivity;
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
-        signal: run.signal, retryInstruction: options?.instruction });
+        signal: run.signal, retryInstruction: options?.instruction, visualActivity: activity?.label });
       if (run.signal.aborted) return;
       const response: FacingTurn = {
         ...(result.nextScene ? facingScenePosition(result.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
         id: facingId(), role: "assistant", kind: "reply", text: result.dialogue, action: result.action,
         at: new Date().toISOString(), replyTo: user.id, reactionId: result.reaction?.id, reactionName: result.reaction?.name,
+        visualContinuityId: result.visualContinues ? activity?.id : undefined,
       };
       const previous = options?.previous;
       const saved = previous ? await changeFacingTurns(current, turns => turns.map(turn => {
@@ -155,6 +174,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (saved.turns.at(-1)?.id === (previous?.id ?? response.id)) {
         setReaction(result.reaction);
         void speak(result.dialogue, run.signal);
+        if (!previous) onCompleted(saved);
       }
     } catch (cause) {
       if (!run.signal.aborted) {
@@ -313,15 +333,18 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     closeMenu();
   }
   return <section ref={roomRef} className="facing-room" style={roomStyle} aria-label={`与${character.name}见面`}>
-    <FacingStage portrait={portrait} scene={scene} reaction={reaction} fallback={character.avatar}
+    <FacingStage portrait={portrait} scene={scene} reaction={reaction ?? displayedVisual} fallback={character.avatar}
       name={character.name} points={busy || listening ? [] : points} onPoint={handleTouch}
-      onReactionEnd={stopReaction} />
+      retainPoints={!reaction && !!displayedVisual} onReactionEnd={stopReaction} />
     {touchEffect && <div key={touchEffect.id} className="facing-touch-feedback" style={{ left: touchEffect.x, top: touchEffect.y }} role="status">
       <span aria-hidden="true" /><small>你触碰了他的{touchEffect.label}</small>
     </div>}
     <header className="facing-room-top">
       <button type="button" className="facing-glass facing-icon" aria-label="返回" onClick={onEnd}><ChevronLeft size={22} /></button>
-      <span className="facing-glass facing-room-scene" aria-label="当前场景">{position.sceneName}</span>
+      <div className="facing-room-location">
+        <span className="facing-glass facing-room-scene" aria-label="当前场景">{position.sceneName}</span>
+        {settings.autoVisual?.enabled && autoProgress?.message && <small className="facing-glass facing-visual-status" role="status">{autoProgress.message}</small>}
+      </div>
       <div>
         <button type="button" className="facing-glass facing-icon" aria-label={hidden ? "显示对话" : "隐藏对话"}
           aria-pressed={hidden} onClick={() => { setHidden(value => !value); followLog.current = true; }}>

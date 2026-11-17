@@ -66,8 +66,15 @@
 .facing-room-top,.facing-room-bottom { position: absolute; inset-inline: 12px; display: flex; gap: 6px; pointer-events: none; }
 .facing-room-top { top: var(--page-header-safe-top,48px); justify-content: space-between; }
 .facing-room-top > div { display: flex; gap: 6px; }
+.facing-room-top > .facing-room-location { flex: 1; min-width: 0; position: relative; align-items: center; justify-content: center; }
 .facing-room-scene { align-self: center; min-width: 0; padding: 5px 10px; border-radius: 12px; text-overflow: ellipsis;
   overflow: hidden; white-space: nowrap; font-size: calc(12px * var(--app-text-scale,1)); }
+.facing-visual-status { position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); text-align: center;
+  width: max-content; max-width: min(230px, 65vw); padding: 4px 8px; border-radius: 9px; font-size: 11px; }
+.facing-auto-help { color: var(--facing-muted); font-size: calc(12px * var(--app-text-scale,1)); line-height: 1.5; }
+.facing-auto-reference { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.facing-auto-reference img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+.facing-auto-reference input { max-width: 100%; }
 .facing-room-bottom { bottom: calc(max(12px,env(safe-area-inset-bottom)) + var(--call-keyboard-offset,0px)); flex-direction: column;
   max-height: calc(100% - var(--page-header-safe-top,48px) - 56px - var(--call-keyboard-offset,0px)); }
 .facing-room .facing-glass {

@@ -52,7 +52,7 @@ export function FacingMedia({ url, mediaType, name, loop = true, onEnd, onRatio 
 type FacingStageDraft = Pick<FacingAsset, "category" | "name" | "mediaType" | "layout" | "composition"> & { url: string };
 
 export function FacingStage({ portrait, scene, reaction, draft, fallback, name, points = [], editing, activePoint, onPoint,
-  onPointMove, onReactionEnd, children }: {
+  onPointMove, onReactionEnd, retainPoints, children }: {
   portrait?: FacingAsset;
   scene?: FacingAsset;
   reaction?: FacingAsset;
@@ -65,6 +65,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   onPoint?: (point: FacingHotspot, coordinates?: { x: number; y: number }) => void;
   onPointMove?: (id: string, x: number, y: number) => void;
   onReactionEnd?: () => void;
+  retainPoints?: boolean;
   children?: ReactNode;
 }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -120,7 +121,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
         : fallback
           ? <FacingMedia key={mediaKey} url={fallback} mediaType="image/png" name={name} onRatio={value => setRatio({ key: mediaKey, value })} />
           : <div className="facing-blank-portrait"><UserRound size={64} strokeWidth={1} aria-hidden /></div>}
-      {hasMedia && !reaction && points.map(point => <button type="button" key={point.id}
+      {hasMedia && (!reaction || retainPoints) && points.map(point => <button type="button" key={point.id}
         aria-label={editing ? `调整${point.label}` : `触碰${point.label}`}
         className={editing ? "facing-point facing-point-edit" : "facing-point"}
         aria-pressed={editing ? activePoint === point.id : undefined}

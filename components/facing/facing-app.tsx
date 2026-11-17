@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -12,6 +12,8 @@ import { FacingAssets } from "./facing-assets";
 import { FacingRoom } from "./facing-room";
 import { FacingStage } from "./facing-stage";
 import { ShownImage } from "@/components/ui/shown-image";
+import { storeShownImage } from "@/lib/shown-image";
+import { useFacingSceneGeneration } from "./use-facing-scene-generation";
 
 type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record";
 type Sheet = "characters" | "new" | null;
@@ -138,7 +140,12 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [record, setRecord] = useState<FacingMeeting>();
   const [recordType, setRecordType] = useState<FacingMeeting["type"]>("main");
   const [error, setError] = useState("");
+  const [savingReference, setSavingReference] = useState(false);
   const [assets, setAssets] = useState(() => character ? loadFacingAssets(character.id) : []);
+  const autoVisual = useFacingSceneGeneration(
+    updated => setMeeting(current => current?.id === updated.id ? updated : current),
+    (characterId, updated) => { if (loadFacingSettings().characterId === characterId) setAssets(updated); },
+  );
   const current = character ? preferences.characters[character.id] ?? {} : {};
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
   const groups = groupFacingScenes(assets, current.portraitId);
@@ -173,7 +180,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
 
   function openRoom(item: FacingMeeting) {
     unlockAudioPlayback();
-    setMeeting(item);
+    setMeeting(loadFacingMeeting(item.id) ?? item);
     setRecordType(item.type);
     setPage("room");
   }
@@ -233,6 +240,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
       portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
+      autoAsset={assets.find(asset => asset.id === meeting.visual?.assetId)} autoProgress={autoVisual.progress[meeting.id]}
+      onCompleted={completed => autoVisual.check(completed, character)}
       onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
       onVoice={value => commitSetting({ voice: value })} onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
@@ -243,6 +252,40 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
           <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => setPage("hotspots")}><ScanLine size={18} /><span>虚拟体感</span><ChevronRight size={17} /></button>
         </div>
+        <section className="facing-form" key={character.id} aria-label="随剧情换场">
+          <h2 className="facing-record-title">随剧情换场</h2>
+          <div className="facing-list facing-settings-list facing-auto-settings">
+            <label>自动检查并补图<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
+              onChange={event => commitSetting({ autoVisual: { enabled: event.target.checked } })} /></label>
+            <label>画面检查间隔（轮）<input type="number" min={1} step={1} inputMode="numeric" defaultValue={current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL}
+              onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
+              onBlur={event => {
+                const previous = current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL;
+                const value = event.currentTarget.valueAsNumber;
+                if (!Number.isSafeInteger(value) || value < 1) event.currentTarget.value = String(previous);
+                else if (value !== previous) commitSetting({ autoVisual: { interval: value } });
+              }} /></label>
+            <label>人物参考图<select value={current.autoVisual?.referenceSource ?? "character"}
+              onChange={event => commitSetting({ autoVisual: { referenceSource: event.target.value as "character" | "avatar" | "upload" } })}>
+              <option value="character">角色参考图（没有时用头像）</option><option value="avatar">角色头像</option><option value="upload">自选图片</option>
+            </select></label>
+            {current.autoVisual?.referenceSource === "upload" && <div className="facing-auto-reference">
+              {current.autoVisual.referenceMediaRef && <ShownImage mediaRef={current.autoVisual.referenceMediaRef} />}
+              <label>{savingReference ? "保存中…" : "选择参考图"}<input type="file" accept="image/*" disabled={savingReference}
+                onChange={event => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (!file) return;
+                  setSavingReference(true);
+                  setError("");
+                  void storeShownImage(file).then(referenceMediaRef => changeSetting({ autoVisual: { referenceMediaRef } }))
+                    .catch(() => setError("人物参考图保存失败，请重新选择。"))
+                    .finally(() => setSavingReference(false));
+                }} /></label>
+            </div>}
+          </div>
+          <p className="facing-auto-help">先匹配现成素材。需要补图时，会将场景基础图和人物参考图一起交给生图模型。</p>
+        </section>
         <div className="facing-list facing-settings-list">
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}

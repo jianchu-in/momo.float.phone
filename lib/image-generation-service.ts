@@ -870,6 +870,7 @@ export async function generateImageFromConfiguredApi(params: {
   includeUserReferenceImage?: boolean;
   referenceSelection?: ImageReferenceSelection;
   explicitReferenceImage?: string;
+  explicitReferenceImages?: readonly { dataUrl: string; label: string }[];
   portraitOutput?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
@@ -883,7 +884,7 @@ export async function generateImageFromConfiguredApi(params: {
 
   // NovelAI 模式
   if (settings.provider === "novelai") {
-    if (params.explicitReferenceImage || (selection && (selection.character || selection.user))) {
+    if (params.explicitReferenceImage || params.explicitReferenceImages?.length || (selection && (selection.character || selection.user))) {
       throw new Error("当前 NovelAI 生图方式无法使用参考图，请改选文字生图。");
     }
     const naiApiKey = settings.novelai?.apiKey?.trim();
@@ -964,6 +965,9 @@ export async function generateImageFromConfiguredApi(params: {
   if (params.explicitReferenceImage) {
     referenceInputs.push({ dataUrl: await normalizeReferenceImageForEdit(params.explicitReferenceImage), label: "本次选用的参考图" });
   }
+  for (const reference of params.explicitReferenceImages ?? []) {
+    referenceInputs.push({ ...reference, dataUrl: await normalizeReferenceImageForEdit(reference.dataUrl) });
+  }
   if (shouldUseReference && reference?.assetId) {
     const raw = await getChatImageFromIndexedDB(reference.assetId);
     if (raw) referenceInputs.push({
@@ -992,7 +996,7 @@ export async function generateImageFromConfiguredApi(params: {
   }
   throwIfAborted(params.signal);
   if (selection?.user && referenceInputs.length === beforeUser) throw new Error("当前用户参考图未设置、未启用或无法读取。");
-  const referenceImageDataUrl = await combineReferenceImagesForEdit(referenceInputs, Boolean(selection));
+  const referenceImageDataUrl = await combineReferenceImagesForEdit(referenceInputs, Boolean(selection || params.explicitReferenceImages?.length));
   throwIfAborted(params.signal);
   const characterPrompt = !selection || selection.character ? reference?.featurePrompt?.trim() || "" : "";
   const anchorsPrompt = activeAnchors

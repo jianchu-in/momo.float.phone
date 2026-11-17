@@ -99,7 +99,8 @@ export async function generateFacingReply(options: {
   scenes: FacingSceneGroup[];
   signal: AbortSignal;
   retryInstruction?: string;
-}): Promise<{ dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup }> {
+  visualActivity?: string;
+}): Promise<{ dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup; visualContinues?: boolean }> {
   const { character, meeting, settings, scene, scenes, signal } = options;
   const destinations = scenes.filter(item => item.name !== scene);
   const summarizeReactions = (group?: FacingSceneGroup) => (group?.reactions ?? []).map(asset => ({ id: asset.id, name: asset.name }));
@@ -142,12 +143,13 @@ export async function generateFacingReply(options: {
   const mode: LLMMessage = {
     role: "system",
     content: [FACING_MODE_PROMPT,
+      options.visualActivity && `另加一个后台 JSON 字段 visual_continues。紧接本轮动作后，「${options.visualActivity}」确定仍在继续时填 true，已经结束、换场或不确定时填 false。不要在台词或动作中提到画面处理。`,
       `每轮回复约 ${(FACING_REPLY_LENGTHS[settings.length ?? "short"] ?? FACING_REPLY_LENGTHS.short).characters} 个中文字，台词和动作合计。字数是目标，保持当面说话的节奏，可按语境缩短。`, JSON.stringify({
       角色: character.name, 用户: identity?.name ?? "用户", 当前场景: scene,
       当前场景反应: summarizeReactions(currentScene),
       可切换场景: destinations.map(group => ({ id: group.name, 可用反应: summarizeReactions(group) })),
       ...(!hasLatest && history.length > 1 ? { 见面记录: history.slice(-16, -1).map(item => ({ role: item.role, text: item.content })) } : {}),
-    })].join("\n"),
+    })].filter(Boolean).join("\n"),
   };
   if (!hasLatest) {
     messages.push(mode);
@@ -180,13 +182,15 @@ export async function generateFacingReply(options: {
   let action = "";
   let reaction: FacingAsset | undefined;
   let nextScene: FacingSceneGroup | undefined;
+  let visualContinues = false;
   if (unfenced.startsWith("{")) {
     try {
-      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown };
+      const parsed = JSON.parse(jsonrepair(unfenced)) as { dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown; visual_continues?: unknown };
       dialogue = typeof parsed.dialogue === "string" ? parsed.dialogue.trim() : "";
       action = typeof parsed.action === "string" ? parsed.action.trim() : "";
       nextScene = destinations.find(group => group.name === parsed.scene_id);
       reaction = (nextScene ?? currentScene)?.reactions.find(asset => asset.id === parsed.reaction_id || asset.name === parsed.reaction_id);
+      visualContinues = parsed.visual_continues === true && !nextScene;
     } catch {
       throw new Error("角色回应格式有误，可以重试。");
     }
@@ -195,5 +199,5 @@ export async function generateFacingReply(options: {
   const movement = splitVisibleCallActions(action);
   const visibleAction = [...new Set([...movement.actions, ...(movement.speech ? [`（${movement.speech}）`] : []), ...line.actions])].join(" ");
   if (!line.speech && !visibleAction && !reaction && !nextScene) throw new Error("这一轮没有可显示的回应，可以重试。");
-  return { dialogue: line.speech, action: visibleAction || undefined, reaction, nextScene };
+  return { dialogue: line.speech, action: visibleAction || undefined, reaction, nextScene, visualContinues };
 }
