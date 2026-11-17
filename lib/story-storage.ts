@@ -496,6 +496,7 @@ export type StoryMessage = {
   contextRole?: StoryMessageRole;
   rawContent: string;
   renderedContent?: string;
+  imageRef?: string;
   storySummary?: string;
   regexSignature?: string;
   parserVersion?: number;

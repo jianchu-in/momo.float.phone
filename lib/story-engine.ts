@@ -1,3 +1,4 @@
+import { loadShownImageDataUrl, SHOWN_IMAGE_CONTEXT } from "./shown-image";
 import { loadCharacters } from "./character-storage";
 import {
   loadBindingConfig,
@@ -250,6 +251,10 @@ export async function generateStoryCompletion(
   }
 
   const { apiConfig, preset: resolvedPreset, regexes, worldBooks, regexSignature, summaryTag } = resolveStoryConfigs(characterId);
+  if (history.at(-1)?.imageRef && !apiConfig.enableImageRecognition) {
+    throw new ChatEngineError("图片已保存。请为剧情文字 API 开启识图，再重试。");
+  }
+
   const preset = selectStoryPresetPrompts(resolvedPreset, options?.settings?.enabledPresetPromptIds);
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
@@ -401,6 +406,20 @@ async function buildStoryPromptMessages(
     characterRelations: independent || isEnsemble ? null : undefined,
     dwellingContext: independent || isEnsemble ? null : undefined,
   });
+  const shownImage = history.at(-1);
+  if (shownImage?.role === "user" && shownImage.imageRef) {
+    const url = await loadShownImageDataUrl(shownImage.imageRef);
+    if (!url) throw new ChatEngineError("无法读取这张图片，请重新选择。");
+    const index = messages.map(message => message.role).lastIndexOf("user");
+    const previous = messages[index]?.content;
+    const text = typeof previous === "string" ? previous : shownImage.rawContent;
+    const turn: LLMMessage = { role: "user", content: [
+      { type: "text", text: `${SHOWN_IMAGE_CONTEXT}\n${text}` },
+      { type: "image_url", image_url: { url, detail: "auto" } },
+    ] };
+    if (index < 0) messages.push(turn);
+    else messages[index] = turn;
+  }
   const settingsPrompt = buildStorySettingsPrompt(settings, userIdentity?.name ?? "用户", globalSettings, now);
   if (participantCharacters.length > 1) {
     const participantContexts = await Promise.all(participantCharacters.map(async (item) => {

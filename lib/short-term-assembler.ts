@@ -1,3 +1,4 @@
+import { facingTurnText, loadFacingMeetings, loadFacingSettings } from "./facing-storage";
 // lib/short-term-assembler.ts
 // Reads native app data (chat messages, moments posts/comments) and provides
 // a unified timeline. Replaces the old ShortTermEvent IndexedDB approach.
@@ -57,7 +58,7 @@ function formatPhotoDirectiveForPrompt(msg: ChatMessage): string {
 
 export type NativeTimelineEntry = {
     id: string;
-    sourceApp: "chat" | "moments" | "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app";
+    sourceApp: "chat" | "moments" | "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app" | "facing";
     sourceDetail?: "direct" | "group" | "system" | "story" | "chat_offline" | "game" | "diary_entry" | "notewall" | "xiaohongshu" | "black_market_theater" | "interview_issue" | "interview_shared_issue" | "cocreate_project" | "checkphone" | "custom_app_event" | "moments_signature" | "moments_cover" | "personal_note_reaction"; // chat sub-type: 1:1 vs group chat vs system note
     authorType?: "user" | "character" | "npc"; // who authored this entry
     postAuthorType?: "user" | "character"; // for moments: who owns the parent post
@@ -180,6 +181,7 @@ function* assembleNativeTimeline(
         /** 限定聊天账号；undefined 表示跨账号读取，null 表示只读主号。 */
         chatAccountId?: string | null;
         excludeChatSessionId?: string;
+        excludeFacingMeetingId?: string;
         includeDeleted?: boolean;
         signal?: AbortSignal;
         timeAware?: boolean;
@@ -849,6 +851,27 @@ function* assembleNativeTimeline(
         });
     }
 
+    if (loadFacingSettings().characters[characterId]?.memory !== false) {
+        const identity = options?.appId ? resolveUserIdentity(characterId, options.appId)?.id ?? null : undefined;
+        const seen = new Set<string>();
+        const meetings = loadFacingMeetings(characterId, identity)
+            .filter(meeting => meeting.type !== "independent" && meeting.id !== options?.excludeFacingMeetingId)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        for (const meeting of meetings) {
+            for (const turn of meeting.turns) {
+                if (++processedMessages % 100 === 0) yield;
+                if (seen.has(turn.id) || (options?.afterTimestamp && turn.at <= options.afterTimestamp)) continue;
+                seen.add(turn.id);
+                const body = facingTurnText(turn);
+                if (!body) continue;
+                const author = turn.role === "user" ? userName : charName;
+                const label = formatPromptEventLabel("面对面", turn.at, timeAware, timestampOptions);
+                entries.push({ id: turn.id, sessionId: meeting.id, sourceApp: "facing", authorType: turn.role === "user" ? "user" : "character",
+                    timestamp: turn.at, content: `${label} ${author}（${turn.sceneName}）：${body}` });
+            }
+        }
+    }
+
     return mergeShortMemoryEntries(characterId, entries, options?.includeDeleted, options?.afterTimestamp);
 }
 
@@ -873,7 +896,7 @@ export async function loadNativeTimelineAsync(...args: Parameters<typeof assembl
 }
 
 // Fixed order — lower = further from LLM output (appears higher in prompt)
-const FEATURE_ORDER: Record<string, number> = { map: 0, game: 0.5, moments: 1, xiaohongshu: 1.5, checkphone: 1.7, story: 2, vn: 2, theater: 2.2, interview: 2.35, cocreate: 2.4, diary_entry: 2.45, notewall: 2.5, custom_app: 2.6, group_chat: 3, chat: 4 };
+const FEATURE_ORDER: Record<string, number> = { map: 0, game: 0.5, moments: 1, xiaohongshu: 1.5, checkphone: 1.7, story: 2, vn: 2, theater: 2.2, interview: 2.35, cocreate: 2.4, diary_entry: 2.45, notewall: 2.5, custom_app: 2.6, facing: 2.7, group_chat: 3, chat: 4 };
 // Map appId → XML tag name for the "current feature" wrapper
 const FEATURE_TAG: Record<string, string> = {
     chat: "recent_chat",
@@ -888,6 +911,7 @@ const FEATURE_TAG: Record<string, string> = {
     checkphone: "recent_checkphone",
     interview_magazine: "recent_interview",
     cocreate: "recent_cocreate",
+    facing: "recent_facing",
 };
 
 function getFeatureTag(appId: string): string {
@@ -1012,6 +1036,7 @@ export function prepareShortTermContext(
         /** 限定聊天账号；undefined 表示不限制，null 表示主号。 */
         chatAccountId?: string | null;
         excludeChatSessionId?: string;
+        excludeFacingMeetingId?: string;
         timeline?: NativeTimelineEntry[];
         /** 只读取该时间之后的跨应用最近事件；剧情分线用它隔离创建前的短期记忆。 */
         afterTimestamp?: string;
@@ -1029,6 +1054,7 @@ export function prepareShortTermContext(
         userName: options?.userName,
         appId: appId as import("./settings-types").ContentAppId,
         excludeOfflineSessionId: options?.excludeOfflineSessionId,
+        excludeFacingMeetingId: options?.excludeFacingMeetingId,
         chatAccountId: undefined,
         excludeChatSessionId: options?.excludeChatSessionId ?? (appId === "chat" && !options?.includeDirectChatEntries ? options?.history?.[0]?.sessionId : undefined),
         afterTimestamp: options?.afterTimestamp,
@@ -1124,6 +1150,9 @@ export function prepareShortTermContext(
     if (cocreateEntries.length > 0) {
         raw.push({ tag: "recent_cocreate", order: FEATURE_ORDER.cocreate, entries: cocreateEntries });
     }
+
+    const facingEntries = timeline.filter(e => e.sourceApp === "facing");
+    if (facingEntries.length) raw.push({ tag: "recent_facing", order: FEATURE_ORDER.facing, entries: facingEntries });
 
     const customAppEntries = timeline.filter(e => e.sourceApp === "custom_app");
     if (customAppEntries.length > 0) {
@@ -1396,6 +1425,9 @@ export function prepareGroupShortTermContext(
         raw.push({ tag: "recent_cocreate", order: FEATURE_ORDER.cocreate, entries: cocreateEntries });
     }
 
+    const facingEntries = timeline.filter(e => e.sourceApp === "facing");
+    if (facingEntries.length) raw.push({ tag: "recent_facing", order: FEATURE_ORDER.facing, entries: facingEntries });
+
     const customAppEntries = timeline.filter(e => e.sourceApp === "custom_app");
     if (customAppEntries.length > 0) {
         raw.push({ tag: "recent_custom_app", order: FEATURE_ORDER.custom_app, entries: customAppEntries });
@@ -1494,6 +1526,7 @@ export function prepareGroupShortTermContext(
                                     entry.sourceApp === "checkphone" ? "recent_checkphone" :
                                         entry.sourceApp === "interview_magazine" ? "recent_interview" :
                                                 entry.sourceApp === "cocreate" ? "recent_cocreate" :
+                                                    entry.sourceApp === "facing" ? "recent_facing" :
                                                     entry.sourceApp === "custom_app" ? "recent_custom_app" :
                                                         entry.sourceApp === "story" && entry.sourceDetail === "black_market_theater" ? "recent_theater" :
                                                             entry.sourceApp === "diary" && entry.sourceDetail === "diary_entry" ? "recent_diary" :

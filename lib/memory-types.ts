@@ -43,6 +43,7 @@ export type MemoryConfig = {
         vn?: boolean;
         adventure?: boolean;
         custom_app?: boolean;
+        facing?: boolean;
     };
 };
 
@@ -130,5 +131,6 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
         vn: true,
         adventure: true,
         custom_app: true,
+        facing: true,
     },
 };

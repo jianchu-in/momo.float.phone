@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowUp, ChevronLeft, Keyboard, Mic, PhoneOff, Settings2, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type CSSProperties } from "react";
+import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Mic, Settings2, Volume2, VolumeX, X } from "lucide-react";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { useCallKeyboardOffsetStyle } from "@/components/chat/use-call-keyboard-offset";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
-import { appendFacingTurn, facingId, facingScenePosition, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
+import { appendFacingTurn, changeFacingTurns, facingId, facingReplyVersion, facingScenePosition, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
 import { playAudioBlob, playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingStage } from "./facing-stage";
+import { FacingMessage } from "./facing-message";
+import { ShownImage } from "@/components/ui/shown-image";
+import { splitVisibleCallActions } from "@/lib/call-action-text";
+import { storeShownImage } from "@/lib/shown-image";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, onMeeting, onSettings, onEnd, onVoice, onSpeechInput }: {
   character: Character;
@@ -29,6 +33,18 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 }) {
   const [reaction, setReaction] = useState<FacingAsset>();
   const [draft, setDraft] = useState("");
+  const [hidden, setHidden] = useState(false);
+  const [photo, setPhoto] = useState<File>();
+  const [touches, setTouches] = useState<FacingHotspot[]>([]);
+  const [touchEffect, setTouchEffect] = useState<{ label: string; x: number; y: number; id: string }>();
+  const [menuId, setMenuId] = useState<string>();
+  const [messageDialog, setMessageDialog] = useState<"edit" | "instruction" | "delete">();
+  const [messageDraft, setMessageDraft] = useState("");
+  const [actionDraft, setActionDraft] = useState("");
+  const photoPicker = useRef<HTMLInputElement>(null);
+  const roomRef = useRef<HTMLElement>(null);
+  const touchTap = useRef<{ id: string; at: number } | undefined>(undefined);
+
   const [voiceInput, setVoiceInput] = useState(false);
   const [browserListening, setBrowserListening] = useState(false);
   const [interimText, setInterimText] = useState("");
@@ -51,7 +67,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   useEffect(() => {
     if (log.current && (followLog.current || failedTurn?.role === "user")) log.current.scrollTop = log.current.scrollHeight;
-  }, [failedTurn, busy, interimText, error]);
+  }, [failedTurn, busy, hidden, interimText, error]);
 
   useEffect(() => () => {
     controller.current?.abort();
@@ -91,9 +107,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     }
   }
 
-  async function send(text: string, kind: FacingTurn["kind"], retry?: FacingTurn) {
+  async function send(text: string, kind: FacingTurn["kind"], options?: {
+    retry?: FacingTurn; previous?: FacingTurn; instruction?: string; photo?: File; touches?: FacingHotspot[];
+  }) {
     const content = text.trim();
-    if (!content || controller.current) return;
+    if ((!content && !options?.photo && !options?.touches?.length && !options?.retry) || controller.current) return;
     const run = new AbortController();
     controller.current = run;
     audioRequest.current++;
@@ -102,28 +120,47 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     setBusy(true);
     setError("");
     stopReaction();
-    if (!retry) followLog.current = true;
-    let stored = Boolean(retry);
-    const user: FacingTurn = retry ?? { ...position, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString() };
+    if (!options?.retry) followLog.current = true;
+    let stored = !!options?.retry;
     try {
-      const current = retry ? meeting : await appendFacingTurn(meeting, user);
+      const user: FacingTurn = options?.retry ?? {
+        ...position, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString(),
+        touches: options?.touches?.map(point => point.label),
+        imageRef: options?.photo ? await storeShownImage(options.photo) : undefined,
+      };
+      if (run.signal.aborted) return;
+      const current = options?.retry ? meeting : await appendFacingTurn(meeting, user);
       stored = true;
       if (run.signal.aborted) return;
       onMeeting(current);
-      const result = await generateFacingReply({ character, meeting: current, settings, scene: position.sceneName, scenes, signal: run.signal });
+      const end = current.turns.findIndex(turn => turn.id === user.id);
+      if (end < 0) throw new Error("找不到要重试的原消息。");
+      const context = { ...current, turns: current.turns.slice(0, end + 1) };
+      const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
+        signal: run.signal, retryInstruction: options?.instruction });
       if (run.signal.aborted) return;
-      const saved = await appendFacingTurn(current, {
-        ...(result.nextScene ? facingScenePosition(result.nextScene) : position),
+      const response: FacingTurn = {
+        ...(result.nextScene ? facingScenePosition(result.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
         id: facingId(), role: "assistant", kind: "reply", text: result.dialogue, action: result.action,
         at: new Date().toISOString(), replyTo: user.id, reactionId: result.reaction?.id, reactionName: result.reaction?.name,
-      });
+      };
+      const previous = options?.previous;
+      const saved = previous ? await changeFacingTurns(current, turns => turns.map(turn => {
+        if (turn.id !== previous.id) return turn;
+        const versions = [...(turn.versions ?? [facingReplyVersion(turn)]), facingReplyVersion(response)];
+        return { ...turn, ...facingReplyVersion(response), versions, versionIndex: versions.length - 1 };
+      })) : await appendFacingTurn(current, response);
       if (run.signal.aborted) return;
       onMeeting(saved);
-      setReaction(result.reaction);
-      void speak(result.dialogue, run.signal);
+      if (saved.turns.at(-1)?.id === (previous?.id ?? response.id)) {
+        setReaction(result.reaction);
+        void speak(result.dialogue, run.signal);
+      }
     } catch (cause) {
       if (!run.signal.aborted) {
-        setError(stored ? (cause instanceof Error ? cause.message : "角色回复失败。") : "消息保存失败，请重试。");
+        setError(cause instanceof Error ? cause.message : stored ? "角色回复失败。" : "消息保存失败，请重试。");
+        if (!stored && options?.photo) setPhoto(options.photo);
+        if (!stored && options?.touches?.length) setTouches(current => [...options.touches!, ...current]);
         if (!stored && kind !== "touch") setDraft(content);
       }
     } finally {
@@ -134,10 +171,74 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     }
   }
 
+  function consumeTouches() {
+    touchTap.current = undefined;
+    setTouches([]);
+    return touches;
+  }
+
+  function submitVoice(text: string) {
+    void send(text, "voice", { photo, touches: consumeTouches() });
+    setPhoto(undefined);
+  }
+
+  function retryMessage(selected: FacingTurn, instruction?: string) {
+    const index = meeting.turns.findIndex(turn => turn.id === selected.id);
+    const user = selected.role === "user" ? selected : meeting.turns.find(turn => turn.id === selected.replyTo)
+      ?? meeting.turns.slice(0, index).reverse().find(turn => turn.role === "user");
+    const previous = selected.role === "assistant" ? selected : meeting.turns.find(turn => turn.replyTo === selected.id);
+    if (!user) { setError("这条回复对应的用户消息已删除。"); return; }
+    void send(user.text, user.kind, { retry: user, previous, instruction });
+  }
+
+  async function updateTurns(update: (turns: FacingTurn[]) => FacingTurn[]) {
+    if (controller.current) return;
+    const operation = new AbortController();
+    controller.current = operation;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await changeFacingTurns(meeting, update);
+      if (!operation.signal.aborted) { stopReaction(); onMeeting(saved); }
+    } catch {
+      if (!operation.signal.aborted) setError("消息修改未保存，请重试。");
+    } finally {
+      if (controller.current === operation) controller.current = null;
+      if (!operation.signal.aborted) setBusy(false);
+    }
+  }
+
+  function changeVersion(turn: FacingTurn, versionIndex: number) {
+    void updateTurns(turns => turns.map(item => item.id === turn.id && item.versions?.[versionIndex]
+      ? { ...item, ...item.versions[versionIndex], versionIndex } : item));
+  }
+
+  function handleTouch(point: FacingHotspot, coordinates?: { x: number; y: number }) {
+    const bounds = roomRef.current?.getBoundingClientRect();
+    if (bounds) setTouchEffect({ label: point.label, x: (coordinates?.x ?? bounds.left + bounds.width / 2) - bounds.left,
+      y: (coordinates?.y ?? bounds.top + bounds.height / 2) - bounds.top, id: facingId() });
+    const mode = settings.touchMode ?? "instant";
+    const now = Date.now();
+    const double = mode === "double" && touchTap.current?.id === point.id && now - touchTap.current.at < 380;
+    touchTap.current = double ? undefined : { id: point.id, at: now };
+    if (mode === "instant" || double) {
+      if (double) setTouches(current => current.filter(item => item.id !== point.id));
+      void send(point.label, "touch");
+      return;
+    }
+    setTouches(current => current.some(item => item.id === point.id) ? current : [...current, point]);
+  }
+
+  useEffect(() => {
+    if (!touchEffect) return;
+    const timer = window.setTimeout(() => setTouchEffect(undefined), 1400);
+    return () => window.clearTimeout(timer);
+  }, [touchEffect]);
+
   const hold = useHoldToTalk({
     characterId: character.id, canStart: () => !controller.current,
     onRecordingStart: () => { audioRequest.current++; playback.current?.abort(); setError(""); },
-    onTranscript: text => { void send(text, "voice"); },
+    onTranscript: submitVoice,
     onError: message => {
       if (/^语音识别 API 错误 (401|403)\b|令牌无效|invalid (?:token|api[ _-]?key)/i.test(message)) {
         if (browserAvailable) {
@@ -166,7 +267,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       interim.current = "";
       setInterimText("");
       setBrowserListening(false);
-      if (text.trim()) void send(text, "voice");
+      if (text.trim()) submitVoice(text);
       else setError(issue || "没有识别到语音，请再说一次。");
     };
     const session = createSTTSession({
@@ -183,71 +284,128 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !draft.trim()) return;
-    void send(draft, "text");
+    if (busy || (!draft.trim() && !photo && !touches.length)) return;
+    void send(draft, "text", { photo, touches: consumeTouches() });
     setDraft("");
+    setPhoto(undefined);
   }
 
   const listening = browserListening || hold.recState !== "idle";
-  return <section className="facing-room" style={keyboardOffset} aria-label={`与${character.name}见面`}>
+  const selectedMessage = meeting.turns.find(turn => turn.id === menuId);
+  const appearance = settings.appearance;
+  const roomStyle = { ...keyboardOffset, "--facing-bubble-color": appearance?.bubbleColor ?? "#ffffff",
+    "--facing-bubble-opacity": `${appearance?.opacity ?? 76}%`, "--facing-message-color": appearance?.textColor ?? "#29242f",
+    "--facing-message-size": `${appearance?.textSize ?? 14}px` } as CSSProperties;
+  function closeMenu() { setMenuId(undefined); setMessageDialog(undefined); }
+  function applyMessageDialog() {
+    if (!selectedMessage) return;
+    if (messageDialog === "instruction") retryMessage(selectedMessage, messageDraft);
+    if (messageDialog === "delete") void updateTurns(turns => turns.filter(turn => turn.id !== selectedMessage.id)
+      .map(turn => turn.replyTo === selectedMessage.id ? { ...turn, replyTo: undefined } : turn));
+    if (messageDialog === "edit") void updateTurns(turns => turns.map(turn => {
+      if (turn.id !== selectedMessage.id) return turn;
+      const action = splitVisibleCallActions(actionDraft);
+      const visibleAction = [...action.actions, ...(action.speech ? [`（${action.speech}）`] : [])].join(" ");
+      const updated = { ...turn, text: messageDraft.trim(), action: turn.role === "assistant" ? visibleAction || undefined : turn.action };
+      const versions = turn.versions?.map((version, index) => index === (turn.versionIndex ?? 0) ? facingReplyVersion(updated) : version);
+      return { ...updated, versions };
+    }));
+    closeMenu();
+  }
+  return <section ref={roomRef} className="facing-room" style={roomStyle} aria-label={`与${character.name}见面`}>
     <FacingStage portrait={portrait} scene={scene} reaction={reaction} fallback={character.avatar}
-      name={character.name} points={busy || listening ? [] : points} onPoint={point => void send(point.label, "touch")}
+      name={character.name} points={busy || listening ? [] : points} onPoint={handleTouch}
       onReactionEnd={stopReaction} />
+    {touchEffect && <div key={touchEffect.id} className="facing-touch-feedback" style={{ left: touchEffect.x, top: touchEffect.y }} role="status">
+      <span aria-hidden="true" /><small>你触碰了他的{touchEffect.label}</small>
+    </div>}
     <header className="facing-room-top">
       <button type="button" className="facing-glass facing-icon" aria-label="返回" onClick={onEnd}><ChevronLeft size={22} /></button>
       <span className="facing-glass facing-room-scene" aria-label="当前场景">{position.sceneName}</span>
       <div>
+        <button type="button" className="facing-glass facing-icon" aria-label={hidden ? "显示对话" : "隐藏对话"}
+          aria-pressed={hidden} onClick={() => { setHidden(value => !value); followLog.current = true; }}>
+          {hidden ? <Eye size={18} /> : <EyeOff size={18} />}
+        </button>
         <button type="button" className="facing-glass facing-icon" aria-label={voiceOn ? "关闭角色语音" : "开启角色语音"}
           aria-pressed={voiceOn} onClick={() => { unlockAudioPlayback(); onVoice(!voiceOn); }}>{voiceOn ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
         <button type="button" className="facing-glass facing-icon" aria-label="设置" disabled={busy || listening} onClick={onSettings}><Settings2 size={19} /></button>
       </div>
     </header>
-    <div className="facing-room-bottom">
+    {!hidden && <div className="facing-room-bottom">
       {(meeting.turns.length > 0 || busy || error || interimText) && <div ref={log} className="facing-room-log" role="log"
         aria-label="对话记录" tabIndex={0} onScroll={event => {
           const area = event.currentTarget;
           followLog.current = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
         }}>
-        {meeting.turns.map(turn => <article key={turn.id} className="facing-glass facing-message" data-role={turn.role}>
-          <small>{turn.role === "assistant" ? character.name : "你"}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
-          {turn.action && <p className="facing-action">{turn.action}</p>}
-          {turn.text && <p>{turn.kind === "touch" ? `（触碰了${turn.text}）` : turn.text}</p>}
-          {!turn.action && !turn.text && <p className="facing-action">{turn.reactionName ? `（${turn.reactionName}）` : `来到${turn.sceneName}`}</p>}
-        </article>)}
+        {meeting.turns.map(turn => <FacingMessage key={turn.id} turn={turn} characterName={character.name} busy={busy || listening}
+          onMenu={() => { setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => changeVersion(turn, index)} />)}
         {interimText && <div className="facing-glass facing-message" data-role="user"><small>语音识别中</small><p>{interimText}</p></div>}
         {busy && <div className="facing-glass facing-message facing-log-status">正在回应…</div>}
         {error && <p className="facing-glass facing-message facing-log-status" role="alert">{error}</p>}
         {!busy && !listening && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"
-          onClick={() => void send(failedTurn.text, failedTurn.kind, failedTurn)}>重试回复</button>}
+          onClick={() => retryMessage(failedTurn)}>重试回复</button>}
       </div>}
       <div className="facing-controls facing-glass">
+        {(touches.length > 0 || photo) && <div className="facing-drafts">
+          {touches.map(point => <button type="button" key={point.id} className="facing-touch-chip" aria-label={`移除${point.label}`}
+            onClick={() => { touchTap.current = undefined; setTouches(items => items.filter(item => item.id !== point.id)); }}>
+            <X size={13} />{point.label}
+          </button>)}
+          {photo && <div className="facing-photo-draft"><ShownImage file={photo} />
+            <button type="button" aria-label="移除图片" onClick={() => setPhoto(undefined)}><X size={14} /></button></div>}
+        </div>}
         <form onSubmit={submit}>
-          <button type="button" className="facing-glass facing-icon" disabled={listening}
-            aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
-              if (!cloudAvailable && !browserAvailable) { setError("当前浏览器无法直接识别语音。可以配置云端语音识别，或使用文字输入。"); return; }
-              setVoiceInput(!voiceInput);
-              setError("");
-            }}>
-            {voiceInput ? <Keyboard size={18} /> : <Mic size={18} />}
-          </button>
-          {voiceInput ? useCloudStt
-            ? <button type="button" className="facing-glass facing-hold" disabled={busy || hold.recState === "transcribing"} {...hold.pressHandlers}>
-                {hold.recState === "recording" ? "松开发送" : hold.recState === "transcribing" ? "正在识别…" : "按住说话"}
-              </button>
-            : <button type="button" className="facing-glass facing-hold" disabled={busy} onClick={toggleSpeechRecognition}>
-                {browserListening ? "说完了" : "开始说话"}
-              </button>
-            : <>
-              <input value={draft} onChange={event => setDraft(event.target.value)} placeholder="和他说句话…" aria-label="对话内容" maxLength={4000} />
-              <button type="submit" className="facing-glass facing-icon facing-send" aria-label="发送" disabled={busy || !draft.trim()}><ArrowUp size={20} /></button>
-            </>}
+          <button type="button" className="facing-glass facing-icon" aria-label="当面展示图片" disabled={busy || listening}
+            onClick={() => { setVoiceInput(false); photoPicker.current?.click(); }}><ImagePlus size={20} /></button>
+          <input ref={photoPicker} type="file" accept="image/*" hidden onChange={event => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) setPhoto(file);
+          }} />
+          <div className="facing-input">
+            <button type="button" className="facing-input-mic" disabled={listening}
+              aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
+                if (!cloudAvailable && !browserAvailable) { setError("当前浏览器无法直接识别语音。可以配置云端语音识别，或使用文字输入。"); return; }
+                setVoiceInput(!voiceInput);
+                setError("");
+              }}>{voiceInput ? <Keyboard size={16} /> : <Mic size={16} />}</button>
+            {voiceInput ? useCloudStt
+              ? <button type="button" className="facing-hold" disabled={busy || hold.recState === "transcribing"} {...hold.pressHandlers}>
+                  {hold.recState === "recording" ? "松开发送" : hold.recState === "transcribing" ? "正在识别…" : "按住说话"}
+                </button>
+              : <button type="button" className="facing-hold" disabled={busy} onClick={toggleSpeechRecognition}>
+                  {browserListening ? "说完了" : "开始说话"}
+                </button>
+              : <input value={draft} onChange={event => setDraft(event.target.value)} placeholder="和他说句话…" aria-label="对话内容" maxLength={4000} />}
+          </div>
+          {!voiceInput && <button type="submit" className="facing-glass facing-icon facing-send" aria-label="发送"
+            disabled={busy || (!draft.trim() && !photo && !touches.length)}><ArrowUp size={19} /></button>}
         </form>
         {voiceInput && cloudAvailable && browserAvailable && <button type="button" className="facing-glass facing-stt-mode" disabled={busy || listening}
           onClick={() => { onSpeechInput(useCloudStt ? "browser" : "cloud"); setError(""); }}>
           {useCloudStt ? "改用浏览器识别" : "改用云端识别"}
         </button>}
-        <button type="button" className="facing-glass facing-end" onClick={onEnd}><PhoneOff size={16} />结束</button>
       </div>
-    </div>
+    </div>}
+    {selectedMessage && <div className="facing-overlay" onClick={closeMenu}>
+      <section className="facing-sheet" role="dialog" aria-modal="true" aria-label="消息操作" onClick={event => event.stopPropagation()}>
+        <header><h2>{messageDialog === "edit" ? "编辑消息" : messageDialog === "instruction" ? "指令重试" : messageDialog === "delete" ? "删除这条消息？" : "消息操作"}</h2>
+          <button type="button" className="facing-icon" aria-label="关闭消息操作" onClick={closeMenu}><X size={18} /></button></header>
+        {messageDialog ? <>
+          {messageDialog !== "delete" && <textarea className="facing-message-editor" aria-label={messageDialog === "edit" ? "消息内容" : "重试指令"}
+            value={messageDraft} rows={4} maxLength={4000} onChange={event => setMessageDraft(event.target.value)} />}
+          {messageDialog === "edit" && selectedMessage.role === "assistant" && <textarea className="facing-message-editor" aria-label="动作描述"
+            placeholder="（动作描述）" value={actionDraft} rows={2} maxLength={2000} onChange={event => setActionDraft(event.target.value)} />}
+          <button type="button" className="facing-primary" onClick={applyMessageDialog}
+            disabled={messageDialog === "instruction" && !messageDraft.trim()}>{messageDialog === "delete" ? "确认删除" : messageDialog === "edit" ? "保存" : "重新生成"}</button>
+        </> : <div className="facing-list">
+          <button type="button" onClick={() => { closeMenu(); retryMessage(selectedMessage); }}>重试</button>
+          <button type="button" onClick={() => { setMessageDraft(selectedMessage.text); setActionDraft(selectedMessage.action ?? ""); setMessageDialog("edit"); }}>编辑</button>
+          <button type="button" onClick={() => { setMessageDraft(""); setMessageDialog("instruction"); }}>指令重试</button>
+          <button type="button" className="facing-delete" onClick={() => setMessageDialog("delete")}>删除</button>
+        </div>}
+      </section>
+    </div>}
   </section>;
 }

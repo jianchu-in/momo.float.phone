@@ -11,9 +11,10 @@ import { unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingAssets } from "./facing-assets";
 import { FacingRoom } from "./facing-room";
 import { FacingStage } from "./facing-stage";
+import { ShownImage } from "@/components/ui/shown-image";
 
 type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record";
-type Sheet = "characters" | "new" | "end" | null;
+type Sheet = "characters" | "new" | null;
 
 function Header({ title, onBack, children }: { title: string; onBack: () => void; children?: ReactNode }) {
   return <header className="facing-header">
@@ -107,6 +108,8 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
       <ol className="facing-turns">
         {record.turns.map(turn => <li key={turn.id} data-role={turn.role}>
           <small>{turn.role === "assistant" ? character.name : "你"} · {turn.sceneName}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
+          {turn.imageRef && <ShownImage mediaRef={turn.imageRef} className="facing-message-photo" />}
+          {!!turn.touches?.length && <p className="facing-action">{turn.touches.map(part => `（触碰了${part}）`).join(" ")}</p>}
           {turn.action && <p className="facing-action">{turn.action}</p>}
           {turn.text && <p>{turn.kind === "touch" ? `触碰了${turn.text}` : turn.text}</p>}
           {turn.reactionName && <em>{turn.reactionName}</em>}
@@ -230,7 +233,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
       portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
-      onSettings={() => openSettings("room")} onEnd={() => setSheet("end")}
+      onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
       onVoice={value => commitSetting({ voice: value })} onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
       <Header title="角色设置" onBack={() => setPage(settingOrigin)} />
@@ -246,8 +249,27 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
           </select></label>
           <label>角色语音<input type="checkbox" role="switch" checked={current.voice !== false} onChange={event => commitSetting({ voice: event.target.checked })} /></label>
           <label>启用触碰区域<input type="checkbox" role="switch" checked={current.touch !== false} onChange={event => commitSetting({ touch: event.target.checked })} /></label>
-          <label>参考角色记忆<input type="checkbox" role="switch" checked={current.memory !== false} onChange={event => commitSetting({ memory: event.target.checked })} /></label>
+          <label>触碰方式<select value={current.touchMode ?? "instant"} onChange={event => commitSetting({ touchMode: event.target.value as FacingCharacterSettings["touchMode"] })}>
+            <option value="instant">点击后立即回应</option><option value="collect">随消息发送</option><option value="double">单击记录，双击回应</option>
+          </select></label>
+          <label>读写角色记忆<input type="checkbox" role="switch" checked={current.memory !== false} onChange={event => commitSetting({ memory: event.target.checked })} /></label>
         </div>
+        <section className="facing-form" aria-label="对话外观">
+          <h2 className="facing-record-title">对话外观</h2>
+          <div className="facing-list facing-settings-list facing-appearance">
+            <label>气泡颜色<input type="color" value={current.appearance?.bubbleColor ?? "#ffffff"}
+              onChange={event => commitSetting({ appearance: { ...current.appearance, bubbleColor: event.target.value } })} /></label>
+            <label>气泡不透明度<input type="range" min={15} max={100} defaultValue={current.appearance?.opacity ?? 76}
+              onPointerUp={event => commitSetting({ appearance: { ...current.appearance, opacity: Number(event.currentTarget.value) } })}
+              onKeyUp={event => commitSetting({ appearance: { ...current.appearance, opacity: Number(event.currentTarget.value) } })} /></label>
+            <label>文字颜色<input type="color" value={current.appearance?.textColor ?? "#29242f"}
+              onChange={event => commitSetting({ appearance: { ...current.appearance, textColor: event.target.value } })} /></label>
+            <label>文字大小<select value={current.appearance?.textSize ?? 14}
+              onChange={event => commitSetting({ appearance: { ...current.appearance, textSize: Number(event.target.value) } })}>
+              {[12, 13, 14, 15, 16, 17, 18, 20, 22].map(size => <option key={size} value={size}>{size} px</option>)}
+            </select></label>
+          </div>
+        </section>
       </main>
     </>}
     {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} groups={groups}
@@ -296,10 +318,6 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         {groups.length ? groups.map(group => <option key={group.name}>{group.name}</option>) : <option>{FACING_DEFAULT_SCENE}</option>}
       </select></label>
       <button type="button" className="facing-primary" disabled={starting} onClick={() => void startMeeting()}>开始对话</button>
-    </FacingSheet>}
-    {sheet === "end" && <FacingSheet title="结束这次见面？" center close={() => setSheet(null)}>
-      <div className="facing-pair"><button type="button" className="facing-soft" onClick={() => setSheet(null)}>继续</button>
-        <button type="button" className="facing-primary" onClick={() => { setMeeting(undefined); setSheet(null); setPage("home"); }}>结束</button></div>
     </FacingSheet>}
     {error && <p className="facing-global-error" role="alert">{error}</p>}
   </div>;

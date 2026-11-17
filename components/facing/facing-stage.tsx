@@ -5,9 +5,9 @@ import { UserRound } from "lucide-react";
 import type { FacingAsset, FacingHotspot } from "@/lib/facing-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
 
-export function useFacingMediaUrl(asset?: FacingAsset) {
+export function useFacingMediaUrl(asset?: FacingAsset, playMotion = false) {
   const [media, setMedia] = useState<{ id: string; url: string | null }>();
-  const id = asset?.mediaId;
+  const id = playMotion ? asset?.motionMediaId ?? asset?.mediaId : asset?.mediaId;
   useEffect(() => {
     let current = true;
     if (id) void getThemeAssetDataUrl(id).then(url => {
@@ -62,7 +62,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   points?: FacingHotspot[];
   editing?: boolean;
   activePoint?: string;
-  onPoint?: (point: FacingHotspot) => void;
+  onPoint?: (point: FacingHotspot, coordinates?: { x: number; y: number }) => void;
   onPointMove?: (id: string, x: number, y: number) => void;
   onReactionEnd?: () => void;
   children?: ReactNode;
@@ -71,9 +71,9 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const [ratio, setRatio] = useState<{ key: string; value: number }>();
   const area = useRef<HTMLDivElement>(null);
   const figure = useRef<HTMLDivElement>(null);
-  const portraitUrl = useFacingMediaUrl(portrait);
-  const reactionUrl = useFacingMediaUrl(reaction);
-  const sceneUrl = useFacingMediaUrl(scene);
+  const portraitUrl = useFacingMediaUrl(portrait, true);
+  const reactionUrl = useFacingMediaUrl(reaction, true);
+  const sceneUrl = useFacingMediaUrl(scene, true);
   const portraitDraft = draft?.category === "portrait" ? draft : undefined;
   const sceneDraft = draft?.category === "scene" ? draft : undefined;
   const background = sceneDraft ?? scene;
@@ -104,7 +104,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   return <div className="facing-stage" ref={area}>
     {background && backgroundUrl && <div className="facing-scene" key={sceneDraft ? "draft-scene" : scene?.mediaId} style={{ "--facing-scene-x": `${background.layout?.x ?? 50}%`,
       "--facing-scene-y": `${background.layout?.y ?? 50}%`, "--facing-scene-scale": (background.layout?.scale ?? 100) / 100 } as React.CSSProperties}>
-      <FacingMedia url={backgroundUrl} mediaType={background.mediaType} name={background.name} />
+      <FacingMedia url={backgroundUrl} mediaType={sceneDraft ? sceneDraft.mediaType : scene?.motionMediaType ?? background.mediaType} name={background.name} />
     </div>}
     <div ref={figure} className="facing-figure" style={full ? {
       width, height, transform: "none",
@@ -115,7 +115,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
       left: `${layout?.x ?? 50}%`, top: `${layout?.y ?? 100}%`,
     }}>
       {mediaUrl && foreground
-        ? <FacingMedia key={mediaKey} url={mediaUrl} mediaType={foreground.mediaType} name={foreground.name}
+        ? <FacingMedia key={mediaKey} url={mediaUrl} mediaType={reactionUrl ? reaction?.motionMediaType ?? foreground.mediaType : portraitDraft ? portraitDraft.mediaType : portrait?.motionMediaType ?? foreground.mediaType} name={foreground.name}
             onRatio={value => setRatio({ key: mediaKey, value })} loop={!reactionUrl} onEnd={onReactionEnd} />
         : fallback
           ? <FacingMedia key={mediaKey} url={fallback} mediaType="image/png" name={name} onRatio={value => setRatio({ key: mediaKey, value })} />
@@ -125,7 +125,10 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
         className={editing ? "facing-point facing-point-edit" : "facing-point"}
         aria-pressed={editing ? activePoint === point.id : undefined}
         style={{ left: `${point.x}%`, top: `${point.y}%`, width: `${point.width}%`, height: `${point.height}%` }}
-        onClick={() => onPoint?.(point)}
+        onClick={event => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          onPoint?.(point, event.detail ? { x: event.clientX, y: event.clientY } : { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
+        }}
         onPointerDown={editing ? event => {
           onPoint?.(point);
           event.currentTarget.setPointerCapture(event.pointerId);

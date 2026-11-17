@@ -6,7 +6,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import type { Character } from "@/lib/character-types";
 import { loadDwellingLayout } from "@/lib/dwelling-storage";
 import { facingFullImageInstruction, polishFacingImageDescription } from "@/lib/facing-engine";
-import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingAssetLocation, facingAssetMood, facingId, facingMediaType, saveFacingAsset, updateFacingAsset,
+import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingAssetLocation, facingAssetMood, facingId, facingMediaType, saveFacingAsset, setFacingAssetMotion, updateFacingAsset,
   type FacingAsset, type FacingSceneGroup } from "@/lib/facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "@/lib/image-generation-service";
 import { loadMediaBlob } from "@/lib/media-cache-storage";
@@ -104,7 +104,10 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
   const [error, setError] = useState("");
   const control = useRef<AbortController | null>(null);
   const upload = useRef<HTMLInputElement>(null);
+  const uploadMotion = useRef<HTMLInputElement>(null);
+  const [previewMotion, setPreviewMotion] = useState(true);
   const editedUrl = useFacingMediaUrl(edited);
+  const motionUrl = useFacingMediaUrl(edited?.motionMediaId ? edited : undefined, true);
   const locations = Array.from(new Set([...FACING_IMAGE_LOCATIONS, ...groups.map(group => group.name)]));
   const targetLocation = location === "custom" ? customLocation.trim() : location;
   const emotion = mood === "custom" ? customMood.trim() : mood;
@@ -184,6 +187,7 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
   }
 
   function edit(asset: FacingAsset) {
+    setPreviewMotion(true);
     const label = facingAssetMood(asset);
     const preset = ["默认", ...FACING_REACTIONS].includes(label);
     chooseLocation(facingAssetLocation(asset));
@@ -315,6 +319,19 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
     } finally { setBusy(false); }
   }
 
+  async function changeMotion(file: File | null) {
+    if (!edited || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      setEdited(await setFacingAssetMotion(edited, file));
+      setPreviewMotion(true);
+      onChange();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "动图保存失败。");
+    } finally { setBusy(false); }
+  }
+
   function endSelection() {
     setSelection(null);
     setError("");
@@ -353,8 +370,8 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
     } finally { setBusy(false); }
   }
 
-  const currentUrl = candidate?.url ?? editedUrl;
-  const currentType = candidate?.mediaType ?? edited?.mediaType ?? "";
+  const currentUrl = candidate?.url ?? (previewMotion ? motionUrl : undefined) ?? editedUrl;
+  const currentType = candidate?.mediaType ?? (previewMotion && motionUrl ? edited?.motionMediaType : undefined) ?? edited?.mediaType ?? "";
   function clearGeneratedPreview() {
     if (view === "generate") setCandidate(undefined);
   }
@@ -427,6 +444,18 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
         </div>
         {(category === "scene" || fullAsset) && <p className="facing-layout-help">放大后可上下左右调整裁切位置。</p>}
         {sceneFields}
+        {edited && <div className="facing-choices">
+          <button type="button" className="facing-small" disabled={busy} onClick={() => uploadMotion.current?.click()}>{edited.motionMediaId ? "更换动图" : "添加 GIF／动图"}</button>
+          {edited.motionMediaId && <>
+            <button type="button" className="facing-small" onClick={() => setPreviewMotion(value => !value)}>{previewMotion ? "查看静态图" : "预览动图"}</button>
+            <button type="button" className="facing-small facing-delete" disabled={busy} onClick={() => void changeMotion(null)}>移除动图</button>
+          </>}
+          <input ref={uploadMotion} type="file" hidden accept="image/gif,image/apng,image/webp,image/png,video/mp4,video/webm,video/quicktime,.apng,.gif" onChange={event => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void changeMotion(file);
+          }} />
+        </div>}
         {category === "portrait" && emotion && emotion !== "默认" &&
           <label>播放时长（秒）<input type="number" min={1} max={30} value={duration} onChange={event => setDuration(Math.max(1, Math.min(30, Number(event.target.value) || 1)))} /></label>}
         <button type="button" className="facing-primary" disabled={busy || !targetLocation || !emotion} onClick={() => void save()}>保存素材</button>

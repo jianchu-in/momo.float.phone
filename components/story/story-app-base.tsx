@@ -1,5 +1,7 @@
 "use client";
 
+import { ShownImage } from "@/components/ui/shown-image";
+import { storeShownImage } from "@/lib/shown-image";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -319,6 +321,13 @@ function StoryGeneratingIndicator({
   );
 }
 
+function StoryShortcutSwitch({ label, checked, disabled, onToggle }: {
+  label: string; checked: boolean; disabled?: boolean; onToggle: () => void;
+}) {
+  return <button type="button" className="story-shortcut-switch" role="switch" aria-label={label}
+    aria-checked={checked} disabled={disabled} onClick={onToggle}><span>{label}</span><i aria-hidden="true" /></button>;
+}
+
 const StoryComposer = memo(function StoryComposer({
   sessionId,
   isGenerating,
@@ -349,7 +358,7 @@ const StoryComposer = memo(function StoryComposer({
   voiceEnabled: boolean;
   voicePlaying: boolean;
   voiceProgress: { current: number; total: number };
-  onSend: (text: string) => void;
+  onSend: (text: string, photo?: File) => void;
   onContinue: () => void;
   autoReadingEnabled: boolean;
   autoReading: boolean;
@@ -364,8 +373,9 @@ const StoryComposer = memo(function StoryComposer({
   quickInputCursor: "left" | "middle" | "right";
   shortcuts: {
     streaming: boolean; timeAware: boolean;
-    onStreaming: () => void; onTimeAware: () => void; onVoice: () => void; onCatalog: () => void;
+    onStreaming: () => void; onTimeAware: () => void; onCatalog: () => void;
     statusId: string; theaterId: string;
+    toggleStatus: () => void; toggleTheater: () => void;
     status: StorySchemeRepository["statusSchemes"]; theater: StorySchemeRepository["theaterSchemes"];
     onStatus: (id: string) => void; onTheater: (id: string) => void;
     onResize: (height: number) => void;
@@ -374,6 +384,9 @@ const StoryComposer = memo(function StoryComposer({
   const { draft, setDraft, flush } = useStoryInputDraft(sessionId);
   const [quickPanelOpen, setQuickPanelOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [photo, setPhoto] = useState<File>();
+  const photoPicker = useRef<HTMLInputElement>(null);
+
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const { onResize } = shortcuts;
   useLayoutEffect(() => {
@@ -440,17 +453,25 @@ const StoryComposer = memo(function StoryComposer({
       return;
     }
     const text = draft.trim();
-    if (!text) return;
+    if (!text && !photo) return;
     setDraft("");
+    setPhoto(undefined);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (textarea) resizeStoryComposerTextarea(textarea);
     });
-    onSend(text);
+    onSend(text, photo);
   };
 
   return (
     <div className="story-composer" data-quick-input={quickInputEnabled ? "true" : undefined}>
+      {photo && <div className="story-composer-photo"><ShownImage file={photo} /><button type="button" aria-label="移除图片"
+        onClick={() => setPhoto(undefined)}><XMarkIcon width={15} height={15} /></button></div>}
+      <input hidden ref={photoPicker} type="file" accept="image/*" onChange={event => {
+        const file = event.currentTarget.files?.[0];
+        event.currentTarget.value = "";
+        if (file) { setPhoto(file); setShortcutsOpen(false); }
+      }} />
       {quickInputEnabled && quickPanelOpen && quickInputOptions.length > 0 ? (
         <div className="story-quick-panel" role="toolbar" aria-label="快捷输入面板">
           {quickInputOptions.map((option, index) => (
@@ -562,23 +583,23 @@ const StoryComposer = memo(function StoryComposer({
         onClick={submit}
         aria-label={isGenerating ? "停止剧情生成" : "发送剧情输入"}
         title={isGenerating ? "停止剧情生成" : "发送剧情输入"}
-        disabled={!isGenerating && !draft.trim()}
+        disabled={!isGenerating && !draft.trim() && !photo}
       >
         {isGenerating ? <StopIcon width={17} height={17} /> : <PaperAirplaneIcon width={17} height={17} className="story-send-icon" />}
       </button>
       {shortcutsOpen && <div className="story-composer-shortcuts" ref={shortcutsRef} role="group" aria-label="剧情快捷操作">
-        <button type="button" aria-pressed={shortcuts.streaming} onClick={shortcuts.onStreaming}>通用流式输出</button>
-        <button type="button" aria-pressed={shortcuts.timeAware} onClick={shortcuts.onTimeAware}>时间感知</button>
+        <StoryShortcutSwitch label="通用流式输出" checked={shortcuts.streaming} onToggle={shortcuts.onStreaming} />
+        <StoryShortcutSwitch label="时间感知" checked={shortcuts.timeAware} onToggle={shortcuts.onTimeAware} />
+        <StoryShortcutSwitch label="状态栏" checked={!!shortcuts.statusId} disabled={!shortcuts.status.length && !shortcuts.statusId} onToggle={shortcuts.toggleStatus} />
+        <StoryShortcutSwitch label="小剧场" checked={!!shortcuts.theaterId} disabled={!shortcuts.theater.length && !shortcuts.theaterId} onToggle={shortcuts.toggleTheater} />
+        <button type="button" onClick={() => photoPicker.current?.click()}>当面展示图片</button>
         <button type="button" onClick={() => { setShortcutsOpen(false); shortcuts.onCatalog(); }}>剧情目录</button>
-        <button type="button" aria-pressed={voiceEnabled} onClick={shortcuts.onVoice}>剧情语音</button>
-        <label>状态栏方案<select value={shortcuts.statusId} onChange={event => shortcuts.onStatus(event.target.value)}>
-          <option value="">停止生成</option>
+        {!!shortcuts.statusId && <label>状态栏方案<select value={shortcuts.statusId} onChange={event => shortcuts.onStatus(event.target.value)}>
           {shortcuts.status.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
-        </select></label>
-        <label>小剧场方案<select value={shortcuts.theaterId} onChange={event => shortcuts.onTheater(event.target.value)}>
-          <option value="">停止生成</option>
+        </select></label>}
+        {!!shortcuts.theaterId && <label>小剧场方案<select value={shortcuts.theaterId} onChange={event => shortcuts.onTheater(event.target.value)}>
           {shortcuts.theater.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
-        </select></label>
+        </select></label>}
       </div>}
     </div>
   );
@@ -1690,26 +1711,24 @@ export function StoryApp({ onClose }: StoryAppProps) {
     voiceSequenceIndexRef.current = segments.length;
   }, [collectStoryVoiceSegments, playStoryVoice, playingVoiceSegmentId, showVoiceNotice, uiPrefs.voiceEnabled]);
 
-  async function handleSend(userTextInput: string) {
+  async function handleSend(userTextInput: string, photo?: File) {
     const userText = userTextInput.trim();
-    if (!activeSessionId || !userText || isGenerating || activeStoryGenerationRuns.has(activeSessionId)) return;
+    if (!activeSessionId || (!userText && !photo) || isGenerating || activeStoryGenerationRuns.has(activeSessionId)) return;
     const sessionId = activeSessionId;
     const characterId = activeCharacterId;
 
-    const userMessage = pushStoryMessage({
-      sessionId,
-      role: "user",
-      rawContent: userText,
-      renderedContent: userText,
-    });
-    setMessages((prev) => [...prev, userMessage]);
-    setStorageVersion((value) => value + 1);
     markGenerating(sessionId, true);
     const generationRun = createStoryGenerationRun(sessionId);
     const generationRunId = generationRun.runId;
     const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
 
     try {
+      const imageRef = photo ? await storeShownImage(photo) : undefined;
+      if (!isCurrentGeneration()) return;
+      const content = imageRef ? ["（当面展示了一张图片）", userText].filter(Boolean).join("\n") : userText;
+      const userMessage = pushStoryMessage({ sessionId, role: "user", rawContent: content, renderedContent: content, imageRef });
+      if (activeSessionIdRef.current === sessionId) setMessages(prev => [...prev, userMessage]);
+      setStorageVersion(value => value + 1);
       await waitForStoryGenerationPaint();
       if (!isCurrentGeneration()) return;
       const historyForGeneration = loadStoryMessages(sessionId);
@@ -2604,6 +2623,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               </div>
                             </div>
                           ) : (
+                            <>
+                            {message.imageRef && <ShownImage mediaRef={message.imageRef} className="story-shown-image" />}
                             <StoryHtmlRenderer
                               colorDialogue={!readingPanelVisible}
                               content={message.renderedContent || message.rawContent}
@@ -2615,6 +2636,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               theaterRenderHtml={activeTheaterRenderHtml}
                               serifIframeFallback
                             />
+                            </>
                           )}
                         </div>
                         {activeMessageId === message.id && (() => {
@@ -2703,7 +2725,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
         voiceEnabled={Boolean(uiPrefs.voiceEnabled)}
         voicePlaying={Boolean(playingVoiceSegmentId)}
         voiceProgress={voiceSequenceProgress}
-        onSend={(text) => { void handleSend(text); }}
+        onSend={(text, photo) => { void handleSend(text, photo); }}
         onContinue={() => { void handleSend("继续"); }}
         autoReadingEnabled={Boolean(uiPrefs.autoReadingEnabled)}
         autoReading={autoReading}
@@ -2727,7 +2749,6 @@ export function StoryApp({ onClose }: StoryAppProps) {
           timeAware: storyGlobalSettings.timeAware,
           onStreaming: () => updateStoryGlobal({ ...storyGlobalSettings, streamingEnabled: !storyGlobalSettings.streamingEnabled }),
           onTimeAware: () => updateStoryGlobal({ ...storyGlobalSettings, timeAware: !storyGlobalSettings.timeAware }),
-          onVoice: () => applySessionUpdates({ uiPrefs: { voiceEnabled: !uiPrefs.voiceEnabled } }),
           onCatalog: () => setComposerCatalogOpen(true),
           statusId: storySettings.statusGenerationEnabled === false ? "" : activeStatusScheme?.id || "",
           theaterId: storySettings.theaterGenerationEnabled === false ? "" : activeTheaterScheme?.id || "",
@@ -2735,6 +2756,12 @@ export function StoryApp({ onClose }: StoryAppProps) {
           theater: schemeRepo.theaterSchemes,
           onStatus: id => applySessionUpdates({ settings: { ...storySettings, statusGenerationEnabled: Boolean(id), activeStatusSchemeId: id || storySettings.activeStatusSchemeId } }),
           onTheater: id => applySessionUpdates({ settings: { ...storySettings, theaterGenerationEnabled: Boolean(id), activeTheaterSchemeId: id || storySettings.activeTheaterSchemeId } }),
+          toggleStatus: () => applySessionUpdates({ settings: { ...storySettings,
+            statusGenerationEnabled: storySettings.statusGenerationEnabled === false || !activeStatusScheme,
+            activeStatusSchemeId: activeStatusScheme?.id ?? schemeRepo.statusSchemes[0]?.id } }),
+          toggleTheater: () => applySessionUpdates({ settings: { ...storySettings,
+            theaterGenerationEnabled: storySettings.theaterGenerationEnabled === false || !activeTheaterScheme,
+            activeTheaterSchemeId: activeTheaterScheme?.id ?? schemeRepo.theaterSchemes[0]?.id } }),
           onResize: setComposerShortcutHeight,
         }}
       />}

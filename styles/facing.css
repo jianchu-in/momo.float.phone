@@ -71,33 +71,57 @@
 .facing-room-bottom { bottom: calc(max(12px,env(safe-area-inset-bottom)) + var(--call-keyboard-offset,0px)); flex-direction: column;
   max-height: calc(100% - var(--page-header-safe-top,48px) - 56px - var(--call-keyboard-offset,0px)); }
 .facing-room .facing-glass {
-  pointer-events: auto; background: #21192d70; color: #fcf7ff; border: 1px solid #fff2; backdrop-filter: blur(13px);
+  pointer-events: auto; background: color-mix(in srgb, var(--facing-bubble-color, #fff) var(--facing-bubble-opacity, 76%), transparent);
+  color: var(--facing-message-color, #29242f); border: 1px solid #ffffff70; backdrop-filter: blur(14px);
 }
-.facing-room-log { display: flex; flex-direction: column; gap: 6px; max-height: 33dvh; min-height: 0;
+.facing-room .facing-sheet { color: var(--facing-ink); }
+.facing-room-log { display: flex; flex-direction: column; gap: 5px; max-height: min(24dvh, 202px); min-height: 0;
   padding: 2px 2px 3px; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; scrollbar-width: thin; }
-.facing-room-log:focus-visible { outline: 1px solid #e1cbed; border-radius: 12px; }
-.facing-message { align-self: flex-start; flex: none; max-width: min(88%, 420px); padding: 7px 10px; border-radius: 13px; }
-.facing-room .facing-message[data-role=user] { align-self: flex-end; background: #3d2f507e; }
-.facing-message small { display: block; margin-bottom: 2px; color: #f0e4f5; font-size: calc(11px * var(--app-text-scale,1)); }
+.facing-room-log:focus-visible { outline: 1px solid #fff; border-radius: 12px; }
+.facing-message { align-self: flex-start; flex: none; max-width: min(88%, 420px); padding: 7px 10px; border-radius: 13px;
+  font-size: var(--facing-message-size, 14px); }
+.facing-room .facing-message[data-role=user] { align-self: flex-end; border-bottom-right-radius: 4px; }
+.facing-room .facing-message[data-role=assistant] { border-bottom-left-radius: 4px; }
+.facing-message small { display: block; margin-bottom: 2px; opacity: .77; font-size: .8em; }
 .facing-message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
-.facing-message .facing-action { color: #eadcf2; }
+.facing-message .facing-action { opacity: .78; }
 .facing-turns .facing-action { color: var(--facing-muted); }
+.facing-message-photo { display: block; width: auto; max-width: 100%; max-height: 145px; object-fit: contain; border-radius: 8px; margin-block: 4px; }
+.facing-version-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .76em; margin-top: 4px; opacity: .82; }
+.facing-app .facing-version-nav button { display: grid; place-items: center; width: 30px; height: 26px; border-radius: 10px; background: #8080801c; }
+.facing-message-editor { color: var(--facing-ink); background: var(--facing-bg); border: 1px solid var(--facing-line);
+  border-radius: 11px; padding: 9px; min-width: 0; resize: vertical; }
 .facing-room .facing-log-status { font-size: calc(12px * var(--app-text-scale,1)); overflow-wrap: anywhere; }
-.facing-room .facing-log-status[role=alert] { color: #ffd0dc; }
+.facing-room .facing-log-status[role=alert] { color: #941f42; }
 .facing-room .facing-retry { flex: none; border-radius: 9px; padding: 6px 9px; min-height: 34px; margin-right: auto; }
-.facing-controls { flex: none; border-radius: 17px; padding: 7px; display: grid; gap: 6px; }
-.facing-controls form { display: flex; align-items: center; gap: 6px; }
-.facing-controls form input {
-  width: 100%; min-width: 0; min-height: 44px; border: 1px solid #fff3; border-radius: 11px; padding: 6px 9px;
-  color: #fbf6ff; background: #fff1; font-size: 16px;
+.facing-controls { flex: none; border-radius: 17px; padding: 5px; display: grid; gap: 5px; }
+.facing-controls form,.facing-controls .facing-input { display: flex; align-items: center; gap: 5px; }
+.facing-controls .facing-input { flex: 1; min-width: 0; border: 1px solid #8b818340; border-radius: 11px; }
+.facing-controls form input:not([type=file]) {
+  flex: 1; min-width: 0; min-height: 40px; border: 0; padding: 0 7px 0 0;
+  color: inherit; background: transparent; font-size: 16px;
 }
-.facing-controls form input::placeholder { color: #eee2f1cf; }
-.facing-controls .facing-send { background: #e1cbedba; color: #271d32; }
-.facing-controls .facing-hold { flex: 1; min-height: 44px; border-radius: 11px; touch-action: none; user-select: none; }
+.facing-controls form input::placeholder { color: currentColor; opacity: .62; }
+.facing-app .facing-input-mic { display: grid; place-items: center; width: 34px; min-height: 40px; flex: none; }
+.facing-controls .facing-send { background: #ffffffe0; color: #302638; }
+.facing-controls .facing-hold { flex: 1; min-height: 40px; border-radius: 11px; touch-action: none; user-select: none; }
 .facing-controls .facing-stt-mode { min-height: 34px; border-radius: 10px; font-size: calc(12px * var(--app-text-scale,1)); }
-.facing-controls .facing-end { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 38px;
-  border-radius: 10px; color: #ffd0dc; }
-.facing-point { position: absolute; transform: translate(-50%,-50%); border-radius: 999px; min-width: 32px; min-height: 32px; padding: 0; }
+.facing-drafts { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 3px; }
+.facing-app .facing-touch-chip { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; padding: 3px 8px;
+  border-radius: 999px; background: #66517117; font-size: 12px; }
+.facing-photo-draft { display: inline-flex; align-items: flex-start; }
+.facing-photo-draft img { max-width: 62px; height: 42px; border-radius: 8px; object-fit: cover; }
+.facing-photo-draft button { display: grid; place-items: center; width: 25px; height: 26px; }
+.facing-touch-feedback { position: absolute; pointer-events: none; z-index: 4; width: 0; height: 0; }
+.facing-touch-feedback span { position: absolute; width: 36px; height: 36px; left: -18px; top: -18px; border-radius: 50%;
+  border: 2px solid #fff6e2; box-shadow: 0 0 13px #fff8dc; animation: facing-touch-ring .65s ease-out both; }
+.facing-touch-feedback small { position: absolute; transform: translate(-50%,-155%); white-space: nowrap; padding: 4px 8px;
+  border-radius: 999px; background: #fffef0e8; color: #30272e; font-size: 12px; }
+@keyframes facing-touch-ring { from { transform: scale(.55); opacity: 1; } to { transform: scale(1.9); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .facing-touch-feedback span { animation: none; } }
+.facing-appearance input[type=color] { max-width: 54px; padding: 4px; }
+.facing-appearance input[type=range] { width: min(48%, 170px); }
+.facing-point { position: absolute; transform: translate(-50%,-50%); border-radius: 999px; min-width: 32px; min-height: 32px; padding: 0; touch-action: manipulation; }
 .facing-app .facing-point-edit { background: #302142bd; color: #fff; border: 1px solid #e6d0f2; touch-action: none; font-size: 11px; }
 .facing-app .facing-point-edit[aria-pressed=true] { border-width: 2px; background: #604878e0; }
 

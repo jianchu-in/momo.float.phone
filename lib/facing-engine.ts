@@ -1,10 +1,11 @@
+import { loadShownImageDataUrl, SHOWN_IMAGE_CONTEXT } from "./shown-image";
 import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
 import { splitVisibleCallActions } from "./call-action-text";
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
-import { FACING_REPLY_LENGTHS, loadFacingMeetings, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { FACING_REPLY_LENGTHS, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -76,19 +77,14 @@ export async function polishFacingImageDescription(options: {
   return { description: polished, usedReference: !!reference };
 }
 
-function toPromptHistory(meeting: FacingMeeting, useMemory: boolean): ChatMessage[] {
-  const earlier = useMemory && meeting.type === "main" ? loadFacingMeetings(meeting.characterId, meeting.identityId)
-    .filter(record => record.id !== meeting.id && record.type === "main" && record.createdAt <= meeting.createdAt)
-    .slice(0, 2).reverse().flatMap(record => record.turns.slice(-8)) : [];
-  return [...earlier, ...meeting.turns.slice(-40)].map((turn, index, turns) => ({
+function toPromptHistory(meeting: FacingMeeting): ChatMessage[] {
+  return meeting.turns.slice(-40).map((turn, index, turns) => ({
     id: turn.id,
     sessionId: meeting.id,
     role: turn.role,
     content: [
       turn.sceneName && turn.sceneName !== turns[index - 1]?.sceneName ? `【当时的场景：${turn.sceneName}】` : "",
-      turn.action,
-      turn.kind === "touch" ? `【用户当面触碰了你的${turn.text}】` : turn.text,
-      turn.reactionName ? `【当时的反应：${turn.reactionName}】` : "",
+      facingTurnText(turn),
     ].filter(Boolean).join("\n"),
     createdAt: turn.at,
     status: "sent",
@@ -102,6 +98,7 @@ export async function generateFacingReply(options: {
   scene: string;
   scenes: FacingSceneGroup[];
   signal: AbortSignal;
+  retryInstruction?: string;
 }): Promise<{ dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup }> {
   const { character, meeting, settings, scene, scenes, signal } = options;
   const destinations = scenes.filter(item => item.name !== scene);
@@ -116,9 +113,9 @@ export async function generateFacingReply(options: {
   const worldBooks = loadWorldBooks().filter(item => slot.worldBookIds?.includes(item.id));
   const regexes = loadRegexes().filter(item => slot.regexIds?.includes(item.id));
   const useMemory = settings.memory !== false && meeting.type !== "independent";
-  const history = toPromptHistory(meeting, useMemory);
+  const history = toPromptHistory(meeting);
   const recent = useMemory && meeting.type === "main" ? prepareShortTermContext(character.id, "facing", {
-    history, userName: identity?.name ?? "用户",
+    history, userName: identity?.name ?? "用户", excludeFacingMeetingId: meeting.id,
   }) : { truncatedHistory: history, recentBlocks: undefined, unifiedRecentItems: undefined, wbActivationContext: "" };
   const activationContext = [recent.wbActivationContext, ...history.slice(-10).map(message => message.content)].filter(Boolean).join("\n");
   const config = loadMemoryConfig();
@@ -157,6 +154,24 @@ export async function generateFacingReply(options: {
     if (latest) messages.push({ role: "user", content: latest.content });
   } else {
     messages.splice(lastUser, 0, mode);
+  }
+  if (options.retryInstruction?.trim()) {
+    messages.push({ role: "system", content: `本次重试的额外要求：${options.retryInstruction.trim()}。只用于本轮回应，勿解释此指令。` });
+  }
+  const latestTurn = meeting.turns.at(-1);
+  if (latestTurn?.role === "user" && latestTurn.imageRef) {
+    if (!api.enableImageRecognition) throw new Error("图片已保存。请为面对面的文字 API 开启识图，再重试。");
+    const url = await loadShownImageDataUrl(latestTurn.imageRef);
+    if (!url) throw new Error("无法读取这张图片，请重新选择。");
+    const index = messages.map(message => message.role).lastIndexOf("user");
+    const content = messages[index]?.content;
+    const text = typeof content === "string" ? content : latest?.content ?? "";
+    const imageMessage: LLMMessage = { role: "user", content: [
+      { type: "text", text: `${SHOWN_IMAGE_CONTEXT}\n${text}` },
+      { type: "image_url", image_url: { url, detail: "auto" } },
+    ] };
+    if (index >= 0) messages[index] = imageMessage;
+    else messages.push(imageMessage);
   }
   const output = await sendLLMRequest(api, preset, messages, [], { characterName: character.name, userName: identity?.name }, { appId: "facing", appTags: ["facing"], signal });
   const text = cleanStreamText(output, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] }).trim();

@@ -29,6 +29,8 @@ export type FacingAsset = {
   mediaId: string;
   mediaType: string;
   durationMs: number;
+  motionMediaId?: string;
+  motionMediaType?: string;
   layout?: VnAssetLayout;
   composition?: "full";
   location?: string;
@@ -109,6 +111,8 @@ export type FacingCharacterSettings = {
   voice?: boolean;
   speechInput?: "browser" | "cloud";
   touch?: boolean;
+  touchMode?: "instant" | "collect" | "double";
+  appearance?: { bubbleColor?: string; opacity?: number; textColor?: string; textSize?: number };
   memory?: boolean;
   hotspots?: Record<string, FacingHotspot[]>;
 };
@@ -121,6 +125,8 @@ export type FacingTurn = {
   kind: "text" | "voice" | "touch" | "reply";
   text: string;
   action?: string;
+  imageRef?: string;
+  touches?: string[];
   at: string;
   sceneId?: string;
   sceneName: string;
@@ -129,7 +135,22 @@ export type FacingTurn = {
   reactionId?: string;
   reactionName?: string;
   replyTo?: string;
+  versions?: FacingReplyVersion[];
+  versionIndex?: number;
 };
+
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName">;
+
+export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
+  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName } = turn;
+  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName };
+}
+
+export function facingTurnText(turn: FacingTurn): string {
+  return [turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text,
+    ...(turn.touches ?? []).map(part => `（触碰了${part}）`), turn.imageRef ? "（当面展示了一张图片）" : "", turn.action,
+    turn.reactionName && !turn.text && !turn.action ? `（${turn.reactionName}）` : ""].filter(Boolean).join("\n");
+}
 
 export type FacingMeeting = {
   id: string;
@@ -203,6 +224,23 @@ export async function updateFacingAsset(asset: FacingAsset) {
   ));
 }
 
+export async function setFacingAssetMotion(asset: FacingAsset, file: File | null) {
+  const type = file ? facingMediaType(file, file.name) : undefined;
+  if (file && (!type || !/^(?:video\/|image\/(?:gif|webp|apng|png))/.test(type) || !file.size || file.size > 30 * 1024 * 1024)) {
+    throw new Error("请选择不超过 30 MB 的 GIF、动图或视频。");
+  }
+  const id = file ? await saveThemeAssetFromBlob(file.slice(0, file.size, type), "facing_media") : undefined;
+  const updated = { ...asset, motionMediaId: id, motionMediaType: type };
+  try {
+    await updateFacingAsset(updated);
+  } catch (error) {
+    if (id) await deleteThemeAsset(id).catch(() => {});
+    throw error;
+  }
+  if (asset.motionMediaId) await deleteThemeAsset(asset.motionMediaId).catch(() => {});
+  return updated;
+}
+
 export async function deleteFacingAssets(characterId: string, assetIds: readonly string[]): Promise<void> {
   const requestedIds = new Set(assetIds);
   if (!requestedIds.size) return;
@@ -215,9 +253,13 @@ export async function deleteFacingAssets(characterId: string, assetIds: readonly
         if (asset.characterId !== characterId || !requestedIds.has(asset.id)) return true;
         removedIds.add(asset.id);
         unusedMediaIds.add(asset.mediaId);
+        if (asset.motionMediaId) unusedMediaIds.add(asset.motionMediaId);
         return false;
       });
-      for (const asset of remaining) unusedMediaIds.delete(asset.mediaId);
+      for (const asset of remaining) {
+        unusedMediaIds.delete(asset.mediaId);
+        if (asset.motionMediaId) unusedMediaIds.delete(asset.motionMediaId);
+      }
       return JSON.stringify(remaining);
     },
     [FACING_SETTINGS_KEY]: raw => {
@@ -238,11 +280,24 @@ export async function deleteFacingAssets(characterId: string, assetIds: readonly
   await Promise.allSettled(Array.from(unusedMediaIds, deleteThemeAsset));
 }
 
-export function loadFacingMeetings(characterId: string, identityId: string | null): FacingMeeting[] {
+export function loadFacingMeetings(characterId: string, identityId?: string | null): FacingMeeting[] {
   return kvKeysWithPrefix(FACING_MEETING_PREFIX)
     .map(key => readJson<FacingMeeting | null>(kvGet(key), null))
-    .filter((record): record is FacingMeeting => !!record && record.characterId === characterId && record.identityId === identityId)
+    .filter((record): record is FacingMeeting => !!record && record.characterId === characterId && (identityId === undefined || record.identityId === identityId))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: FacingTurn[]) => FacingTurn[]): Promise<FacingMeeting> {
+  let saved = meeting;
+  await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
+    const current = readJson(raw, meeting);
+    const turns = update(current.turns);
+    const last = turns.at(-1);
+    const scene = last ? facingReplyVersion(last) : current.scene;
+    saved = { ...current, turns, scene: scene && { sceneName: scene.sceneName, portraitId: scene.portraitId, sceneId: scene.sceneId } };
+    return JSON.stringify(saved);
+  });
+  return saved;
 }
 
 export function createFacingMeeting(
