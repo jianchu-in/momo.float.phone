@@ -977,7 +977,7 @@ function useAndroidCaretKeyboardLift() {
 
     const handleFocusIn = (event: FocusEvent) => {
       const target = event.target;
-      if (!isKeyboardEditableElement(target)) return;
+      if (!isKeyboardEditableElement(target) || target.closest(".facing-room")) return;
       focusedElement = target;
       requestUpdate();
     };

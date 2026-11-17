@@ -3,16 +3,16 @@
 import { useEffect, useRef, useState, type FormEvent, type CSSProperties } from "react";
 import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Mic, Settings2, Volume2, VolumeX, X } from "lucide-react";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
-import { useCallKeyboardOffsetStyle } from "@/components/chat/use-call-keyboard-offset";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
-import { appendFacingTurn, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
+import { appendFacingTurn, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, FACING_DEFAULT_APPEARANCE, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
 import { playAudioBlob, playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingStage } from "./facing-stage";
 import { FacingMessage } from "./facing-message";
+import { useFacingViewportInset } from "./use-facing-viewport-inset";
 import { ShownImage } from "@/components/ui/shown-image";
 import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
@@ -274,7 +274,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       setError(message);
     },
   });
-  const keyboardOffset = useCallKeyboardOffsetStyle();
+  const viewportInset = useFacingViewportInset(roomRef);
 
   function toggleSpeechRecognition() {
     if (browserListening) { recording.current?.stop(); return; }
@@ -315,9 +315,10 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const listening = browserListening || hold.recState !== "idle";
   const selectedMessage = meeting.turns.find(turn => turn.id === menuId);
   const appearance = settings.appearance;
-  const roomStyle = { ...keyboardOffset, "--facing-bubble-color": appearance?.bubbleColor ?? "#ffffff",
-    "--facing-bubble-opacity": `${appearance?.opacity ?? 76}%`, "--facing-message-color": appearance?.textColor ?? "#29242f",
-    "--facing-message-size": `${appearance?.textSize ?? 14}px` } as CSSProperties;
+  const roomStyle = { "--facing-viewport-inset": `${viewportInset}px`, "--facing-bubble-color": appearance?.bubbleColor ?? FACING_DEFAULT_APPEARANCE.bubbleColor,
+    "--facing-bubble-opacity": `${appearance?.opacity ?? FACING_DEFAULT_APPEARANCE.opacity}%`, "--facing-message-color": appearance?.textColor ?? FACING_DEFAULT_APPEARANCE.textColor,
+    "--facing-user-bubble-color": appearance?.bubbleColor ?? "#3d2f50", "--facing-user-bubble-opacity": `${appearance?.opacity ?? 49}%`,
+    "--facing-message-size": `${appearance?.textSize ?? FACING_DEFAULT_APPEARANCE.textSize}px` } as CSSProperties;
   function closeMenu() { setMenuId(undefined); setMessageDialog(undefined); }
   function applyMessageDialog() {
     if (!selectedMessage) return;
@@ -389,12 +390,6 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
             if (file) setPhoto(file);
           }} />
           <div className="facing-input">
-            <button type="button" className="facing-input-mic" disabled={listening}
-              aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
-                if (!cloudAvailable && !browserAvailable) { setError("当前浏览器无法直接识别语音。可以配置云端语音识别，或使用文字输入。"); return; }
-                setVoiceInput(!voiceInput);
-                setError("");
-              }}>{voiceInput ? <Keyboard size={16} /> : <Mic size={16} />}</button>
             {voiceInput ? useCloudStt
               ? <button type="button" className="facing-hold" disabled={busy || hold.recState === "transcribing"} {...hold.pressHandlers}>
                   {hold.recState === "recording" ? "松开发送" : hold.recState === "transcribing" ? "正在识别…" : "按住说话"}
@@ -403,6 +398,12 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
                   {browserListening ? "说完了" : "开始说话"}
                 </button>
               : <input value={draft} onChange={event => setDraft(event.target.value)} placeholder="和他说句话…" aria-label="对话内容" maxLength={4000} />}
+            <button type="button" className="facing-input-mic" disabled={listening}
+              aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
+                if (!cloudAvailable && !browserAvailable) { setError("当前浏览器无法直接识别语音。可以配置云端语音识别，或使用文字输入。"); return; }
+                setVoiceInput(!voiceInput);
+                setError("");
+              }}>{voiceInput ? <Keyboard size={14} /> : <Mic size={14} />}</button>
           </div>
           {!voiceInput && <button type="submit" className="facing-glass facing-icon facing-send" aria-label="发送"
             disabled={busy || (!draft.trim() && !photo && !touches.length)}><ArrowUp size={19} /></button>}

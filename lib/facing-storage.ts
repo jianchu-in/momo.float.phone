@@ -12,6 +12,7 @@ export const FACING_REACTIONS = ["微笑", "开心", "生气", "吃醋", "脸红
 export const FACING_PARTS = ["脸颊", "眼睛", "嘴巴", "耳朵", "胸口", "小腹", "手"];
 export const FACING_IMAGE_LOCATIONS = ["客厅", "阳台", "卧室", "书房", "厨房", "户外"] as const;
 export const FACING_DEFAULT_SCENE = "默认场景";
+export const FACING_DEFAULT_APPEARANCE = { bubbleColor: "#21192d", opacity: 44, textColor: "#fcf7ff", textSize: 14 } as const;
 export const FACING_REPLY_LENGTHS = {
   short: { label: "简短", characters: 50 },
   normal: { label: "自然", characters: 150 },

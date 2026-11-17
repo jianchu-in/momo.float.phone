@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -302,14 +302,14 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         <section className="facing-form" aria-label="对话外观">
           <h2 className="facing-record-title">对话外观</h2>
           <div className="facing-list facing-settings-list facing-appearance">
-            <label>气泡颜色<input type="color" value={current.appearance?.bubbleColor ?? "#ffffff"}
+            <label>气泡颜色<input type="color" value={current.appearance?.bubbleColor ?? FACING_DEFAULT_APPEARANCE.bubbleColor}
               onChange={event => commitSetting({ appearance: { ...current.appearance, bubbleColor: event.target.value } })} /></label>
-            <label>气泡不透明度<input type="range" min={15} max={100} defaultValue={current.appearance?.opacity ?? 76}
+            <label>气泡不透明度<input type="range" min={15} max={100} defaultValue={current.appearance?.opacity ?? FACING_DEFAULT_APPEARANCE.opacity}
               onPointerUp={event => commitSetting({ appearance: { ...current.appearance, opacity: Number(event.currentTarget.value) } })}
               onKeyUp={event => commitSetting({ appearance: { ...current.appearance, opacity: Number(event.currentTarget.value) } })} /></label>
-            <label>文字颜色<input type="color" value={current.appearance?.textColor ?? "#29242f"}
+            <label>文字颜色<input type="color" value={current.appearance?.textColor ?? FACING_DEFAULT_APPEARANCE.textColor}
               onChange={event => commitSetting({ appearance: { ...current.appearance, textColor: event.target.value } })} /></label>
-            <label>文字大小<select value={current.appearance?.textSize ?? 14}
+            <label>文字大小<select value={current.appearance?.textSize ?? FACING_DEFAULT_APPEARANCE.textSize}
               onChange={event => commitSetting({ appearance: { ...current.appearance, textSize: Number(event.target.value) } })}>
               {[12, 13, 14, 15, 16, 17, 18, 20, 22].map(size => <option key={size} value={size}>{size} px</option>)}
             </select></label>

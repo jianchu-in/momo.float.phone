@@ -75,19 +75,21 @@
 .facing-auto-reference { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 .facing-auto-reference img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
 .facing-auto-reference input { max-width: 100%; }
-.facing-room-bottom { bottom: calc(max(12px,env(safe-area-inset-bottom)) + var(--call-keyboard-offset,0px)); flex-direction: column;
-  max-height: calc(100% - var(--page-header-safe-top,48px) - 56px - var(--call-keyboard-offset,0px)); }
+.facing-room-bottom { --facing-bottom-gap: max(12px,env(safe-area-inset-bottom));
+  bottom: calc(var(--facing-bottom-gap) + var(--facing-viewport-inset,0px)); flex-direction: column;
+  max-height: calc(100% - var(--page-header-safe-top,48px) - 50px - var(--facing-viewport-inset,0px) - var(--facing-bottom-gap)); }
 .facing-room .facing-glass {
-  pointer-events: auto; background: color-mix(in srgb, var(--facing-bubble-color, #fff) var(--facing-bubble-opacity, 76%), transparent);
-  color: var(--facing-message-color, #29242f); border: 1px solid #ffffff70; backdrop-filter: blur(14px);
+  pointer-events: auto; background: color-mix(in srgb, var(--facing-bubble-color) var(--facing-bubble-opacity), transparent);
+  color: var(--facing-message-color); border: 1px solid #fff2; backdrop-filter: blur(13px);
 }
 .facing-room .facing-sheet { color: var(--facing-ink); }
 .facing-room-log { display: flex; flex-direction: column; gap: 5px; max-height: min(24dvh, 202px); min-height: 0;
   padding: 2px 2px 3px; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; scrollbar-width: thin; }
-.facing-room-log:focus-visible { outline: 1px solid #fff; border-radius: 12px; }
+.facing-room-log:focus-visible { outline: 1px solid #e1cbed; border-radius: 12px; }
 .facing-message { align-self: flex-start; flex: none; max-width: min(88%, 420px); padding: 7px 10px; border-radius: 13px;
   font-size: var(--facing-message-size, 14px); }
-.facing-room .facing-message[data-role=user] { align-self: flex-end; border-bottom-right-radius: 4px; }
+.facing-room .facing-message[data-role=user] { align-self: flex-end; border-bottom-right-radius: 4px;
+  background: color-mix(in srgb, var(--facing-user-bubble-color) var(--facing-user-bubble-opacity), transparent); }
 .facing-room .facing-message[data-role=assistant] { border-bottom-left-radius: 4px; }
 .facing-message small { display: block; margin-bottom: 2px; opacity: .77; font-size: .8em; }
 .facing-message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
@@ -99,18 +101,18 @@
 .facing-message-editor { color: var(--facing-ink); background: var(--facing-bg); border: 1px solid var(--facing-line);
   border-radius: 11px; padding: 9px; min-width: 0; resize: vertical; }
 .facing-room .facing-log-status { font-size: calc(12px * var(--app-text-scale,1)); overflow-wrap: anywhere; }
-.facing-room .facing-log-status[role=alert] { color: #941f42; }
+.facing-room .facing-log-status[role=alert] { color: #ffd0dc; }
 .facing-room .facing-retry { flex: none; border-radius: 9px; padding: 6px 9px; min-height: 34px; margin-right: auto; }
 .facing-controls { flex: none; border-radius: 17px; padding: 5px; display: grid; gap: 5px; }
 .facing-controls form,.facing-controls .facing-input { display: flex; align-items: center; gap: 5px; }
-.facing-controls .facing-input { flex: 1; min-width: 0; border: 1px solid #8b818340; border-radius: 11px; }
+.facing-controls .facing-input { flex: 1; min-width: 0; border: 1px solid #fff3; border-radius: 11px; background: #fff1; }
 .facing-controls form input:not([type=file]) {
-  flex: 1; min-width: 0; min-height: 40px; border: 0; padding: 0 7px 0 0;
+  flex: 1; min-width: 0; min-height: 40px; border: 0; padding: 0 0 0 9px;
   color: inherit; background: transparent; font-size: 16px;
 }
 .facing-controls form input::placeholder { color: currentColor; opacity: .62; }
-.facing-app .facing-input-mic { display: grid; place-items: center; width: 34px; min-height: 40px; flex: none; }
-.facing-controls .facing-send { background: #ffffffe0; color: #302638; }
+.facing-app .facing-input-mic { display: grid; place-items: center; width: 36px; min-height: 40px; flex: none; touch-action: manipulation; }
+.facing-controls .facing-send { background: #e1cbedba; color: #271d32; }
 .facing-controls .facing-hold { flex: 1; min-height: 40px; border-radius: 11px; touch-action: none; user-select: none; }
 .facing-controls .facing-stt-mode { min-height: 34px; border-radius: 10px; font-size: calc(12px * var(--app-text-scale,1)); }
 .facing-drafts { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 3px; }
