@@ -1,10 +1,10 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
 
-export function useFacingViewportInset(room: RefObject<HTMLElement | null>) {
+export function useFacingViewportInset(target: RefObject<HTMLElement | null>, enabled = true) {
   const [inset, setInset] = useState(0);
   useLayoutEffect(() => {
-    const element = room.current;
-    if (!element) return;
+    const element = target.current;
+    if (!enabled || !element) return;
     const viewport = window.visualViewport;
     let frame = 0;
     const measure = () => {
@@ -31,6 +31,6 @@ export function useFacingViewportInset(room: RefObject<HTMLElement | null>) {
       viewport?.removeEventListener("resize", schedule);
       viewport?.removeEventListener("scroll", schedule);
     };
-  }, [room]);
-  return inset;
+  }, [target, enabled]);
+  return enabled ? inset : 0;
 }

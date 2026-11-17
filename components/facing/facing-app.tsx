@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -14,6 +14,7 @@ import { FacingStage } from "./facing-stage";
 import { ShownImage } from "@/components/ui/shown-image";
 import { storeShownImage } from "@/lib/shown-image";
 import { useFacingSceneGeneration } from "./use-facing-scene-generation";
+import { useFacingViewportInset } from "./use-facing-viewport-inset";
 
 type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record";
 type Sheet = "characters" | "new" | null;
@@ -130,6 +131,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [preferences, setPreferences] = useState(loadFacingSettings);
   const character = characters.find(item => item.id === preferences.characterId);
   const [page, setPage] = useState<Page>("home");
+  const appRef = useRef<HTMLDivElement>(null);
+  const pageInset = useFacingViewportInset(appRef, page !== "room" && page !== "home");
   const [sheet, setSheet] = useState<Sheet>(() => !character && characters.length ? "characters" : null);
   const [settingOrigin, setSettingOrigin] = useState<"home" | "room">("home");
   const [assetOrigin, setAssetOrigin] = useState<"settings" | "home">("settings");
@@ -213,7 +216,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     setPage("settings");
   }
 
-  return <div className="facing-app">
+  return <div ref={appRef} className="facing-app" style={{ paddingBottom: pageInset }}>
     {page === "home" && <>
       <Header title="面对面" onBack={onClose}>
         {character && <button type="button" className="facing-icon" onClick={() => openSettings("home")} aria-label="设置"><Settings2 size={20} /></button>}

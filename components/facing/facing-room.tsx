@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type CSSProperties } from "react";
-import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Mic, Settings2, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Mic, Settings2, Square, Volume2, VolumeX, X } from "lucide-react";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
@@ -54,8 +54,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const [browserListening, setBrowserListening] = useState(false);
   const [interimText, setInterimText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [stopped, setStopped] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
+  const generationRequest = useRef<AbortController | null>(null);
   const recording = useRef<STTSession | null>(null);
   const interim = useRef("");
   const log = useRef<HTMLDivElement>(null);
@@ -77,7 +80,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   useEffect(() => {
     if (log.current && (followLog.current || failedTurn?.role === "user")) log.current.scrollTop = log.current.scrollHeight;
-  }, [failedTurn, busy, hidden, interimText, error]);
+  }, [failedTurn, generating, stopped, hidden, interimText, error]);
 
   useEffect(() => () => {
     controller.current?.abort();
@@ -109,6 +112,17 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     setReaction(undefined);
   }
 
+  function stopGeneration() {
+    const request = generationRequest.current;
+    if (!request || controller.current !== request) return;
+    generationRequest.current = null;
+    controller.current = null;
+    request.abort();
+    setGenerating(false);
+    setBusy(false);
+    setStopped(true);
+  }
+
   async function speak(text: string, run: AbortSignal) {
     if (!text || !voiceOn) return;
     const voice = resolveVoiceConfig(character.id, "facing");
@@ -135,6 +149,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     playback.current?.abort();
     unlockAudioPlayback();
     setBusy(true);
+    setStopped(false);
     setError("");
     stopReaction();
     if (!options?.retry) followLog.current = true;
@@ -156,9 +171,13 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       const activity = options?.retry || !settings.autoVisual?.enabled ? undefined : pendingActivity ?? existingActivity;
       const deferVisual = !options?.previous && end === current.turns.length - 1 && settings.autoVisual?.skipNsfw === true
         && shouldCheckFacingVisual(facingCompletedRounds(current) + 1, settings.autoVisual);
+      generationRequest.current = run;
+      setGenerating(true);
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
         signal: run.signal, retryInstruction: options?.instruction, visualActivity: activity?.label, deferVisual });
       if (run.signal.aborted) return;
+      generationRequest.current = null;
+      setGenerating(false);
       const response: FacingTurn = {
         ...(result.nextScene ? facingScenePosition(result.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
         id: facingId(), role: "assistant", kind: "reply", text: result.dialogue, action: result.action,
@@ -188,7 +207,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     } finally {
       if (controller.current === run) {
         controller.current = null;
-        if (!run.signal.aborted) setBusy(false);
+        generationRequest.current = null;
+        if (!run.signal.aborted) { setGenerating(false); setBusy(false); }
       }
     }
   }
@@ -218,6 +238,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     const operation = new AbortController();
     controller.current = operation;
     setBusy(true);
+    setStopped(false);
     setError("");
     try {
       const saved = await changeFacingTurns(meeting, update);
@@ -313,6 +334,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   }
 
   const listening = browserListening || hold.recState !== "idle";
+  const showComposerAction = !voiceInput || generating;
   const selectedMessage = meeting.turns.find(turn => turn.id === menuId);
   const appearance = settings.appearance;
   const roomStyle = { "--facing-viewport-inset": `${viewportInset}px`, "--facing-bubble-color": appearance?.bubbleColor ?? FACING_DEFAULT_APPEARANCE.bubbleColor,
@@ -367,7 +389,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         {meeting.turns.map(turn => <FacingMessage key={turn.id} turn={turn} characterName={character.name} busy={busy || listening}
           onMenu={() => { setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => changeVersion(turn, index)} />)}
         {interimText && <div className="facing-glass facing-message" data-role="user"><small>语音识别中</small><p>{interimText}</p></div>}
-        {busy && <div className="facing-glass facing-message facing-log-status">正在回应…</div>}
+        {generating && <div className="facing-glass facing-message facing-log-status">正在回应…</div>}
+        {stopped && <div className="facing-glass facing-message facing-log-status" role="status">已停止生成</div>}
         {error && <p className="facing-glass facing-message facing-log-status" role="alert">{error}</p>}
         {!busy && !listening && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"
           onClick={() => retryMessage(failedTurn)}>重试回复</button>}
@@ -386,7 +409,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           event.currentTarget.value = "";
           if (file) setPhoto(file);
         }} />
-        <form className="facing-composer-row" data-voice={voiceInput ? "true" : undefined} onSubmit={submit}>
+        <form className="facing-composer-row" data-voice={showComposerAction ? undefined : "true"} onSubmit={submit}>
           <button type="button" className="facing-glass facing-icon" aria-label="当面展示图片" disabled={busy || listening}
             onClick={() => { setVoiceInput(false); photoPicker.current?.click(); }}><ImagePlus size={20} /></button>
           <div className="facing-input">
@@ -405,8 +428,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
                 setError("");
               }}>{voiceInput ? <Keyboard size={14} /> : <Mic size={14} />}</button>
           </div>
-          {!voiceInput && <button type="submit" className="facing-glass facing-icon facing-send" aria-label="发送"
-            disabled={busy || (!draft.trim() && !photo && !touches.length)}><ArrowUp size={19} /></button>}
+          {showComposerAction && <button type={generating ? "button" : "submit"} className="facing-glass facing-icon facing-send"
+            aria-label={generating ? "停止生成" : "发送"} onClick={generating ? stopGeneration : undefined}
+            disabled={!generating && (busy || (!draft.trim() && !photo && !touches.length))}>
+            {generating ? <Square size={13} fill="currentColor" aria-hidden="true" /> : <ArrowUp size={19} />}
+          </button>}
         </form>
         {voiceInput && cloudAvailable && browserAvailable && <button type="button" className="facing-glass facing-stt-mode" disabled={busy || listening}
           onClick={() => { onSpeechInput(useCloudStt ? "browser" : "cloud"); setError(""); }}>
