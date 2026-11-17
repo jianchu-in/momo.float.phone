@@ -103,17 +103,20 @@
 .facing-room .facing-log-status { font-size: calc(12px * var(--app-text-scale,1)); overflow-wrap: anywhere; }
 .facing-room .facing-log-status[role=alert] { color: #ffd0dc; }
 .facing-room .facing-retry { flex: none; border-radius: 9px; padding: 6px 9px; min-height: 34px; margin-right: auto; }
-.facing-controls { flex: none; border-radius: 17px; padding: 5px; display: grid; gap: 5px; }
-.facing-controls form,.facing-controls .facing-input { display: flex; align-items: center; gap: 5px; }
-.facing-controls .facing-input { flex: 1; min-width: 0; border: 1px solid #fff3; border-radius: 11px; background: #fff1; }
-.facing-controls form input:not([type=file]) {
-  flex: 1; min-width: 0; min-height: 40px; border: 0; padding: 0 0 0 9px;
+.facing-controls { flex: none; min-width: 0; border-radius: 17px; padding: 5px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.facing-controls > input[hidden] { display: none; }
+.facing-composer-row,.facing-controls .facing-input { display: grid; align-items: center; gap: 5px; min-width: 0; }
+.facing-composer-row { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+.facing-composer-row[data-voice="true"] { grid-template-columns: 44px minmax(0, 1fr); }
+.facing-controls .facing-input { grid-template-columns: minmax(0, 1fr) 36px; border: 1px solid #fff3; border-radius: 11px; background: #fff1; }
+.facing-input > input {
+  width: 100%; min-width: 0; min-height: 40px; border: 0; padding: 0 0 0 9px;
   color: inherit; background: transparent; font-size: 16px;
 }
-.facing-controls form input::placeholder { color: currentColor; opacity: .62; }
+.facing-input > input::placeholder { color: currentColor; opacity: .62; }
 .facing-app .facing-input-mic { display: grid; place-items: center; width: 36px; min-height: 40px; flex: none; touch-action: manipulation; }
 .facing-controls .facing-send { background: #e1cbedba; color: #271d32; }
-.facing-controls .facing-hold { flex: 1; min-height: 40px; border-radius: 11px; touch-action: none; user-select: none; }
+.facing-controls .facing-hold { min-width: 0; min-height: 40px; border-radius: 11px; touch-action: none; user-select: none; }
 .facing-controls .facing-stt-mode { min-height: 34px; border-radius: 10px; font-size: calc(12px * var(--app-text-scale,1)); }
 .facing-drafts { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 3px; }
 .facing-app .facing-touch-chip { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; padding: 3px 8px;

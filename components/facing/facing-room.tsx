@@ -381,14 +381,14 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           {photo && <div className="facing-photo-draft"><ShownImage file={photo} />
             <button type="button" aria-label="移除图片" onClick={() => setPhoto(undefined)}><X size={14} /></button></div>}
         </div>}
-        <form onSubmit={submit}>
+        <input ref={photoPicker} type="file" accept="image/*" hidden onChange={event => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) setPhoto(file);
+        }} />
+        <form className="facing-composer-row" data-voice={voiceInput ? "true" : undefined} onSubmit={submit}>
           <button type="button" className="facing-glass facing-icon" aria-label="当面展示图片" disabled={busy || listening}
             onClick={() => { setVoiceInput(false); photoPicker.current?.click(); }}><ImagePlus size={20} /></button>
-          <input ref={photoPicker} type="file" accept="image/*" hidden onChange={event => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (file) setPhoto(file);
-          }} />
           <div className="facing-input">
             {voiceInput ? useCloudStt
               ? <button type="button" className="facing-hold" disabled={busy || hold.recState === "transcribing"} {...hold.pressHandlers}>
