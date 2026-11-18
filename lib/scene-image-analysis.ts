@@ -1,6 +1,6 @@
 import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
-import { sendLLMRequest } from "./chat-engine";
+import { sendLLMRequest, sendLLMRequestPreferStream } from "./chat-engine";
 import { loadApiConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
 import { cleanStreamText } from "./stream-preview";
 
@@ -12,7 +12,8 @@ export async function analyzeSceneImage<T>(options: {
   const slot = resolveBinding(loadBindingConfig(), characterId, appId);
   const api = loadApiConfigs().find(item => item.id === slot.apiConfigId);
   if (!api) throw new Error("请先配置文字 API。");
-  const output = await sendLLMRequest(api, null, [
+  const request = appId === "story" ? sendLLMRequestPreferStream : sendLLMRequest;
+  const output = await request(api, null, [
     { role: "system", content: instructions }, { role: "user", content: context },
   ], [], { characterName }, { appId: `${appId}_scene_${task}`, signal });
   throwIfAborted(signal);

@@ -7,9 +7,11 @@ function illustrationKey(message: StoryMessage) {
   return `${message.id}:${message.activeReplyVersionId ?? message.id}`;
 }
 
+export type StoryIllustrationPhase = "planning" | "generating";
+
 export function useStoryIllustrations(onChange: (sessionId: string) => void) {
   const jobs = useRef(new Map<string, AbortController>());
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [pending, setPending] = useState<ReadonlyMap<string, StoryIllustrationPhase>>(new Map());
   useEffect(() => () => { for (const job of jobs.current.values()) job.abort(); }, []);
 
   async function start(message: StoryMessage) {
@@ -26,9 +28,10 @@ export function useStoryIllustrations(onChange: (sessionId: string) => void) {
     const { signal } = job;
     jobs.current.set(key, job);
     let started = false;
+    setPending(current => new Map(current).set(key, "planning"));
     try {
       const mediaRef = await generateStoryIllustration({ session, history: messages.slice(Math.max(0, index - 6), index), version, settings, signal,
-        onImageStart: () => { started = true; setPending(current => new Set(current).add(key)); },
+        onImageStart: () => { started = true; setPending(current => new Map(current).set(key, "generating")); },
       });
       if (!signal.aborted && saveStoryIllustration(message.id, version.id, version.rawContent, mediaRef ? { state: "ready", mediaRef } : undefined)) {
         onChange(session.id);
@@ -39,7 +42,7 @@ export function useStoryIllustrations(onChange: (sessionId: string) => void) {
       jobs.current.delete(key);
       if (!signal.aborted) setPending(current => {
         if (!current.has(key)) return current;
-        const next = new Set(current);
+        const next = new Map(current);
         next.delete(key);
         return next;
       });
@@ -52,5 +55,5 @@ export function useStoryIllustrations(onChange: (sessionId: string) => void) {
     if (settings?.enabled && message.round && message.round % interval === 0) void start(message);
   }
 
-  return { schedule, retry: start, pending: (message: StoryMessage) => pending.has(illustrationKey(message)) };
+  return { schedule, retry: start, pending: (message: StoryMessage) => pending.get(illustrationKey(message)) };
 }

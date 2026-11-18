@@ -218,8 +218,21 @@ function StoryIllustrationSettingsFields({ settings, onChange }: { settings: Sto
         }} />
     </label>
     <label className="story-settings-field">
-      <span>生图额外提示词</span>
-      <textarea value={settings.extraPrompt ?? ""} maxLength={3000} placeholder="例如优先使用用户第一视角"
+      <span>插图位置</span>
+      <select value={settings.placement ?? "tail"}
+        onChange={event => onChange({ ...settings, placement: event.target.value === "middle" ? "middle" : "tail" })}>
+        <option value="tail">状态栏／摘要上方</option>
+        <option value="middle">正文中间</option>
+      </select>
+    </label>
+    <label className="story-settings-field">
+      <span>画面描述额外提示词（文字模型）</span>
+      <textarea value={settings.descriptionPrompt ?? ""} maxLength={3000} placeholder="例如优先选第一视角能看到的动作"
+        onChange={event => onChange({ ...settings, descriptionPrompt: event.target.value })} />
+    </label>
+    <label className="story-settings-field">
+      <span>生图额外提示词（图片模型）</span>
+      <textarea value={settings.extraPrompt ?? ""} maxLength={3000} placeholder="例如偏冷的自然光，保留胶片质感"
         onChange={event => onChange({ ...settings, extraPrompt: event.target.value })} />
     </label>
     <ToggleRow title="合照时加入用户参考图" checked={settings.includeUserReference === true}

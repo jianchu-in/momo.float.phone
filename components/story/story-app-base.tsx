@@ -1848,7 +1848,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       signal: generationRun.controller.signal,
     }).then((result) => {
       if (!isCurrentGeneration()) return;
-      pushStoryMessage({
+      const assistantMessage = pushStoryMessage({
         sessionId,
         role: "assistant",
         rawContent: result.rawText,
@@ -1856,9 +1856,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
         storySummary: result.storySummary,
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
-      });
+      }, true);
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion((value) => value + 1);
+      storyIllustrations.schedule(assistantMessage);
 
       if (!session.independentStory) {
         for (const id of session.participantIds?.length ? session.participantIds : [characterId]) {
@@ -2561,6 +2562,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 ) : null}
                 {visibleMessages.map((message) => {
                   const storyMessageSelected = selectedStoryMessageIds.has(message.id);
+                  const illustrationPhase = message.role === "assistant" ? storyIllustrations.pending(message) : undefined;
+                  const showIllustration = message.role === "assistant" && Boolean(illustrationPhase || message.illustration);
                   const versions = message.replyVersions ?? [];
                   const versionIndex = versions.findIndex(version => version.id === message.activeReplyVersionId);
                   const showVersion = (index: number) => {
@@ -2639,8 +2642,6 @@ export function StoryApp({ onClose }: StoryAppProps) {
                             </div>
                           ) : (
                             <>
-                            {message.role === "assistant" && <StoryIllustrationView illustration={message.illustration}
-                              pending={storyIllustrations.pending(message)} onRetry={() => { void storyIllustrations.retry(message); }} selecting={storyMultiSelect} />}
                             {message.imageRef && <ShownImage mediaRef={message.imageRef} className="story-shown-image" />}
                             <StoryHtmlRenderer
                               colorDialogue={!readingPanelVisible}
@@ -2651,6 +2652,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               playingVoiceSegmentId={playingVoiceSegmentId}
                               statusRenderHtml={activeStatusRenderHtml}
                               theaterRenderHtml={activeTheaterRenderHtml}
+                              illustrationPosition={showIllustration ? storyGlobalSettings.illustration?.placement ?? "tail" : undefined}
+                              illustration={showIllustration ? <StoryIllustrationView illustration={message.illustration}
+                                pending={illustrationPhase} onRetry={() => { void storyIllustrations.retry(message); }} selecting={storyMultiSelect} /> : undefined}
+                              summaryTag={boundPreset?.story_summary_tag}
                               serifIframeFallback
                             />
                             {!storyMultiSelect && versions.length > 1 && <div className="story-reply-versions" role="group" aria-label="剧情回复版本"

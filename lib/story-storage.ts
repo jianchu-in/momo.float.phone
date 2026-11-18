@@ -49,13 +49,23 @@ export type StoryGlobalSettings = {
   illustration?: StoryIllustrationSettings;
 };
 
-export type StoryIllustrationSettings = { enabled?: boolean; interval?: number; extraPrompt?: string; includeUserReference?: boolean; skipNsfw?: boolean };
+export type StoryIllustrationSettings = {
+  enabled?: boolean;
+  interval?: number;
+  placement?: "tail" | "middle";
+  descriptionPrompt?: string;
+  extraPrompt?: string;
+  includeUserReference?: boolean;
+  skipNsfw?: boolean;
+};
 export const STORY_ILLUSTRATION_INTERVAL = 5;
 
 function normalizeStoryIllustration(value?: StoryIllustrationSettings): StoryIllustrationSettings | undefined {
   if (!value) return;
   const interval = value.interval;
   return { enabled: value.enabled === true, interval: interval && Number.isSafeInteger(interval) && interval > 0 ? interval : STORY_ILLUSTRATION_INTERVAL,
+    placement: value.placement === "middle" ? "middle" : "tail",
+    descriptionPrompt: typeof value.descriptionPrompt === "string" ? value.descriptionPrompt.slice(0, 3000) : "",
     extraPrompt: typeof value.extraPrompt === "string" ? value.extraPrompt.slice(0, 3000) : "",
     includeUserReference: value.includeUserReference === true, skipNsfw: value.skipNsfw === true };
 }

@@ -1809,11 +1809,12 @@
 .story-composer-photo button { display: grid; place-items: center; width: 28px; height: 28px; }
 .story-shown-image { display: block; width: auto; max-width: 100%; max-height: 260px; object-fit: contain; border-radius: 8px; margin-bottom: 6px; }
 .story-bubble .story-illustration { display: grid; place-items: center; width: min(100%, 420px); aspect-ratio: 4 / 3;
-  margin: 0 0 12px; padding: 0; overflow: hidden; border: 0; border-radius: 12px;
+  margin: 8px 0 12px; padding: 0; overflow: hidden; border: 0; border-radius: 12px;
   color: inherit; background: color-mix(in srgb, var(--c-story-text, #334155) 7%, transparent); }
 .story-illustration-preview { cursor: zoom-in; }
 .story-illustration-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .story-illustration-pending,.story-illustration-failure { font-size: calc(12px * var(--app-text-scale, 1)); color: var(--c-story-sub, #64748b); }
+.story-illustration-pending { display: flex; align-items: center; min-height: 32px; margin: 6px 0; }
 .story-illustration-failure { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .story-illustration-failure button,.story-reply-versions button { min-height: 30px; padding: 0 9px; color: inherit; border: 0;
   background: color-mix(in srgb, currentColor 8%, transparent); border-radius: 8px; cursor: pointer; }

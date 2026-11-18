@@ -2,13 +2,14 @@ import { useRef, useState } from "react";
 import { X } from "lucide-react";
 import { ShownImage } from "@/components/ui/shown-image";
 import type { StoryIllustration } from "@/lib/story-storage";
+import type { StoryIllustrationPhase } from "./use-story-illustrations";
 
 export function StoryIllustrationView({ illustration, pending, onRetry, selecting }: {
-  illustration?: StoryIllustration; pending: boolean; onRetry: () => void; selecting: boolean;
+  illustration?: StoryIllustration; pending?: StoryIllustrationPhase; onRetry: () => void; selecting: boolean;
 }) {
   const viewer = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
-  if (pending) return <div className="story-illustration story-illustration-pending" role="status">画面生成中…</div>;
+  if (pending) return <div className="story-illustration-pending" role="status">{pending === "planning" ? "正在准备剧情配图…" : "画面生成中…"}</div>;
   if (illustration?.state === "failed") return <div className="story-illustration-failure">
     <span>剧情图未生成</span>
     {!selecting && <button type="button" onPointerDown={event => event.stopPropagation()} onClick={onRetry}>重试图片</button>}
