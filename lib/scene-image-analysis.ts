@@ -4,6 +4,14 @@ import { sendLLMRequest, sendLLMRequestPreferStream } from "./chat-engine";
 import { loadApiConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
 import { cleanStreamText } from "./stream-preview";
 
+export const SCENE_IMAGE_COMPOSITION_GUIDANCE = [
+  "在 description 中根据正文和前情交代视点、人物相对位置、身体与脸的朝向、视线目标。第一视角的机位在用户眼睛所在的位置，人物朝向由正在做的事决定。",
+  "例如并排看剧时，从用户所在的一侧看到角色侧脸，角色看着屏幕。角色此时转头看用户，则按转头幅度写微侧脸或对视。角色背对用户时保留背影。正文明确面对面交流或对视时，再按实际角度写正脸。",
+].join("\n");
+
+export const SCENE_IMAGE_ORIENTATION_GUIDANCE =
+  "按当轮描述还原机位、身体与面部朝向以及视线目标。人物参考图用于还原身份和外貌；保持当轮构图中的侧脸、背影或局部遮挡。";
+
 export async function analyzeSceneImage<T>(options: {
   characterId: string; characterName: string; appId: "story" | "facing"; task: "plan" | "screen";
   instructions: string; context: string; signal: AbortSignal;

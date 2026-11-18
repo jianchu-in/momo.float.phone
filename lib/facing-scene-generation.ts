@@ -3,7 +3,7 @@ import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import type { Character } from "./character-types";
 import { facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "./image-generation-service";
-import { analyzeSceneImage, canIllustrateScene } from "./scene-image-analysis";
+import { analyzeSceneImage, canIllustrateScene, SCENE_IMAGE_COMPOSITION_GUIDANCE, SCENE_IMAGE_ORIENTATION_GUIDANCE } from "./scene-image-analysis";
 import { loadShownImageDataUrl } from "./shown-image";
 import { getThemeAssetDataUrl } from "./theme-storage";
 import { fileToUserAvatarDataUrl } from "./user-avatar-image";
@@ -35,7 +35,8 @@ export async function planFacingVisual(character: Character, meeting: FacingMeet
     "优先在已有素材中找符合当前状态的画面。有合适素材，填已有 asset_id。否则，如果这一轮只是自然说话、动作已结束、仅有邀请/计划/回忆、或没有值得呈现的变化，mode 填 keep。",
     "只有双方明确已到另一个地点才使用 mode=scene，此时优先匹配已有地点和默认素材。其余变化必须留在当前地点。",
     "mode=hold 用于正在喝茶、吃饭、牵手等持续动作，mode=brief 用于摸头、脸红等短动作。沿用目录已有素材名，未知素材名用具体、简短的中文。",
-    "找不到合适素材时，才写供生图用的 description。描述要具体可见，体现当下服装、表情和动作。摸头或牵手必须用用户第一视角，可见用户的手，勿画成旁观第三人称。新地点的基础图使用自然待机姿态。",
+    "找不到合适素材时，才写供生图用的 description。描述要具体可见，以用户眼睛为视点，体现当下服装、表情和动作。摸头或牵手时画出用户视点能看到的手和接触动作。新地点的基础图使用自然待机姿态。",
+    SCENE_IMAGE_COMPOSITION_GUIDANCE,
     '只返回 JSON：{"mode":"keep|scene|hold|brief","location":"当前或已抵达地点","name":"简短素材名","asset_id":null,"description":"没有对应素材时的画面描述"}。',
   ].join("\n");
   const context = JSON.stringify({ ...facingVisualContext(character, meeting),
@@ -122,11 +123,12 @@ export async function renderFacingVisual(plan: ScenePlan, base: FacingAsset | un
   if (!sceneImage || !roleImage) throw new Error("场景图或角色参考图读取失败。");
   const description = [
     `生成一张适合手机面对面的 9:16 竖屏完整画面，地点是「${plan.location}」。只输出一幅连贯画面。`,
-    "参考板第一格「场景基础图」用于环境和构图，第二格「角色外貌参考」用于人物身份与五官。",
+    "参考板第一格「场景基础图」用于环境和视觉风格，第二格「角色外貌参考」用于人物身份与五官。",
     plan.mode === "scene"
-      ? "按描述切换到新环境。参考板里的场景用于延续镜头高度、尺度和现有视觉风格。"
-      : "沿用场景参考中的房间布局、物件、光线和镜头位置，按描述改变当前动作和表情。",
-    "角色参考用于保持脸部、发型与身份。在场景参考中已有服装时保持其连续性，除非剧情明确换装。视点为用户眼睛的位置。",
+      ? "按描述切换到新环境，延续场景参考的视觉风格。"
+      : "沿用场景参考中的房间布局、物件和光线，按用户当前的位置与动作取景。",
+    SCENE_IMAGE_ORIENTATION_GUIDANCE,
+    "视点为用户眼睛的位置，服装按剧情保持连续。",
     plan.description,
   ].join("\n");
   return generateImageFromConfiguredApi({ description, characterId: character.id, appId: "facing", settings: config,
