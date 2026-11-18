@@ -239,7 +239,7 @@ function StoryIllustrationSettingsFields({ settings, onChange }: { settings: Sto
       onChange={includeUserReference => onChange({ ...settings, includeUserReference })} />
     <ToggleRow title="生图前跳过 NSFW 场景" checked={settings.skipNsfw === true}
       onChange={skipNsfw => onChange({ ...settings, skipNsfw })} />
-    <p className="story-settings-note">配图默认使用 4:3 横向构图，需要已配置的角色参考图。</p>
+    <p className="story-settings-note">到设定轮数时，文字模型随正文一起写画面描述和场景判定，符合条件时再调用图片模型。自动配图默认使用 4:3 横向构图和已启用的角色参考图。</p>
   </>;
 }
 

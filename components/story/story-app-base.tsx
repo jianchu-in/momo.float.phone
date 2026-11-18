@@ -2,6 +2,7 @@
 
 import { ShownImage } from "@/components/ui/shown-image";
 import { storeShownImage } from "@/lib/shown-image";
+import { stripStoryIllustrationBlock } from "@/lib/story-illustration";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -83,6 +84,7 @@ import {
   loadStorySessions,
   loadStorySessionsForOwner,
   loadStorySchemeRepository,
+  nextStoryRound,
   pushStoryMessage,
   resolveActiveQuickInputScheme,
   saveStorySchemeRepository,
@@ -809,7 +811,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     if (streamPaintFrameRef.current.has(sessionId)) return;
     const frame = window.requestAnimationFrame(() => {
       streamPaintFrameRef.current.delete(sessionId);
-      const nextText = streamAccumulatorRef.current.get(sessionId) || "";
+      const nextText = stripStoryIllustrationBlock(streamAccumulatorRef.current.get(sessionId) || "");
       setStreamingTextBySession((prev) => ({ ...prev, [sessionId]: nextText }));
     });
     streamPaintFrameRef.current.set(sessionId, frame);
@@ -1744,6 +1746,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
         settings: currentSession?.settings,
         globalSettings: storyGlobalSettings,
+        round: nextStoryRound(sessionId),
         floatingChatContext: currentSession?.independentStory ? "" : floatingChatContext,
         participantIds: currentSession?.participantIds || [characterId],
         storyMemory: {
@@ -1763,12 +1766,13 @@ export function StoryApp({ onClose }: StoryAppProps) {
         storySummary: result.storySummary,
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
+        illustration: result.illustration,
       }, true);
       if (activeSessionIdRef.current === sessionId) {
         setMessages(loadStoryMessages(sessionId)); // 按会话从存储重读，杜绝跨会话串消息
       }
       setStorageVersion((value) => value + 1);
-      storyIllustrations.schedule(assistantMessage);
+      storyIllustrations.schedule(assistantMessage, storyGlobalSettings.illustration?.extraPrompt);
 
       const memoryCharacterIds = currentSession?.participantIds?.length ? currentSession.participantIds : [characterId];
       const storyCharacters = memoryCharacterIds
@@ -1837,6 +1841,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       sessionContextExcludedTags: session.contextExcludedTags,
       settings: session.settings,
       globalSettings: storyGlobalSettings,
+      round: nextStoryRound(sessionId),
       floatingChatContext: session.independentStory ? "" : floatingChatContext,
       participantIds: session.participantIds || [characterId],
       storyMemory: {
@@ -1856,10 +1861,11 @@ export function StoryApp({ onClose }: StoryAppProps) {
         storySummary: result.storySummary,
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
+        illustration: result.illustration,
       }, true);
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion((value) => value + 1);
-      storyIllustrations.schedule(assistantMessage);
+      storyIllustrations.schedule(assistantMessage, storyGlobalSettings.illustration?.extraPrompt);
 
       if (!session.independentStory) {
         for (const id of session.participantIds?.length ? session.participantIds : [characterId]) {
@@ -2292,6 +2298,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
         settings: currentSession?.settings,
         globalSettings: storyGlobalSettings,
+        round: firstDiscardedMessage?.role === "assistant" ? firstDiscardedMessage.round : nextStoryRound(sessionId),
         floatingChatContext: currentSession?.independentStory ? "" : floatingChatContext,
         participantIds: currentSession?.participantIds || [characterId],
         storyMemory: {
@@ -2306,7 +2313,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       if (!isCurrentGeneration()) return;
       const content = {
         rawContent: result.rawText, renderedContent: result.renderedText,
-        storySummary: result.storySummary, regexSignature: result.regexSignature, parserVersion: result.parserVersion,
+        storySummary: result.storySummary, regexSignature: result.regexSignature, parserVersion: result.parserVersion, illustration: result.illustration,
       };
       let assistantMessage: StoryMessage | undefined;
       if (firstDiscardedMessage?.role === "assistant") {
@@ -2317,7 +2324,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       }
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion(v => v + 1);
-      if (assistantMessage) storyIllustrations.schedule(assistantMessage);
+      if (assistantMessage) storyIllustrations.schedule(assistantMessage, storyGlobalSettings.illustration?.extraPrompt);
     } catch (error) {
       if (!isCurrentGeneration() || isAbortLikeError(error)) return;
       const errText = error instanceof Error ? error.message : "重试失败，请稍后再试。";
@@ -2562,8 +2569,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 ) : null}
                 {visibleMessages.map((message) => {
                   const storyMessageSelected = selectedStoryMessageIds.has(message.id);
-                  const illustrationPhase = message.role === "assistant" ? storyIllustrations.pending(message) : undefined;
-                  const showIllustration = message.role === "assistant" && Boolean(illustrationPhase || message.illustration);
+                  const illustrationPending = message.role === "assistant" && storyIllustrations.pending(message);
+                  const showIllustration = message.role === "assistant" && Boolean(illustrationPending || message.illustration);
                   const versions = message.replyVersions ?? [];
                   const versionIndex = versions.findIndex(version => version.id === message.activeReplyVersionId);
                   const showVersion = (index: number) => {
@@ -2653,8 +2660,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               statusRenderHtml={activeStatusRenderHtml}
                               theaterRenderHtml={activeTheaterRenderHtml}
                               illustrationPosition={showIllustration ? storyGlobalSettings.illustration?.placement ?? "tail" : undefined}
-                              illustration={showIllustration ? <StoryIllustrationView illustration={message.illustration}
-                                pending={illustrationPhase} onRetry={() => { void storyIllustrations.retry(message); }} selecting={storyMultiSelect} /> : undefined}
+                              illustration={showIllustration ? <StoryIllustrationView leadId={currentSession.characterId} illustration={message.illustration}
+                                pending={illustrationPending} onRegenerate={details => storyIllustrations.regenerate(message, details)} selecting={storyMultiSelect} /> : undefined}
                               summaryTag={boundPreset?.story_summary_tag}
                               serifIframeFallback
                             />

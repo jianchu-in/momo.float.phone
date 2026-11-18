@@ -20,7 +20,8 @@ import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from
 import { getWeekStartIso } from "./calendar-utils";
 import { parseStoryResponse } from "./story-parser";
 import { STORY_PARSER_VERSION } from "./story-parser";
-import { loadStoryMessages, replaceStoryMessages, resolveActiveStorySchemes, type StoryCharacterSettings, type StoryGlobalSettings, type StoryMessage } from "./story-storage";
+import { loadStoryMessages, replaceStoryMessages, resolveActiveStorySchemes, type StoryCharacterSettings, type StoryGlobalSettings, type StoryIllustration, type StoryMessage } from "./story-storage";
+import { buildStoryIllustrationMessages, readStoryIllustration, storyIllustrationSettingsForRound, stripStoryIllustrationBlock } from "./story-illustration";
 import type { ChatMessage } from "./chat-storage";
 import { MacroEngine } from "./macro-engine";
 import { formatCharacterRelationsForPrompt } from "./character-world-storage";
@@ -57,6 +58,7 @@ export type StoryGenerationOptions = {
   sessionContextExcludedTags?: string;
   settings?: StoryCharacterSettings;
   globalSettings?: StoryGlobalSettings;
+  round?: number;
   floatingChatContext?: string;
   /** 多人剧情角色列表；第一个角色仍作为 API、预设和语音绑定的主角色。 */
   participantIds?: string[];
@@ -122,6 +124,7 @@ export type StoryGenerationResult = {
   storySummary: string;
   regexSignature: string;
   parserVersion: number;
+  illustration?: StoryIllustration;
   promptMessages: LLMMessage[];
   model: string;
   presetName: string;
@@ -279,6 +282,10 @@ export async function generateStoryCompletion(
       content: `【本次重新生成额外要求】\n${options.retryInstruction.trim()}\n只在本次重新生成中遵守；不要复述、解释或向用户展示这段隐藏要求。`,
     });
   }
+  const illustrationSettings = storyIllustrationSettingsForRound(options?.globalSettings?.illustration, options?.round);
+  if (illustrationSettings) {
+    llmMessages.push(...buildStoryIllustrationMessages(illustrationSettings, characterId, options?.participantIds));
+  }
 
   const userIdentity = resolveUserIdentity(characterId, "story");
   const macroEngine = new MacroEngine(character.name, userIdentity?.name ?? "用户");
@@ -311,7 +318,7 @@ export async function generateStoryCompletion(
     }, { skipOutputRegex: true, includeReasoning: true, appId: "story", appTags: ["story"], signal: options?.signal });
   }
 
-  const parsed = parseStoryResponse(rawOutput, regexes, {
+  const parsed = parseStoryResponse(stripStoryIllustrationBlock(rawOutput), regexes, {
     summaryTag,
     foldTags: effectiveFoldTags,
     macroEngine,
@@ -323,6 +330,7 @@ export async function generateStoryCompletion(
     storySummary: parsed.summaryText,
     regexSignature,
     parserVersion: STORY_PARSER_VERSION,
+    illustration: illustrationSettings ? readStoryIllustration(rawOutput, illustrationSettings, characterId, options?.participantIds) : undefined,
     promptMessages: llmMessages,
     model: apiConfig.defaultModel,
     presetName: preset?.name || "默认预设",
@@ -485,7 +493,7 @@ export async function previewStoryPromptPayload(
   characterId: string,
   history: StoryMessage[],
   options?: Pick<StoryGenerationOptions,
-    "sessionContextExcludedTags" | "settings" | "globalSettings" | "floatingChatContext" | "participantIds" | "storyMemory"
+    "sessionContextExcludedTags" | "settings" | "globalSettings" | "round" | "floatingChatContext" | "participantIds" | "storyMemory"
   >,
 ): Promise<StoryPreviewResult> {
   const character = loadCharacters().find((item) => item.id === characterId);
@@ -508,6 +516,10 @@ export async function previewStoryPromptPayload(
     options?.participantIds,
     options?.storyMemory,
   );
+  const illustrationSettings = storyIllustrationSettingsForRound(options?.globalSettings?.illustration, options?.round);
+  if (illustrationSettings) {
+    llmMessages.push(...buildStoryIllustrationMessages(illustrationSettings, characterId, options?.participantIds));
+  }
   return {
     messages: previewMessagesForApi(apiConfig, preset, llmMessages),
     characterName: character.name,

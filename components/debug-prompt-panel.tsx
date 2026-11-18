@@ -27,7 +27,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import { getAllPosts } from "@/lib/moments-storage";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { getWeekStartIso } from "@/lib/calendar-utils";
-import { getStorySessionOwnerKey, hydrateStoryStorage, loadStoryGlobalSettings, loadStoryGroups, loadStorySessions, loadStoryMessages } from "@/lib/story-storage";
+import { getStorySessionOwnerKey, hydrateStoryStorage, loadStoryGlobalSettings, loadStoryGroups, loadStorySessions, loadStoryMessages, nextStoryRound } from "@/lib/story-storage";
 import { previewStoryPromptPayload } from "@/lib/story-engine";
 import { loadVnSessions, loadVnMessages } from "@/lib/vn-storage";
 import { previewVnPromptPayload } from "@/lib/vn-engine";
@@ -463,6 +463,7 @@ export function DebugPromptPanel({ combined = false }: { combined?: boolean } = 
                 sessionContextExcludedTags: session.contextExcludedTags,
                 settings: session.settings,
                 globalSettings: loadStoryGlobalSettings(),
+                round: nextStoryRound(session.id),
                 floatingChatContext,
                 participantIds: session.participantIds || [session.characterId],
                 storyMemory: {

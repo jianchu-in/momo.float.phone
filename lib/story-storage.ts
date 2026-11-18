@@ -532,7 +532,16 @@ export type StoryMessage = {
   createdAt: string;
 };
 
-export type StoryIllustration = { state: "ready"; mediaRef: string } | { state: "failed" };
+export type StoryIllustrationDetails = {
+  description: string;
+  characterId: string;
+  useCharacterReference: boolean;
+  useUserReference: boolean;
+};
+
+export type StoryIllustration = ({ state: "ready"; mediaRef: string } | { state: "failed" }) & {
+  details?: StoryIllustrationDetails;
+};
 export type StoryReplyContent = Pick<StoryMessage, "rawContent" | "renderedContent" | "storySummary" | "regexSignature" | "parserVersion" | "illustration">;
 export type StoryReplyVersion = StoryReplyContent & { id: string };
 
@@ -1041,12 +1050,16 @@ export function updateStorySession(sessionId: string, updates: Partial<StorySess
   return next;
 }
 
+export function nextStoryRound(sessionId: string) {
+  const session = _sessionsCache.find(item => item.id === sessionId);
+  return session ? (session.completedRounds ?? 0) + 1 : undefined;
+}
+
 export function pushStoryMessage(
   input: Omit<StoryMessage, "id" | "createdAt">,
   countRound = false,
 ): StoryMessage {
-  const session = _sessionsCache.find(item => item.id === input.sessionId);
-  const rounds = countRound && session ? (session.completedRounds ?? 0) + 1 : undefined;
+  const rounds = countRound ? nextStoryRound(input.sessionId) : undefined;
   const message: StoryMessage = {
     ...input,
     round: rounds ?? input.round,
