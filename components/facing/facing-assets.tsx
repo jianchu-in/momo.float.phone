@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, ChevronRight, ImagePlus, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Download, ImagePlus, Plus, Sparkles, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import type { Character } from "@/lib/character-types";
+import { downloadFile } from "@/lib/download-utils";
 import { loadDwellingLayout } from "@/lib/dwelling-storage";
 import { facingFullImageInstruction, polishFacingImageDescription } from "@/lib/facing-engine";
 import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingAssetLocation, facingAssetMood, facingId, facingMediaType, saveFacingAsset, setFacingAssetMotion, updateFacingAsset,
@@ -102,6 +103,7 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
   const [referenceFile, setReferenceFile] = useState<File>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [downloadError, setDownloadError] = useState("");
   const control = useRef<AbortController | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const uploadMotion = useRef<HTMLInputElement>(null);
@@ -198,7 +200,33 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
     setDuration(asset.durationMs / 1000);
     setLayout(asset.layout ?? {});
     setError("");
+    setDownloadError("");
     setView("edit");
+  }
+
+  async function downloadAsset(motion = false) {
+    if (!edited || busy) return;
+    const mediaId = motion ? edited.motionMediaId : edited.mediaId;
+    if (!mediaId) return;
+    setBusy(true);
+    setDownloadError("");
+    try {
+      const url = await getThemeAssetDataUrl(mediaId);
+      if (!url?.startsWith("data:")) {
+        setDownloadError("找不到此素材的原文件。");
+        return;
+      }
+      const blob = await (await fetch(url)).blob();
+      const subtype = blob.type.split("/")[1];
+      const extension = subtype === "jpeg" ? "jpg" : subtype === "quicktime" ? "mov" : subtype || "bin";
+      const name = `${facingAssetLocation(edited)} · ${facingAssetMood(edited)}${motion ? " · 动态" : ""}`
+        .replace(/[<>:"/\\|?*]/g, "-");
+      await downloadFile(blob, `${name}.${extension}`);
+    } catch {
+      setDownloadError("素材下载失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openGeneration() {
@@ -437,6 +465,17 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
             portrait={category === "scene" ? targetGroup?.portrait : undefined}
             fallback={category === "scene" ? character.avatar : undefined} name={character.name} />
         </div>}
+        {edited && <>
+          <div className="facing-choices">
+            <button type="button" className="facing-small" disabled={busy} onClick={() => void downloadAsset()}>
+              <Download size={15} />{edited.mediaType.startsWith("video/") ? "下载原视频" : "下载原图"}
+            </button>
+            {edited.motionMediaId && <button type="button" className="facing-small" disabled={busy} onClick={() => void downloadAsset(true)}>
+              <Download size={15} />{edited.motionMediaType?.startsWith("video/") ? "下载视频" : "下载动图"}
+            </button>}
+          </div>
+          {downloadError && <p className="facing-error" role="alert">{downloadError}</p>}
+        </>}
         <div className="facing-form-layout">
           <label>横向位置<input type="range" min={0} max={100} value={layout.x ?? layoutDefaults.x} onChange={event => setLayout({ ...layout, x: +event.target.value })} /></label>
           <label>纵向位置<input type="range" min={0} max={100} value={layout.y ?? layoutDefaults.y} onChange={event => setLayout({ ...layout, y: +event.target.value })} /></label>
