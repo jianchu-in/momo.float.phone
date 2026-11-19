@@ -184,6 +184,8 @@ export type FacingMeeting = {
   scene?: FacingScenePosition;
   turns: FacingTurn[];
   completedRounds?: number;
+  pausedAt?: string;
+  mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string };
   visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number };
 };
 

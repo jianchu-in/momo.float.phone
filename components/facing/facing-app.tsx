@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, History, Images, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
+import { FacingMapApp } from "./facing-map-app";
+import { FacingMapSettings } from "./facing-map-panels";
+import { mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
@@ -16,7 +19,7 @@ import { storeShownImage } from "@/lib/shown-image";
 import { useFacingSceneGeneration } from "./use-facing-scene-generation";
 import { useFacingViewportInset } from "./use-facing-viewport-inset";
 
-type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record";
+type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record" | "map" | "map-settings";
 type Sheet = "characters" | "new" | null;
 
 function Header({ title, onBack, children }: { title: string; onBack: () => void; children?: ReactNode }) {
@@ -131,6 +134,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [preferences, setPreferences] = useState(loadFacingSettings);
   const character = characters.find(item => item.id === preferences.characterId);
   const [page, setPage] = useState<Page>("home");
+  const [mapOrigin, setMapOrigin] = useState<"home" | "room">("home");
+  const [mapSettingsOrigin, setMapSettingsOrigin] = useState<"map" | "settings">("settings");
   const appRef = useRef<HTMLDivElement>(null);
   const pageInset = useFacingViewportInset(appRef, page !== "room" && page !== "home");
   const [sheet, setSheet] = useState<Sheet>(() => !character && characters.length ? "characters" : null);
@@ -216,9 +221,28 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     setPage("settings");
   }
 
+  async function arriveFromMap(atlas: FacingAtlas, trip: MapTrip, visitId: string) {
+    const activity = mapActivitySnapshot(atlas)?.entries.filter(entry => entry.placeId === trip.placeId) ?? [];
+    const participants = Array.from(new Set([...trip.characterIds, ...(trip.targetCharacterId ? [trip.targetCharacterId] : activity.map(entry => entry.characterId))]));
+    const primaryId = trip.characterIds[0] ?? trip.targetCharacterId ?? participants[0] ?? character?.id;
+    if (!primaryId) throw new Error("请先选择一位角色。");
+    const target = characters.find(item => item.id === primaryId);
+    if (!target) throw new Error("这位角色已被移除。");
+    const targetAssets = loadFacingAssets(primaryId);
+    const destination = mapPlacePath(atlas, trip.placeId);
+    const group = groupFacingScenes(targetAssets).find(item => item.name === destination || item.name === destination.split(" · ").at(-1));
+    const scene = { ...facingScenePosition(group), sceneName: destination };
+    const identity = resolveUserIdentity(character?.id, "facing")?.id ?? null;
+    const started = await saveMapArrival(atlas.id, trip, visitId, primaryId, identity, participants, scene, meeting);
+    setPreferences(await saveFacingSettings(primaryId));
+    setAssets(targetAssets);
+    openRoom(started);
+  }
+
   return <div ref={appRef} className="facing-app" style={{ paddingBottom: pageInset }}>
     {page === "home" && <>
       <Header title="面对面" onBack={onClose}>
+        {character && <button type="button" className="facing-icon" onClick={() => { setMapOrigin("home"); setPage("map"); }} aria-label="世界地图"><MapIcon size={20} /></button>}
         {character && <button type="button" className="facing-icon" onClick={() => openSettings("home")} aria-label="设置"><Settings2 size={20} /></button>}
       </Header>
       {character ? <>
@@ -245,6 +269,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
       autoAsset={assets.find(asset => asset.id === meeting.visual?.assetId)} autoProgress={autoVisual.progress[meeting.id]}
       onCompleted={completed => autoVisual.check(completed, character)}
+      onMap={() => { setMapOrigin("room"); setPage("map"); }}
       onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
       onVoice={value => commitSetting({ voice: value })} onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
@@ -252,6 +277,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       <main className="facing-scroll facing-form">
         <h2 className="facing-record-title">{character.name}</h2>
         <div className="facing-list">
+          <button type="button" onClick={() => { setMapSettingsOrigin("settings"); setPage("map-settings"); }}><MapIcon size={18} /><span>地图设置</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => setPage("hotspots")}><ScanLine size={18} /><span>虚拟体感</span><ChevronRight size={17} /></button>
         </div>
@@ -320,6 +346,12 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         </section>
       </main>
     </>}
+    {(page === "map" || (page === "map-settings" && mapSettingsOrigin === "map")) && character &&
+      <div style={{ display: page === "map" ? "flex" : "none", flex: 1, minHeight: 0 }}>
+        <FacingMapApp character={character} characters={characters} currentMeeting={meeting}
+          onBack={() => setPage(mapOrigin)} onSettings={() => { setMapSettingsOrigin("map"); setPage("map-settings"); }} onArrive={arriveFromMap} />
+      </div>}
+    {page === "map-settings" && <FacingMapSettings onBack={() => setPage(mapSettingsOrigin)} />}
     {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} groups={groups}
       onBack={() => setPage(assetOrigin)} onChange={() => setAssets(loadFacingAssets(character.id))}
       onDelete={async assetIds => {

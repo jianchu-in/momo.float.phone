@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type CSSProperties } from "react";
-import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Mic, Settings2, Square, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Map as MapIcon, Mic, Settings2, Square, Volume2, VolumeX, X } from "lucide-react";
+import { loadCharacters } from "@/lib/character-storage";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
@@ -18,7 +19,7 @@ import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, autoAsset, autoProgress, onCompleted,
-  onMeeting, onSettings, onEnd, onVoice, onSpeechInput }: {
+  onMeeting, onSettings, onEnd, onVoice, onSpeechInput, onMap }: {
   character: Character;
   meeting: FacingMeeting;
   settings: FacingCharacterSettings;
@@ -31,11 +32,14 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   onCompleted: (meeting: FacingMeeting) => void;
   onMeeting: (meeting: FacingMeeting) => void;
   onSettings: () => void;
+  onMap: () => void;
   onEnd: () => void;
   onVoice: (enabled: boolean) => void;
   onSpeechInput: (mode: NonNullable<FacingCharacterSettings["speechInput"]>) => void;
 }) {
   const [reaction, setReaction] = useState<FacingAsset>();
+  const cast = loadCharacters().filter(item => meeting.mapContext?.participantIds.includes(item.id));
+  const castName = cast.length > 1 ? cast.map(item => item.name).join("、") : character.name;
   const [expiredVisual, setExpiredVisual] = useState<string>();
   const [draft, setDraft] = useState("");
   const [hidden, setHidden] = useState(false);
@@ -371,6 +375,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         {settings.autoVisual?.enabled && autoProgress?.message && <small className="facing-glass facing-visual-status" role="status">{autoProgress.message}</small>}
       </div>
       <div>
+        <button type="button" className="facing-glass facing-icon" aria-label="世界地图" disabled={busy || listening} onClick={onMap}><MapIcon size={18} /></button>
         <button type="button" className="facing-glass facing-icon" aria-label={hidden ? "显示对话" : "隐藏对话"}
           aria-pressed={hidden} onClick={() => { setHidden(value => !value); followLog.current = true; }}>
           {hidden ? <Eye size={18} /> : <EyeOff size={18} />}
@@ -386,7 +391,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           const area = event.currentTarget;
           followLog.current = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
         }}>
-        {meeting.turns.map(turn => <FacingMessage key={turn.id} turn={turn} characterName={character.name} busy={busy || listening}
+        {meeting.turns.map(turn => <FacingMessage key={turn.id} turn={turn} characterName={castName} busy={busy || listening}
           onMenu={() => { setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => changeVersion(turn, index)} />)}
         {interimText && <div className="facing-glass facing-message" data-role="user"><small>语音识别中</small><p>{interimText}</p></div>}
         {generating && <div className="facing-glass facing-message facing-log-status">正在回应…</div>}

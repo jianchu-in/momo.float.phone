@@ -1,4 +1,5 @@
 import { loadShownImageDataUrl, SHOWN_IMAGE_CONTEXT } from "./shown-image";
+import { loadCharacters } from "./character-storage";
 import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
 import { splitVisibleCallActions } from "./call-action-text";
@@ -138,12 +139,28 @@ export async function generateFacingReply(options: {
   const missingRoleDetails = [persona, personality].filter((detail): detail is string =>
     !!detail && !messages.some(message => typeof message.content === "string" && message.content.includes(detail)));
   if (missingRoleDetails.length) messages.unshift({ role: "system", content: `角色 ${character.name}\n${missingRoleDetails.join("\n")}` });
+  let mapContextPrompt = "";
+  if (meeting.mapContext) {
+    const context = meeting.mapContext;
+    const cast = loadCharacters().filter(item => context.participantIds.includes(item.id));
+    const roster = cast.map(item => ({
+      姓名: item.name, 人设: item.persona, 性格: item.personality,
+      近期记忆: item.id !== character.id && useMemory ? prepareShortTermContext(item.id, "facing", { history: [] }).unifiedRecentItems : undefined,
+    }));
+    mapContextPrompt = [
+      "这次互动从地图实际抵达地点衔接。尊重当前位置与同行名单，根据角色各自的人设自然互动。",
+      cast.length > 1 ? "同一回复可以描写多位在场角色；台词标注说话者姓名，避免混淆身份。" : "",
+      !cast.length ? "用户独自抵达，目前没有已知角色在场。先描写可见环境和可互动事物，dialogue可以为空，不强行让角色出现。" : "",
+      context.secret ? "用户悄悄到达，在场角色初始尚未察觉。先从用户视角观察角色正在做的事；后续用户行动真正引起注意时再让对方反应。" : "",
+      JSON.stringify({ 地点: scene, 地点介绍: context.description, 在场角色: roster }),
+    ].filter(Boolean).join("\n");
+  }
   const latest = history.at(-1);
   const lastUser = messages.map(item => item.role).lastIndexOf("user");
   const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
   const mode: LLMMessage = {
     role: "system",
-    content: [FACING_MODE_PROMPT,
+    content: [FACING_MODE_PROMPT, mapContextPrompt,
       options.deferVisual && "本轮画面由独立流程处理。scene_id 和 reaction_id 一律填写 null，仍要自然描写剧情中发生的动作与地点。",
       options.visualActivity && `另加一个后台 JSON 字段 visual_continues。紧接本轮动作后，「${options.visualActivity}」确定仍在继续时填 true，已经结束、换场或不确定时填 false。不要在台词或动作中提到画面处理。`,
       `每轮回复约 ${(FACING_REPLY_LENGTHS[settings.length ?? "short"] ?? FACING_REPLY_LENGTHS.short).characters} 个中文字，台词和动作合计。字数是目标，保持当面说话的节奏，可按语境缩短。`, JSON.stringify({
