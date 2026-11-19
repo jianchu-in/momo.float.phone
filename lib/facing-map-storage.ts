@@ -14,6 +14,7 @@ export type MapRoad = { id: string; from: string; to: string; points: MapPoint[]
 export type FacingMapPage = {
   id: string;
   parentPlaceId?: string;
+  entryPlaceId?: string;
   name: string;
   description: string;
   tiles: MapTile[];
@@ -146,37 +147,83 @@ export function mapBoundaryTile(page: FacingMapPage, direction: "left" | "right"
   const edge = (tile: MapTile) => ({ left: -tile.x, right: tile.x + tile.width, top: -tile.y, bottom: tile.y + tile.height })[direction];
   return [...page.tiles].sort((a, b) => edge(b) - edge(a))[0];
 }
-export function mapRoute(page: FacingMapPage, fromId: string, toId: string): MapPoint[] | undefined {
-  if (fromId === toId) { const found = page.places.find(place => place.id === toId); return found ? [found] : undefined; }
+export type MapRouteSegment = { pageId: string; points: MapPoint[] };
+type RouteEdge = { from: string; to: string; points: MapPoint[]; pageId?: string };
+
+function routeLength(points: MapPoint[]) {
+  return points.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - points[index].x, point.y - points[index].y), 0);
+}
+function shortestMapRoute(places: MapPlace[], edges: RouteEdge[], fromId: string, toId: string): RouteEdge[] | undefined {
+  if (!places.some(place => place.id === fromId) || !places.some(place => place.id === toId)) return;
   const distance = new Map<string, number>([[fromId, 0]]);
-  const previous = new Map<string, { id: string; path: MapPoint[] }>();
-  const remaining = new Set(page.places.map(place => place.id));
+  const previous = new Map<string, RouteEdge>();
+  const remaining = new Set(places.map(place => place.id));
   while (remaining.size) {
     const next = [...remaining].sort((a, b) => (distance.get(a) ?? Infinity) - (distance.get(b) ?? Infinity))[0];
     if (!Number.isFinite(distance.get(next))) break;
     remaining.delete(next);
     if (next === toId) {
-      const result: MapPoint[][] = [];
+      const result: RouteEdge[] = [];
       let current = toId;
       while (previous.has(current)) {
-        const entry = previous.get(current)!;
-        result.unshift(entry.path); current = entry.id;
+        const edge = previous.get(current)!;
+        result.unshift(edge); current = edge.from;
       }
-      return result.flat();
+      return result;
     }
-    for (const road of page.roads.filter(item => item.from === next || item.to === next)) {
-      const reverse = road.to === next;
-      const target = reverse ? road.from : road.to;
-      const a = page.places.find(place => place.id === road.from), b = page.places.find(place => place.id === road.to);
-      if (!a || !b) continue;
-      const path = [a, ...road.points, b];
-      if (reverse) path.reverse();
-      const length = path.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - path[index].x, point.y - path[index].y), 0);
-      const candidate = distance.get(next)! + length;
-      if (candidate < (distance.get(target) ?? Infinity)) { distance.set(target, candidate); previous.set(target, { id: next, path }); }
+    for (const original of edges.filter(edge => edge.from === next || edge.to === next)) {
+      const edge = original.from === next ? original : { ...original, from: original.to, to: original.from, points: [...original.points].reverse() };
+      if (!remaining.has(edge.to)) continue;
+      const candidate = distance.get(next)! + Math.max(1, routeLength(edge.points));
+      if (candidate < (distance.get(edge.to) ?? Infinity)) { distance.set(edge.to, candidate); previous.set(edge.to, edge); }
     }
   }
 }
+function mapRoadEdges(page: FacingMapPage): RouteEdge[] {
+  return page.roads.flatMap(road => {
+    const from = page.places.find(place => place.id === road.from), to = page.places.find(place => place.id === road.to);
+    return from && to ? [{ from: from.id, to: to.id, pageId: page.id, points: [from, ...road.points, to] }] : [];
+  });
+}
+export function mapRoute(page: FacingMapPage, fromId: string, toId: string): MapPoint[] | undefined {
+  const steps = shortestMapRoute(page.places, mapRoadEdges(page), fromId, toId);
+  if (!steps) return;
+  return steps.length ? steps.flatMap(step => step.points) : page.places.filter(place => place.id === fromId);
+}
+export function mapJourneyRoute(atlas: FacingAtlas, fromId: string, toId: string): MapRouteSegment[] | undefined {
+  const start = mapPlace(atlas, fromId);
+  if (!start) return;
+  const edges = atlas.pages.flatMap(mapRoadEdges);
+  for (const page of atlas.pages) {
+    const entrance = page.places.find(place => place.id === page.entryPlaceId);
+    const outside = page.parentPlaceId && mapPlace(atlas, page.parentPlaceId);
+    if (entrance && outside && outside.page.id !== page.id) edges.push({ from: outside.place.id, to: entrance.id, points: [] });
+  }
+  const steps = shortestMapRoute(atlas.pages.flatMap(page => page.places), edges, fromId, toId);
+  if (!steps) return;
+  const segments: MapRouteSegment[] = [{ pageId: start.page.id, points: [start.place] }];
+  for (const edge of steps) {
+    const destination = mapPlace(atlas, edge.to)!;
+    const pageId = edge.pageId ?? destination.page.id;
+    const points = edge.pageId ? edge.points : [destination.place];
+    const last = segments.at(-1)!;
+    if (last.pageId === pageId) last.points.push(...points);
+    else segments.push({ pageId, points: [...points] });
+  }
+  return segments;
+}
+export function mapJourneyFrame(segments: MapRouteSegment[], progress: number) {
+  if (!segments.length) return;
+  const lengths = segments.map(segment => Math.max(80, routeLength(segment.points)));
+  let left = lengths.reduce((sum, length) => sum + length, 0) * Math.max(0, Math.min(1, progress));
+  for (let index = 0; index < segments.length; index++) {
+    if (left < lengths[index] || index === segments.length - 1) {
+      return { ...segments[index], progress: Math.max(0, Math.min(1, left / lengths[index])) };
+    }
+    left -= lengths[index];
+  }
+}
+
 export function routePoint(points: MapPoint[], progress: number): MapPoint {
   if (!points.length) return { x: 0, y: 0 };
   const lengths = points.slice(1).map((point, index) => Math.hypot(point.x - points[index].x, point.y - points[index].y));

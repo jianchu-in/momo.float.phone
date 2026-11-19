@@ -854,7 +854,7 @@ function* assembleNativeTimeline(
     if (loadFacingSettings().characters[characterId]?.memory !== false) {
         const identity = options?.appId ? resolveUserIdentity(characterId, options.appId)?.id ?? null : undefined;
         const seen = new Set<string>();
-        const meetings = loadFacingMeetings(characterId, identity)
+        const meetings = loadFacingMeetings(characterId, identity, true)
             .filter(meeting => meeting.type !== "independent" && meeting.id !== options?.excludeFacingMeetingId)
             .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         for (const meeting of meetings) {
@@ -864,7 +864,7 @@ function* assembleNativeTimeline(
                 seen.add(turn.id);
                 const body = facingTurnText(turn);
                 if (!body) continue;
-                const author = turn.role === "user" ? userName : charName;
+                const author = turn.role === "user" ? userName : turn.speakerName ?? charName;
                 const label = formatPromptEventLabel("面对面", turn.at, timeAware, timestampOptions);
                 entries.push({ id: turn.id, sessionId: meeting.id, sourceApp: "facing", authorType: turn.role === "user" ? "user" : "character",
                     timestamp: turn.at, content: `${label} ${author}（${turn.sceneName}）：${body}` });

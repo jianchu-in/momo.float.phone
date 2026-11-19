@@ -52,7 +52,9 @@ export function FacingMedia({ url, mediaType, name, loop = true, onEnd, onRatio 
 type FacingStageDraft = Pick<FacingAsset, "category" | "name" | "mediaType" | "layout" | "composition"> & { url: string };
 
 export function FacingStage({ portrait, scene, reaction, draft, fallback, name, points = [], editing, activePoint, onPoint,
-  onPointMove, onReactionEnd, retainPoints, children }: {
+  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, children }: {
+  hideBlank?: boolean;
+  fullFallback?: boolean;
   portrait?: FacingAsset;
   scene?: FacingAsset;
   reaction?: FacingAsset;
@@ -84,7 +86,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const mediaKey = (reactionUrl ? reaction?.mediaId : portraitDraft?.url ?? portrait?.mediaId) ?? fallback ?? "";
   const ratioValue = ratio?.key === mediaKey ? ratio.value : 0.72;
   const layout = foreground?.layout ?? portrait?.layout;
-  const full = foreground?.composition === "full" && Boolean(mediaUrl);
+  const full = (foreground?.composition === "full" && Boolean(mediaUrl)) || Boolean(fullFallback && fallback);
   const fitWidth = full ? Math.max(size.width, size.height * ratioValue) : Math.min(size.width, size.height * ratioValue);
   const width = fitWidth * (layout?.scale ?? 100) / 100;
   const height = width / ratioValue;
@@ -120,7 +122,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
             onRatio={value => setRatio({ key: mediaKey, value })} loop={!reactionUrl} onEnd={onReactionEnd} />
         : fallback
           ? <FacingMedia key={mediaKey} url={fallback} mediaType="image/png" name={name} onRatio={value => setRatio({ key: mediaKey, value })} />
-          : <div className="facing-blank-portrait"><UserRound size={64} strokeWidth={1} aria-hidden /></div>}
+          : !hideBlank && <div className="facing-blank-portrait"><UserRound size={64} strokeWidth={1} aria-hidden /></div>}
       {hasMedia && (!reaction || retainPoints) && points.map(point => <button type="button" key={point.id}
         aria-label={editing ? `调整${point.label}` : `触碰${point.label}`}
         className={editing ? "facing-point facing-point-edit" : "facing-point"}

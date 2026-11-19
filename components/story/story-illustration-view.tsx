@@ -8,7 +8,8 @@ import { loadMediaBlob } from "@/lib/media-cache-storage";
 import { resolveStoryIllustrationReferences } from "@/lib/story-illustration";
 import type { StoryIllustration, StoryIllustrationDetails } from "@/lib/story-storage";
 
-export function StoryIllustrationView({ leadId, illustration, pending, onRegenerate, selecting }: {
+export function StoryIllustrationView({ leadId, illustration, pending, onRegenerate, selecting, textOnly = false }: {
+  textOnly?: boolean;
   leadId: string;
   illustration?: StoryIllustration;
   pending: boolean;
@@ -50,9 +51,10 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
     setError("");
     setDraft({
       characterId: focusId,
+      referenceMode: textOnly ? "text" : original?.referenceMode,
       description: original?.description ?? "",
-      useCharacterReference: hasCharacterReference && (original?.useCharacterReference ?? true),
-      useUserReference: hasUserReference && (original?.useUserReference ?? false),
+      useCharacterReference: !textOnly && original?.referenceMode !== "text" && hasCharacterReference && (original?.useCharacterReference ?? true),
+      useUserReference: !textOnly && original?.referenceMode !== "text" && hasUserReference && (original?.useUserReference ?? false),
     });
   }
 
@@ -91,6 +93,7 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
     {draft && typeof document !== "undefined" && createPortal(<GeneratedImagePromptDialog
       value={draft.description}
       descriptionLabel="画面描述"
+      textOnly={draft.referenceMode === "text"}
       userReferenceLabel="使用用户参考图（用户出镜）"
       onChange={description => setDraft({ ...draft, description })}
       useReferenceImage={draft.useCharacterReference}

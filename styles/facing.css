@@ -234,3 +234,13 @@
 .facing-character-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .facing-error,.facing-global-error { font-size: 13px; color: var(--c-danger,#a33151); padding: 5px; overflow-wrap: anywhere; }
 .facing-global-error { position: absolute; z-index: 8; bottom: 6px; inset-inline: 12px; background: var(--facing-card); border-radius: 8px; }
+
+.facing-cast-picker { border: 0; padding: 0; margin: 18px 0; min-width: 0; }
+.facing-cast-picker legend { font-size: 14px; font-weight: 600; }
+.facing-cast-picker .facing-choices { max-height: 180px; overflow-y: auto; }
+.facing-cast-picker [aria-pressed="true"] { background: var(--primary, #67527b); color: white; }
+.facing-audio-nav { display: flex; justify-content: flex-end; margin-top: 4px; }
+.facing-audio-nav button { display: grid; place-items: center; width: 28px; height: 26px; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+.facing-audio-nav button:disabled { opacity: .3; cursor: default; }
+.facing-speaker-badge { align-self: flex-start; display: flex; align-items: center; gap: 8px; border-radius: 30px; padding: 5px 12px 5px 5px; margin-bottom: 8px; color: var(--facing-message-color); }
+.facing-speaker-badge img, .facing-speaker-badge > span { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: #eee4; }

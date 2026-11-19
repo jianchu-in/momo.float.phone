@@ -16,11 +16,12 @@ export function storyIllustrationSettingsForRound(settings: StoryIllustrationSet
 
 export function buildStoryIllustrationMessages(settings: StoryIllustrationSettings, characterId: string, participantIds?: string[]): LLMMessage[] {
   const ids = new Set([characterId, ...(participantIds ?? [])]);
-  const characters = loadCharacters().filter(character => ids.has(character.id)).map(({ id, name }) => ({ id, name }));
+  const characters = loadCharacters().filter(character => ids.has(character.id)).map(({ id, name, persona, personality }) => ({ id, name, persona, personality }));
   const instructions = [
     "【本轮剧情配图】先按原有格式输出正文、状态栏和摘要等内容。在全部正文及附属区块之后，仅追加一个 <story_illustration>...</story_illustration> 区块。区块内只放 JSON。画面描述与判定只放在区块内。",
     "从本轮正文选择一个实际发生的画面作为横向 4:3 插图，延续前情中的地点、衣着、光线和动作。没有合适画面就填 draw=false。",
     SCENE_IMAGE_COMPOSITION_GUIDANCE,
+    ids.size > 1 ? "多人剧情使用纯文字生图，不附任何角色或用户参考图。description 必须根据人设和当前正文交代画面中各人的外貌、衣着、所在位置、动作与朝向，让图像模型理解人物关系。按实际画面选择出镜人物，不强制所有人同时出镜。" : "",
     "character_id 从角色列表选择画面中的主要角色。description 写可见内容。镜头来自用户眼睛或只看到用户的手时填 user_visible=false；能看见用户本人可辨认的外貌时填 true。",
     settings.skipNsfw
       ? "rating 为 safe、nsfw 或 uncertain，判断最新正文中所选的实际画面。直观表现性行为、裸露私密部位或明显露骨色情为 nsfw，普通拥抱、牵手和非露骨的亲吻为 safe，无法判断为 uncertain。只有 safe 能填 draw=true；其他情况填 draw=false。"
@@ -59,8 +60,9 @@ export function readStoryIllustration(raw: string, settings: StoryIllustrationSe
   return { state: "failed", details: {
     description: plan.description.trim().slice(0, 3000),
     characterId: focusId,
-    useCharacterReference: true,
-    useUserReference: settings.includeUserReference === true && plan.user_visible === true && resolveStoryIllustrationReferences(characterId, focusId).hasUserReference,
+    referenceMode: ids.size > 1 ? "text" : undefined,
+    useCharacterReference: ids.size <= 1,
+    useUserReference: ids.size <= 1 && settings.includeUserReference === true && plan.user_visible === true && resolveStoryIllustrationReferences(characterId, focusId).hasUserReference,
   } };
 }
 
@@ -78,20 +80,22 @@ export function resolveStoryIllustrationReferences(leadId: string, characterId: 
 
 export async function generateStoryIllustrationImage(leadId: string, details: StoryIllustrationDetails, extraPrompt: string | undefined, signal: AbortSignal) {
   const { settings, user, hasCharacterReference, hasUserReference } = resolveStoryIllustrationReferences(leadId, details.characterId);
+  const characterReference = details.referenceMode !== "text" && details.useCharacterReference;
+  const userReference = details.referenceMode !== "text" && details.useUserReference;
   if (!settings.enabled) throw new Error("请先启用生图配置。");
-  if (details.useCharacterReference && !hasCharacterReference) throw new Error("请先为角色配置参考图，或取消使用角色参考图。");
-  if (details.useUserReference && !hasUserReference) throw new Error("请先配置用户参考图，或取消使用用户参考图。");
+  if (characterReference && !hasCharacterReference) throw new Error("请先为角色配置参考图，或取消使用角色参考图。");
+  if (userReference && !hasUserReference) throw new Error("请先配置用户参考图，或取消使用用户参考图。");
   const description = [
     "生成单幅 4:3 横向剧情插图。",
     SCENE_IMAGE_ORIENTATION_GUIDANCE,
-    details.useCharacterReference && details.useUserReference ? "用户与角色同时入镜时，分别使用各自的参考图。" : "",
+    characterReference && userReference ? "用户与角色同时入镜时，分别使用各自的参考图。" : "",
     details.description.trim(),
     extraPrompt?.trim() ? `【额外生图要求】${extraPrompt.trim()}` : "",
   ].filter(Boolean).join("\n");
   throwIfAborted(signal);
   const image = await generateImageFromConfiguredApi({
     characterId: details.characterId, appId: "story", description, settings,
-    referenceSelection: { character: details.useCharacterReference, user: details.useUserReference, identity: user },
+    referenceSelection: { character: characterReference, user: userReference, identity: user },
     landscapeOutput: true, signal,
   });
   if (!image) throw new Error("请检查剧情的生图配置。");

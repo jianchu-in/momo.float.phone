@@ -7,7 +7,7 @@ import { FacingMapSettings } from "./facing-map-panels";
 import { mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
+import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -113,7 +113,7 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
       <div className="facing-record-meta">{character.name} · {RECORD_TABS[record.type]} · {new Date(record.updatedAt).toLocaleString("zh-CN")}</div>
       <ol className="facing-turns">
         {record.turns.map(turn => <li key={turn.id} data-role={turn.role}>
-          <small>{turn.role === "assistant" ? character.name : "你"} · {turn.sceneName}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
+          <small>{turn.role === "assistant" ? turn.speakerName ?? character.name : "你"} · {turn.sceneName}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
           {turn.imageRef && <ShownImage mediaRef={turn.imageRef} className="facing-message-photo" />}
           {!!turn.touches?.length && <p className="facing-action">{turn.touches.map(part => `（触碰了${part}）`).join(" ")}</p>}
           {turn.action && <p className="facing-action">{turn.action}</p>}
@@ -397,6 +397,17 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       <label className="facing-opening-scene">开场场景<select value={openingScene} disabled={starting} onChange={event => setOpeningScene(event.target.value)}>
         {groups.length ? groups.map(group => <option key={group.name}>{group.name}</option>) : <option>{FACING_DEFAULT_SCENE}</option>}
       </select></label>
+      <fieldset className="facing-cast-picker" disabled={starting || !!draftMeeting?.parentId}>
+        <legend>在场角色 · 可多选</legend>
+        <p className="facing-hint">多人时随机选取部分角色接话，顺序随机。按各自绑定的语音依次播放。</p>
+        <div className="facing-choices">{characters.map(item => {
+          const checked = !!draftMeeting && facingParticipantIds(draftMeeting).includes(item.id);
+          return <button type="button" key={item.id} className="facing-small" aria-pressed={checked}
+            disabled={item.id === character?.id} onClick={() => setDraftMeeting(current => current ? { ...current,
+              participantIds: checked ? facingParticipantIds(current).filter(id => id !== item.id) : [...facingParticipantIds(current), item.id] } : current)}>
+            {item.name}{checked ? " ✓" : ""}</button>;
+        })}</div>
+      </fieldset>
       <button type="button" className="facing-primary" disabled={starting} onClick={() => void startMeeting()}>开始对话</button>
     </FacingSheet>}
     {error && <p className="facing-global-error" role="alert">{error}</p>}

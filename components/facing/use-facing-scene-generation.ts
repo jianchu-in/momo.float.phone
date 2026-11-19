@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { canIllustrateFacingScene, planFacingVisual, renderFacingVisual } from "@/lib/facing-scene-generation";
 import { applyFacingVisual, facingCompletedRounds, facingId, facingMediaType, facingVisualMatches,
@@ -24,10 +25,13 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
   }
 
   async function run(check: Check) {
-    const { meeting, character } = check;
+    const { meeting } = check;
+    const character = loadCharacters().find(item => item.id === meeting.turns.at(-1)?.speakerId) ?? check.character;
     const anchor = meeting.turns.at(-1);
     const current = loadFacingMeeting(meeting.id);
-    const settings = loadFacingSettings().characters[character.id];
+    const own = loadFacingSettings().characters[character.id];
+    const primary = loadFacingSettings().characters[meeting.characterId];
+    const settings = { ...own, autoVisual: { ...primary?.autoVisual, ...own?.autoVisual, enabled: primary?.autoVisual?.enabled } };
     if (!anchor || !current || !settings?.autoVisual?.enabled || !facingVisualMatches(current, anchor, "")) return;
     const job: Job = { controller: new AbortController() };
     jobs.current.set(meeting.id, job);
@@ -42,7 +46,8 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
       const plan = await planFacingVisual(character, meeting, groups, signal);
       const latest = loadFacingMeeting(meeting.id);
       if (!plan || signal.aborted || !latest || !facingVisualMatches(latest, anchor, "")) return;
-      const options = loadFacingSettings().characters[character.id]?.autoVisual;
+      const options = { ...loadFacingSettings().characters[meeting.characterId]?.autoVisual, ...loadFacingSettings().characters[character.id]?.autoVisual,
+        enabled: loadFacingSettings().characters[meeting.characterId]?.autoVisual?.enabled };
       if (!options?.enabled) return;
       const activityId = facingId();
       const currentAssets = loadFacingAssets(character.id);
@@ -51,7 +56,9 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
       if (!asset) {
         if (!plan.description) return;
         const group = groups.find(item => item.name === anchor.sceneName);
-        const base = group?.portrait?.composition === "full" ? group.portrait : group?.backdrop ?? group?.portrait;
+        const sharedGroup = groupFacingScenes(loadFacingAssets(meeting.characterId)).find(item => item.name === anchor.sceneName);
+        const base = (group?.portrait?.composition === "full" ? group.portrait : group?.backdrop ?? group?.portrait)
+          ?? sharedGroup?.portrait ?? sharedGroup?.backdrop;
         const activity = plan.mode === "hold" ? { id: activityId, label: plan.name, sceneName: anchor.sceneName } : undefined;
         update(meeting.id, { message: "画面生成中", activity });
         const result = await renderFacingVisual(plan, base, character, options, signal);
@@ -63,7 +70,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
         if (signal.aborted) return;
         onAssets(character.id, loadFacingAssets(character.id));
       }
-      if (!loadFacingSettings().characters[character.id]?.autoVisual?.enabled) return;
+      if (!loadFacingSettings().characters[meeting.characterId]?.autoVisual?.enabled) return;
       const saved = await applyFacingVisual(meeting.id, anchor, activityId, plan.location, asset, plan.mode);
       if (saved && !signal.aborted) onMeeting(saved);
     } catch (cause) {

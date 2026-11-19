@@ -16,6 +16,7 @@ export function GeneratedImagePromptDialog({
     onUseUserReferenceImageChange,
     hasUserReference,
     descriptionLabel,
+    textOnly = false,
     userReferenceLabel = "允许使用用户参考图（文字模型判断用户是否出镜）",
 }: {
     value: string;
@@ -31,6 +32,7 @@ export function GeneratedImagePromptDialog({
     onUseUserReferenceImageChange: (useRef: boolean) => void;
     hasUserReference: boolean;
     descriptionLabel?: string;
+    textOnly?: boolean;
     userReferenceLabel?: string;
 }) {
     const descriptionId = useId();
@@ -62,6 +64,7 @@ export function GeneratedImagePromptDialog({
                         placeholder="输入图片提示词"
                         disabled={busy}
                     />
+                    {textOnly ? <div className="chat-generated-image-prompt-empty-hint">多人剧情使用纯文字生图，不附参考图。</div> : <>
                     {hasReferenceImage ? (
                         <label className="chat-generated-image-prompt-check">
                             <input
@@ -88,6 +91,7 @@ export function GeneratedImagePromptDialog({
                     ) : (
                         <div className="chat-generated-image-prompt-empty-hint">当前用户身份未配置参考图</div>
                     )}
+                    </>}
                     {error && <div className="chat-generated-image-retry-error">{error}</div>}
                 </div>
                 <div className="modal-footer" data-ui="modal-footer">

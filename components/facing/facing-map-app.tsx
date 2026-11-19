@@ -12,7 +12,7 @@ import { getThemeAssetDataUrl } from "@/lib/theme-storage";
 import { answerMapInvitation, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap,
   type MapExtension, type MapPlan } from "@/lib/facing-map-engine";
 import { commitMapTile, createFacingAtlas, createMapInterior, loadFacingAtlases, loadFacingAtlas, loadMapPreferences,
-  mapPlace, mapPlacePath, mapRoute, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
+  mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
   type FacingAtlas, type MapPlace, type MapPoint, type MapPreferences, type MapTrip } from "@/lib/facing-map-storage";
 import { FacingMapCanvas } from "./facing-map-canvas";
 import { MapDimensions, MapSheet, MapExpansionPreview } from "./facing-map-panels";
@@ -187,7 +187,8 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
             const places = item.id !== page.id ? item.places : remove ? item.places.filter(place => place.id !== placeDraft.id) :
               item.places.some(place => place.id === placeDraft.id) ? item.places.map(place => place.id === placeDraft.id ? { ...placeDraft, name: placeDraft.name.trim() } : place)
               : [...item.places, { ...placeDraft, name: placeDraft.name.trim() }];
-            return { ...item, places, roads: item.roads.filter(road => !removed.has(road.from) && !removed.has(road.to)) };
+            return { ...item, places, entryPlaceId: item.entryPlaceId && removed.has(item.entryPlaceId) ? undefined : item.entryPlaceId,
+              roads: item.roads.filter(road => !removed.has(road.from) && !removed.has(road.to)) };
           }) };
       }));
       setSheet(null); if (remove) setSelectedId(undefined);
@@ -214,20 +215,18 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   }
   function beginTrip(characterIds: string[], placeId = selectedId, invited = false) {
     if (!atlas || !page || !placeId) return;
-    const destination = placeOnMapPage(atlas, placeId, page.id);
-    const source = userPlaceId ? placeOnMapPage(atlas, userPlaceId, page.id) : undefined;
-    const path = source && destination ? mapRoute(page, source.id, destination.id) : undefined;
+    const path = userPlaceId ? mapJourneyRoute(atlas, userPlaceId, placeId) : undefined;
     let disconnected = false;
-    const paths = path ? [{ points: path }, ...characterIds.map(id => {
+    const paths = path ? [{ segments: path }, ...characterIds.map(id => {
       const member = characters.find(item => item.id === id);
       const activity = snapshot?.entries.find(item => item.characterId === id);
-      const memberPlace = activity ? placeOnMapPage(atlas, activity.placeId, page.id) : source;
-      const memberPath = memberPlace && destination ? mapRoute(page, memberPlace.id, destination.id) : path;
+      const memberPath = activity ? mapJourneyRoute(atlas, activity.placeId, placeId) : path;
       if (!memberPath) disconnected = true;
-      return { character: member, points: memberPath ?? [] };
+      return { character: member, segments: memberPath ?? [] };
     })] : [];
-    if (settings.animation === "route" && (!path || disconnected)) { setError("当前位置到目的地尚未连通道路。请先设置我的位置和道路，或在动画设置中选择前往过场。"); return; }
+    if (settings.animation === "route" && (!path || disconnected)) { setError("当前位置到目的地尚未连通。请设置我的位置、内部地图的入口并画通道路，或选择前往过场。"); return; }
     setVisitId(facingId()); setProgress(0); setSheet(null);
+    if (settings.animation === "route" && path) { setPageId(path[0].pageId); setSelectedId(undefined); }
     setAnimation({ mode: settings.animation, trip: { placeId, characterIds, secret: !characterIds.length && secret,
       targetCharacterId: invited ? undefined : targetCharacter }, paths });
   }
@@ -259,6 +258,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   }
   const sceneTitle = page?.parentPlaceId && atlas ? mapPlacePath(atlas, page.parentPlaceId) : atlas?.name ?? "世界地图";
   const roadPoints = road && page ? [page.places.find(place => place.id === road.from)!, ...road.points].filter(Boolean) : undefined;
+  const animatedPaths = animation?.paths.flatMap(path => {
+    const frame = mapJourneyFrame(path.segments, progress);
+    return frame && frame.pageId === page?.id ? [{ character: path.character, points: frame.points, progress: frame.progress }] : [];
+  }) ?? [];
   return <section className="fmap-app">
     <header className="facing-header">
       <button type="button" className="facing-back" aria-label="返回" disabled={!!busy || !!animation} onClick={() => {
@@ -281,7 +284,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         <FacingMapCanvas atlas={atlas} page={page} characters={characters} snapshot={snapshot} selectedId={selectedId}
           userPlaceId={userPlaceId} userAvatar={identity?.avatarUrl} userName={identity?.name ?? "你"}
           editing={editing && !busy && !animation} road={roadPoints}
-          travel={animation?.mode === "route" ? { paths: animation.paths, progress, dashed: settings.line === "dashed" } : undefined}
+          travel={animation?.mode === "route" ? { paths: animatedPaths, dashed: settings.line === "dashed" } : undefined}
           onPlace={id => { if (!busy && !animation) void selectPlace(id); }} onPoint={point => { if (!busy && !animation) addPoint(point); }}
           onRoadMove={(index, point) => { if (road) setRoad({ ...road, points: road.points.map((value, position) => position === index ? point : value) }); }}
           onMove={(id, point) => void movePlace(id, point)} />
@@ -307,6 +310,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void interior()}>进入内部地图</button>
           <button type="button" className="facing-primary" disabled={!!busy} onClick={() => prepareTrip()}>前往这里</button>
           {editing && <>
+            {page.parentPlaceId && <button type="button" className="facing-small" disabled={!!busy}
+              aria-pressed={page.entryPlaceId === selected.id} onClick={() => void run("保存地图入口", async () => {
+                setAtlas(await saveMapPage(atlas.id, { ...page, entryPlaceId: selected.id }));
+              })}>{page.entryPlaceId === selected.id ? "当前地图入口" : "设为本地图入口"}</button>}
             <button type="button" className="facing-small" onClick={() => { setPlaceDraft({ ...selected }); setSheet("edit"); }}>编辑地点</button>
             <button type="button" className="facing-small" onClick={() => { setRoad({ from: selected.id, points: [] }); setSelectedId(undefined); }}>从这里画道路</button>
             <button type="button" className="facing-small" onClick={() => void run("设置当前位置", async () => {
@@ -329,7 +336,13 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         {snapshot && <small>{snapshotId ? "正在查看历史动向" : "最近刷新"} · {new Date(snapshot.createdAt).toLocaleString("zh-CN")}</small>}
       </footer>}
       {animation && <MapTravel animation={animation} duration={settings.duration} destination={mapPlacePath(atlas, animation.trip.placeId)}
-        characters={characters} userName={identity?.name ?? "你"} userAvatar={identity?.avatarUrl} onProgress={setProgress} onArrive={arrive} onCancel={() => setAnimation(undefined)} />}
+        characters={characters} userName={identity?.name ?? "你"} userAvatar={identity?.avatarUrl} onProgress={value => {
+          setProgress(value);
+          if (animation.mode === "route") {
+            const frame = mapJourneyFrame(animation.paths[0]?.segments ?? [], value);
+            if (frame && frame.pageId !== pageId) setPageId(frame.pageId);
+          }
+        }} onArrive={arrive} onCancel={() => setAnimation(undefined)} />}
     </> : <div className="facing-home-empty"><MapIcon size={42} /><p>为这个世界创建一张地图</p><button className="facing-primary" onClick={() => setSheet("create")}>创建地图</button></div>}
     {busy && <div className="fmap-busy" role="status">{busy}<button type="button" onClick={() => controller.current?.abort()}>停止</button></div>}
     {error && <p className="facing-error fmap-error" role="alert">{error}</p>}
@@ -407,6 +420,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     {sheet === "animation" && <MapSheet title="前往动画" onClose={closeSheet}>
       <label>动画方式<select value={settings.animation} onChange={event => setSettings({ ...settings, animation: event.target.value as MapPreferences["animation"] })}>
         <option value="car">地图虚化 · 前往过场</option><option value="route">沿已设道路移动</option></select></label>
+      <p className="fmap-note">跨层移动时，在内部地图的编辑模式里选一个地点设为入口，再画通入口到房间的道路。前往时会自动切换地图。</p>
       <label>路线样式<select value={settings.line} onChange={event => setSettings({ ...settings, line: event.target.value as MapPreferences["line"] })}>
         <option value="dashed">虚线</option><option value="solid">实线</option></select></label>
       <label>动画时长（秒）<input type="number" min={1} max={30} value={settings.duration} onChange={event => setSettings({ ...settings, duration: Math.max(1, Math.min(30, +event.target.value || 1)) })} /></label>

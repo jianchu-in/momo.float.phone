@@ -17,6 +17,7 @@ export function useStoryIllustrations(onChange: (sessionId: string) => void) {
     if (jobs.current.has(key)) throw new Error("本轮图片正在生成。");
     const session = loadStorySessions().find(item => item.id === message.sessionId);
     if (!session) throw new Error("找不到这段剧情。");
+    if (session.ownerType === "group") details = { ...details, referenceMode: "text", useCharacterReference: false, useUserReference: false };
     const version = storyReplyVersion(message);
     const job = new AbortController();
     jobs.current.set(key, job);

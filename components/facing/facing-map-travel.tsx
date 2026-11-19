@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Character } from "@/lib/character-types";
-import { type MapPoint, type MapTrip } from "@/lib/facing-map-storage";
+import { type MapRouteSegment, type MapTrip } from "@/lib/facing-map-storage";
 
 export type MapTravelAnimation = {
   trip: MapTrip;
   mode: "route" | "car";
-  paths: { character?: Character; points: MapPoint[] }[];
+  paths: { character?: Character; segments: MapRouteSegment[] }[];
 };
 export function MapTravel({ animation, duration, destination, characters, userAvatar, userName, onProgress, onArrive, onCancel }: {
   animation: MapTravelAnimation; duration: number; destination: string; characters: Character[]; userAvatar?: string; userName: string;

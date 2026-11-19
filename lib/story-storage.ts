@@ -533,6 +533,7 @@ export type StoryMessage = {
 };
 
 export type StoryIllustrationDetails = {
+  referenceMode?: "text";
   description: string;
   characterId: string;
   useCharacterReference: boolean;

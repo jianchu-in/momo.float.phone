@@ -9,7 +9,7 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
   onPlace, onPoint, onMove, onRoadMove }: {
   atlas: FacingAtlas; page: FacingMapPage; characters: Character[]; snapshot?: MapSnapshot; selectedId?: string;
   editing: boolean; road?: MapPoint[];
-  travel?: { paths: { character?: Character; points: MapPoint[] }[]; progress: number; dashed: boolean };
+  travel?: { paths: { character?: Character; points: MapPoint[]; progress: number }[]; dashed: boolean };
   userPlaceId?: string; userAvatar?: string; userName: string;
   onPlace: (id: string) => void; onPoint: (point: MapPoint) => void; onMove: (id: string, point: MapPoint) => void;
   onRoadMove?: (index: number, point: MapPoint) => void;
@@ -159,7 +159,7 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
               stroke="#5c785f" strokeWidth={2 / view.scale} />
             <rect x={place.x - Math.max(26, place.name.length * 6) / view.scale} y={place.y + 13 / view.scale}
               width={Math.max(52, place.name.length * 12) / view.scale} height={25 / view.scale} rx={10 / view.scale} fill="#ffffffed" />
-            <text x={place.x} y={place.y + 30 / view.scale} fontSize={12 / view.scale} fill="#26352b" textAnchor="middle">{place.name}</text>
+            <text x={place.x} y={place.y + 30 / view.scale} fontSize={12 / view.scale} fill="#26352b" textAnchor="middle">{place.name}{page.entryPlaceId === place.id ? " · 入口" : ""}</text>
             {!travel && members.length === 1 && avatar(place, members[0].avatar, members[0].name, members[0].id)}
             {!travel && members.length > 1 && <g transform={`translate(${place.x},${place.y - bubbleSize * 1.5})`}>
               <circle r={bubbleSize * .7} fill="white" /><text fontSize={14 / view.scale} fill="#405649" textAnchor="middle" dy=".35em">{members.length}人</text>
@@ -167,7 +167,7 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
           </g>;
         })}
         {!travel && userPlace && avatar({ x: userPlace.x + 30 / view.scale, y: userPlace.y }, userAvatar, userName, "user")}
-        {travel?.paths.map((path, index) => avatar(routePoint(path.points, travel.progress), path.character?.avatar ?? userAvatar,
+        {travel?.paths.map((path, index) => avatar(routePoint(path.points, path.progress), path.character?.avatar ?? userAvatar,
           path.character?.name ?? userName, `travel-${index}`, index))}
       </g>
     </svg>

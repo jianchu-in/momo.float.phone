@@ -7,12 +7,14 @@ import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
-import { appendFacingTurn, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, FACING_DEFAULT_APPEARANCE, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
+import { appendFacingTurn, appendFacingTurns, facingParticipantIds, loadFacingSettings, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, FACING_DEFAULT_APPEARANCE, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
-import { playAudioBlob, playAudioBlobViaMediaElement, resolveVoiceConfig, synthesizeSpeech, unlockAudioPlayback } from "@/lib/tts-service";
+import { unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingStage } from "./facing-stage";
 import { FacingMessage } from "./facing-message";
+import { useFacingSpeaker } from "./use-facing-speaker";
+import { useFacingSpeech } from "./use-facing-speech";
 import { useFacingViewportInset } from "./use-facing-viewport-inset";
 import { ShownImage } from "@/components/ui/shown-image";
 import { splitVisibleCallActions } from "@/lib/call-action-text";
@@ -38,9 +40,16 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   onSpeechInput: (mode: NonNullable<FacingCharacterSettings["speechInput"]>) => void;
 }) {
   const [reaction, setReaction] = useState<FacingAsset>();
-  const cast = loadCharacters().filter(item => meeting.mapContext?.participantIds.includes(item.id));
-  const castName = cast.length > 1 ? cast.map(item => item.name).join("、") : character.name;
   const [expiredVisual, setExpiredVisual] = useState<string>();
+  const cast = loadCharacters().filter(item => facingParticipantIds(meeting).includes(item.id));
+  const multi = cast.length > 1;
+  const [activeTurnId, setActiveTurnId] = useState<string>();
+  const [queuedIds, setQueuedIds] = useState<string[]>([]);
+  const activeTurn = meeting.turns.find(item => item.id === activeTurnId) ?? meeting.turns.slice().reverse().find(item => item.role === "assistant");
+  const speaker = cast.find(item => item.id === activeTurn?.speakerId) ?? character;
+  const speakerVisualId = activeTurn && meeting.visual && activeTurn.id === meeting.turns.at(-1)?.id && meeting.visual.sceneName === activeTurn.sceneName
+    && meeting.visual.activityId !== expiredVisual && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? meeting.visual.assetId : undefined;
+  const speakerVisual = useFacingSpeaker(speaker, activeTurn?.sceneName ?? position.sceneName, multi, speakerVisualId);
   const [draft, setDraft] = useState("");
   const [hidden, setHidden] = useState(false);
   const [photo, setPhoto] = useState<File>();
@@ -62,19 +71,18 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const [stopped, setStopped] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
-  const generationRequest = useRef<AbortController | null>(null);
   const recording = useRef<STTSession | null>(null);
   const interim = useRef("");
   const log = useRef<HTMLDivElement>(null);
   const followLog = useRef(true);
-  const playback = useRef<ReturnType<typeof playAudioBlobViaMediaElement> | null>(null);
-  const audioRequest = useRef(0);
   const iosDevice = useRef(isIOSDevice()).current;
   const cloudAvailable = !iosDevice && isCallRecordingSupported() && !!resolveCloudSttConfig(character.id);
   const browserAvailable = isBrowserSpeechRecognitionSupported();
   const useCloudStt = cloudAvailable && (settings.speechInput !== "browser" || !browserAvailable);
   const voiceOn = settings.voice !== false;
-  const points = settings.touch === false ? [] : settings.hotspots?.[portrait?.id ?? "avatar"] ?? [];
+  const speech = useFacingSpeech(iosDevice, voiceOn, onMeeting, setError);
+  const speakerSettings = multi ? loadFacingSettings().characters[speaker.id] ?? {} : settings;
+  const points = speakerSettings.touch === false ? [] : speakerSettings.hotspots?.[(multi ? speakerVisual.portrait?.id : portrait?.id) ?? "avatar"] ?? [];
   const failedTurn = meeting.turns.at(-1);
   const displayedVisual = settings.autoVisual?.enabled && meeting.visual?.sceneName === position.sceneName && meeting.visual.activityId !== expiredVisual
     && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? autoAsset : undefined;
@@ -84,13 +92,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   useEffect(() => {
     if (log.current && (followLog.current || failedTurn?.role === "user")) log.current.scrollTop = log.current.scrollHeight;
-  }, [failedTurn, generating, stopped, hidden, interimText, error]);
+  }, [failedTurn, generating, stopped, hidden, interimText, error, queuedIds.length]);
 
   useEffect(() => () => {
     controller.current?.abort();
     recording.current?.abort();
-    audioRequest.current++;
-    playback.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -106,40 +112,20 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     return () => window.clearTimeout(timer);
   }, [meeting.visual]);
 
-  useEffect(() => {
-    if (voiceOn) return;
-    audioRequest.current++;
-    playback.current?.abort();
-  }, [voiceOn]);
-
   function stopReaction() {
     setReaction(undefined);
   }
 
   function stopGeneration() {
-    const request = generationRequest.current;
-    if (!request || controller.current !== request) return;
-    generationRequest.current = null;
+    const request = controller.current;
+    if (!request) return;
     controller.current = null;
     request.abort();
+    speech.stop();
+    setQueuedIds([]);
     setGenerating(false);
     setBusy(false);
     setStopped(true);
-  }
-
-  async function speak(text: string, run: AbortSignal) {
-    if (!text || !voiceOn) return;
-    const voice = resolveVoiceConfig(character.id, "facing");
-    if (!voice) return;
-    const request = ++audioRequest.current;
-    try {
-      const audio = await synthesizeSpeech(text, voice);
-      if (!audio || audioRequest.current !== request || run.aborted) return;
-      playback.current = (iosDevice ? playAudioBlob : playAudioBlobViaMediaElement)(audio);
-      await playback.current.promise;
-    } catch {
-      if (audioRequest.current === request && !run.aborted) setError("角色语音播放失败，台词已保存。");
-    }
   }
 
   async function send(text: string, kind: FacingTurn["kind"], options?: {
@@ -149,8 +135,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     if ((!content && !options?.photo && !options?.touches?.length && !options?.retry) || controller.current) return;
     const run = new AbortController();
     controller.current = run;
-    audioRequest.current++;
-    playback.current?.abort();
+    speech.stop();
     unlockAudioPlayback();
     setBusy(true);
     setStopped(false);
@@ -175,32 +160,40 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       const activity = options?.retry || !settings.autoVisual?.enabled ? undefined : pendingActivity ?? existingActivity;
       const deferVisual = !options?.previous && end === current.turns.length - 1 && settings.autoVisual?.skipNsfw === true
         && shouldCheckFacingVisual(facingCompletedRounds(current) + 1, settings.autoVisual);
-      generationRequest.current = run;
       setGenerating(true);
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
-        signal: run.signal, retryInstruction: options?.instruction, visualActivity: activity?.label, deferVisual });
+        signal: run.signal, retryInstruction: options?.instruction, speakerId: options?.previous?.speakerId, visualActivity: activity?.label, deferVisual });
       if (run.signal.aborted) return;
-      generationRequest.current = null;
-      setGenerating(false);
-      const response: FacingTurn = {
-        ...(result.nextScene ? facingScenePosition(result.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
-        id: facingId(), role: "assistant", kind: "reply", text: result.dialogue, action: result.action,
-        at: new Date().toISOString(), replyTo: user.id, reactionId: result.reaction?.id, reactionName: result.reaction?.name,
-        visualContinuityId: deferVisual && existingActivity ? existingActivity.id : result.visualContinues ? activity?.id : undefined,
-      };
+      const responses: FacingTurn[] = result.replies.map(reply => ({
+        ...(reply.nextScene ? facingScenePosition(reply.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
+        id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action,
+        speakerId: reply.speakerId, speakerName: reply.speakerName,
+        at: new Date().toISOString(), replyTo: user.id, reactionId: reply.reaction?.id, reactionName: reply.reaction?.name,
+        visualContinuityId: deferVisual && existingActivity ? existingActivity.id : reply.visualContinues ? activity?.id : undefined,
+      }));
       const previous = options?.previous;
       const saved = previous ? await changeFacingTurns(current, turns => turns.map(turn => {
         if (turn.id !== previous.id) return turn;
+        const response = responses.find(item => item.speakerId === previous.speakerId) ?? responses[0];
         const versions = [...(turn.versions ?? [facingReplyVersion(turn)]), facingReplyVersion(response)];
         return { ...turn, ...facingReplyVersion(response), versions, versionIndex: versions.length - 1 };
-      })) : await appendFacingTurn(current, response);
+      })) : await appendFacingTurns(current, responses);
       if (run.signal.aborted) return;
+      const displayed = previous ? [saved.turns.find(item => item.id === previous.id)!] : responses.filter(item => saved.turns.some(turn => turn.id === item.id));
+      setQueuedIds(displayed.map(item => item.id));
       onMeeting(saved);
-      if (saved.turns.at(-1)?.id === (previous?.id ?? response.id)) {
-        setReaction(result.reaction);
-        void speak(result.dialogue, run.signal);
-        if (!previous) onCompleted(saved);
+      for (const response of displayed) {
+        if (run.signal.aborted) return;
+        setActiveTurnId(response.id);
+        setQueuedIds(ids => ids.filter(id => id !== response.id));
+        setReaction(result.replies.find(item => item.speakerId === response.speakerId)?.reaction);
+        const played = await speech.play(response, saved, run.signal);
+        if (!played && multi && !run.signal.aborted) await new Promise<void>(resolve => {
+          const done = () => { clearTimeout(timer); run.signal.removeEventListener("abort", done); resolve(); };
+          const timer = window.setTimeout(done, 650); run.signal.addEventListener("abort", done, { once: true });
+        });
       }
+      if (!run.signal.aborted && !previous) onCompleted(saved);
     } catch (cause) {
       if (!run.signal.aborted) {
         setError(cause instanceof Error ? cause.message : stored ? "角色回复失败。" : "消息保存失败，请重试。");
@@ -211,8 +204,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     } finally {
       if (controller.current === run) {
         controller.current = null;
-        generationRequest.current = null;
-        if (!run.signal.aborted) { setGenerating(false); setBusy(false); }
+        if (!run.signal.aborted) { setQueuedIds([]); setGenerating(false); setBusy(false); }
       }
     }
   }
@@ -239,6 +231,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   async function updateTurns(update: (turns: FacingTurn[]) => FacingTurn[]) {
     if (controller.current) return;
+    speech.stop();
     const operation = new AbortController();
     controller.current = operation;
     setBusy(true);
@@ -284,7 +277,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   const hold = useHoldToTalk({
     characterId: character.id, canStart: () => !controller.current,
-    onRecordingStart: () => { audioRequest.current++; playback.current?.abort(); setError(""); },
+    onRecordingStart: () => { speech.stop(); setError(""); },
     onTranscript: submitVoice,
     onError: message => {
       if (/^语音识别 API 错误 (401|403)\b|令牌无效|invalid (?:token|api[ _-]?key)/i.test(message)) {
@@ -303,8 +296,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   function toggleSpeechRecognition() {
     if (browserListening) { recording.current?.stop(); return; }
-    audioRequest.current++;
-    playback.current?.abort();
+    speech.stop();
     unlockAudioPlayback();
     setError("");
     interim.current = "";
@@ -355,15 +347,17 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (turn.id !== selectedMessage.id) return turn;
       const action = splitVisibleCallActions(actionDraft);
       const visibleAction = [...action.actions, ...(action.speech ? [`（${action.speech}）`] : [])].join(" ");
-      const updated = { ...turn, text: messageDraft.trim(), action: turn.role === "assistant" ? visibleAction || undefined : turn.action };
+      const updated = { ...turn, audioRef: undefined, text: messageDraft.trim(), action: turn.role === "assistant" ? visibleAction || undefined : turn.action };
       const versions = turn.versions?.map((version, index) => index === (turn.versionIndex ?? 0) ? facingReplyVersion(updated) : version);
       return { ...updated, versions };
     }));
     closeMenu();
   }
   return <section ref={roomRef} className="facing-room" style={roomStyle} aria-label={`与${character.name}见面`}>
-    <FacingStage portrait={portrait} scene={scene} reaction={reaction ?? displayedVisual} fallback={character.avatar}
-      name={character.name} points={busy || listening ? [] : points} onPoint={handleTouch}
+    <FacingStage portrait={multi ? speakerVisual.portrait : portrait} scene={multi ? speakerVisual.backdrop ?? (!speakerVisual.portrait && !speakerVisual.reference ? scene ?? portrait : undefined) : scene}
+      reaction={multi ? reaction ?? speakerVisual.reaction ?? (speaker.id === character.id ? displayedVisual : undefined) : reaction ?? displayedVisual}
+      fallback={multi ? speakerVisual.portrait ? undefined : speakerVisual.reference : character.avatar} hideBlank={multi} fullFallback={multi}
+      name={speaker.name} points={busy || listening ? [] : points} onPoint={handleTouch}
       retainPoints={!reaction && !!displayedVisual} onReactionEnd={stopReaction} />
     {touchEffect && <div key={touchEffect.id} className="facing-touch-feedback" style={{ left: touchEffect.x, top: touchEffect.y }} role="status">
       <span aria-hidden="true" /><small>你触碰了他的{touchEffect.label}</small>
@@ -386,15 +380,22 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       </div>
     </header>
     {!hidden && <div className="facing-room-bottom">
+      {multi && !speakerVisual.portrait && !speakerVisual.reference && <div className="facing-speaker-badge facing-glass" aria-label={`当前发言：${speaker.name}`}>
+        {speaker.avatar ? <img src={speaker.avatar} alt={speaker.name} /> : <span>{speaker.name.slice(0, 1)}</span>}<small>{speaker.name}</small>
+      </div>}
       {(meeting.turns.length > 0 || busy || error || interimText) && <div ref={log} className="facing-room-log" role="log"
         aria-label="对话记录" tabIndex={0} onScroll={event => {
           const area = event.currentTarget;
           followLog.current = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
         }}>
-        {meeting.turns.map(turn => <FacingMessage key={turn.id} turn={turn} characterName={castName} busy={busy || listening}
+        {meeting.turns.filter(turn => !queuedIds.includes(turn.id)).map(turn => <FacingMessage key={turn.id} turn={turn} characterName={turn.speakerName ?? character.name} busy={busy || listening}
+          playing={speech.playingId === turn.id} onReplay={() => {
+            if (speech.playingId === turn.id) speech.stop();
+            else { unlockAudioPlayback(); setActiveTurnId(turn.id); stopReaction(); void speech.play(turn, meeting, undefined, true); }
+          }}
           onMenu={() => { setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => changeVersion(turn, index)} />)}
         {interimText && <div className="facing-glass facing-message" data-role="user"><small>语音识别中</small><p>{interimText}</p></div>}
-        {generating && <div className="facing-glass facing-message facing-log-status">正在回应…</div>}
+        {generating && <div className="facing-glass facing-message facing-log-status">{speech.playingId ? "正在说话…" : queuedIds.length ? "准备下一位回应…" : "正在回应…"}</div>}
         {stopped && <div className="facing-glass facing-message facing-log-status" role="status">已停止生成</div>}
         {error && <p className="facing-glass facing-message facing-log-status" role="alert">{error}</p>}
         {!busy && !listening && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"

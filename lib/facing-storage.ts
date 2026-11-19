@@ -143,6 +143,9 @@ export type FacingTurn = {
   role: "user" | "assistant";
   kind: "text" | "voice" | "touch" | "reply";
   text: string;
+  speakerId?: string;
+  speakerName?: string;
+  audioRef?: string;
   action?: string;
   imageRef?: string;
   touches?: string[];
@@ -159,15 +162,15 @@ export type FacingTurn = {
   versionIndex?: number;
 };
 
-export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName" | "visualContinuityId">;
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName" | "visualContinuityId" | "speakerId" | "speakerName" | "audioRef">;
 
 export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
-  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId } = turn;
-  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId };
+  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, speakerId, speakerName, audioRef } = turn;
+  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, speakerId, speakerName, audioRef };
 }
 
 export function facingTurnText(turn: FacingTurn): string {
-  return [turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text,
+  return [turn.speakerName ? `【${turn.speakerName}】` : "", turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text,
     ...(turn.touches ?? []).map(part => `（触碰了${part}）`), turn.imageRef ? "（当面展示了一张图片）" : "", turn.action,
     turn.reactionName && !turn.text && !turn.action ? `（${turn.reactionName}）` : ""].filter(Boolean).join("\n");
 }
@@ -177,6 +180,7 @@ export type FacingMeeting = {
   type: "main" | "branch" | "independent";
   characterId: string;
   identityId: string | null;
+  participantIds?: string[];
   parentId?: string;
   title: string;
   createdAt: string;
@@ -190,7 +194,7 @@ export type FacingMeeting = {
 };
 
 export function facingCompletedRounds(meeting: FacingMeeting) {
-  return meeting.completedRounds ?? meeting.turns.filter(turn => turn.role === "assistant").length;
+  return meeting.completedRounds ?? new Set(meeting.turns.filter(turn => turn.role === "assistant").map(turn => turn.replyTo ?? turn.id)).size;
 }
 
 export function facingId() {
@@ -325,10 +329,10 @@ export async function deleteFacingAssets(characterId: string, assetIds: readonly
   await Promise.allSettled(Array.from(unusedMediaIds, deleteThemeAsset));
 }
 
-export function loadFacingMeetings(characterId: string, identityId?: string | null): FacingMeeting[] {
+export function loadFacingMeetings(characterId: string, identityId?: string | null, includeParticipants = false): FacingMeeting[] {
   return kvKeysWithPrefix(FACING_MEETING_PREFIX)
     .map(key => readJson<FacingMeeting | null>(kvGet(key), null))
-    .filter((record): record is FacingMeeting => !!record && record.characterId === characterId && (identityId === undefined || record.identityId === identityId))
+    .filter((record): record is FacingMeeting => !!record && (record.characterId === characterId || (includeParticipants && facingParticipantIds(record).includes(characterId))) && (identityId === undefined || record.identityId === identityId))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
@@ -349,7 +353,7 @@ export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, a
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
     const meeting = readJson<FacingMeeting | null>(raw, null);
     if (!meeting || !facingVisualMatches(meeting, anchor, activityId)) return raw ?? "null";
-    const assets = loadFacingAssets(meeting.characterId);
+    const assets = loadFacingAssets(anchor.speakerId ?? meeting.characterId);
     if (!assets.some(item => item.id === asset.id)) return raw!;
     if (mode === "scene") {
       const group = groupFacingScenes(assets).find(item => item.name === location);
@@ -390,6 +394,7 @@ export function createFacingMeeting(
   const now = new Date().toISOString();
   return {
     id: facingId(), characterId, identityId, type, createdAt: now, updatedAt: now,
+    participantIds: parent ? facingParticipantIds(parent) : [characterId],
     parentId: parent?.id, title: parent ? `分线 · ${parent.title}` : "", turns: parent?.turns.slice() ?? [], completedRounds: 0,
   };
 }
@@ -403,24 +408,39 @@ export async function saveFacingMeetingStart(meeting: FacingMeeting, scene: Faci
   return started;
 }
 
+export function facingParticipantIds(meeting: FacingMeeting): string[] {
+  return [...new Set(meeting.participantIds ?? meeting.mapContext?.participantIds ?? [meeting.characterId])];
+}
+
 export async function appendFacingTurn(meeting: FacingMeeting, turn: FacingTurn): Promise<FacingMeeting> {
+  return appendFacingTurns(meeting, [turn]);
+}
+
+/** Persist a whole reply round atomically; speakers share one user turn and one round. */
+export async function appendFacingTurns(meeting: FacingMeeting, incoming: FacingTurn[]): Promise<FacingMeeting> {
   let saved = meeting;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
     const current = readJson(raw, meeting);
-    if (current.turns.some(item => item.id === turn.id || (turn.replyTo && item.replyTo === turn.replyTo))) {
-      saved = current;
-    } else {
-      const turns = current.turns.slice();
+    const turns = current.turns.slice();
+    const rounds = new Set(current.turns.filter(item => item.role === "assistant").map(item => item.replyTo ?? item.id));
+    let addedRounds = 0;
+    for (const turn of incoming) {
+      if (turns.some(item => item.id === turn.id || (turn.replyTo && item.replyTo === turn.replyTo && item.speakerId === turn.speakerId))) continue;
       const replyIndex = turn.replyTo ? turns.findIndex(item => item.id === turn.replyTo) : -1;
-      if (replyIndex >= 0) turns.splice(replyIndex + 1, 0, turn);
-      else turns.push(turn);
-      const last = turns.at(-1)!;
-      const visual = current.visual && last.id === turn.id && turn.role === "assistant" && (current.visual.sceneName !== last.sceneName
-        || (current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
-      saved = { ...current, title: current.title || turn.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
-        visual, completedRounds: facingCompletedRounds(current) + Number(turn.role === "assistant"),
-        scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };
+      let insert = replyIndex + 1;
+      while (replyIndex >= 0 && insert < turns.length && turns[insert].replyTo === turn.replyTo) insert++;
+      if (replyIndex >= 0) turns.splice(insert, 0, turn); else turns.push(turn);
+      const round = turn.replyTo ?? turn.id;
+      if (turn.role === "assistant" && !rounds.has(round)) { rounds.add(round); addedRounds++; }
     }
+    const last = turns.at(-1);
+    const turn = incoming.at(-1);
+    if (!last || !turn) { saved = current; return JSON.stringify(saved); }
+    const visual = current.visual && last.id === turn.id && turn.role === "assistant" && (current.visual.sceneName !== last.sceneName
+      || (current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
+    saved = { ...current, title: current.title || incoming[0]?.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
+      visual, completedRounds: facingCompletedRounds(current) + addedRounds,
+      scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };
     return JSON.stringify(saved);
   });
   return saved;

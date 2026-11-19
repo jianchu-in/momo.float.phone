@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Volume2, Square } from "lucide-react";
 import { ShownImage } from "@/components/ui/shown-image";
 import type { FacingTurn } from "@/lib/facing-storage";
 
-export function FacingMessage({ turn, characterName, busy, onMenu, onVersion }: {
+export function FacingMessage({ turn, characterName, busy, onMenu, onVersion, playing, onReplay }: {
+  playing?: boolean; onReplay?: () => void;
   turn: FacingTurn; characterName: string; busy: boolean; onMenu: () => void; onVersion: (index: number) => void;
 }) {
   const press = useRef<{ x: number; y: number; timer: number } | undefined>(undefined);
@@ -34,6 +35,10 @@ export function FacingMessage({ turn, characterName, busy, onMenu, onVersion }: 
     {turn.text && <p>{turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text}</p>}
     {!turn.action && !turn.text && !turn.imageRef && !turn.touches?.length &&
       <p className="facing-action">{turn.reactionName ? `（${turn.reactionName}）` : `来到${turn.sceneName}`}</p>}
+    {turn.role === "assistant" && <div className="facing-audio-nav"><button type="button" aria-label={playing ? "停止播放语音" : "回放语音"}
+      title={turn.audioRef ? "播放已保存的语音" : "本条未保存语音"} disabled={!turn.audioRef || busy} onClick={onReplay}>
+      {playing ? <Square size={13} /> : <Volume2 size={15} />}
+    </button></div>}
     {count > 1 && <div className="facing-version-nav" aria-label="回复版本">
       <button type="button" aria-label="上一版回复" disabled={busy || version === 0} onClick={() => onVersion(version - 1)}><ChevronLeft size={15} /></button>
       <span>{version + 1} / {count}</span>
