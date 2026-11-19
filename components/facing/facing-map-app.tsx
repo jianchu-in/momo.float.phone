@@ -8,18 +8,24 @@ import { loadChatScope } from "@/lib/chat-scope-storage";
 import { facingId, type FacingMeeting } from "@/lib/facing-storage";
 import { loadWorldBooks, resolveUserIdentity, loadApiConfigs, loadBindingConfig, resolveBinding } from "@/lib/settings-storage";
 import { downloadFile } from "@/lib/download-utils";
-import { getThemeAssetDataUrl } from "@/lib/theme-storage";
-import { answerMapInvitation, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap,
+import { deleteThemeAsset, getThemeAssetDataUrl } from "@/lib/theme-storage";
+import { answerMapInvitation, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap, polishMapTilePlan,
   type MapExtension, type MapPlan } from "@/lib/facing-map-engine";
 import { commitMapTile, createFacingAtlas, createMapInterior, loadFacingAtlases, loadFacingAtlas, loadMapPreferences,
   mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
-  type FacingAtlas, type MapPlace, type MapPoint, type MapPreferences, type MapTrip } from "@/lib/facing-map-storage";
+  type FacingAtlas, type MapTile, type MapPlace, type MapPoint, type MapPreferences, type MapTrip } from "@/lib/facing-map-storage";
 import { FacingMapCanvas } from "./facing-map-canvas";
 import { MapDimensions, MapSheet, MapExpansionPreview } from "./facing-map-panels";
+import { editMapTile, replaceMapTile, removeMapTile, removeMapPlaces, placesForTile, tileForPlace } from "@/lib/facing-map-editing";
+import { exportMapPackage, readMapPackage, importMapPackage, installCustomMapTemplate, type MapPackage } from "@/lib/facing-map-transfer";
+import { MapTileSheet } from "./facing-map-tile-sheet";
+import { MapTransferSheet } from "./facing-map-transfer-sheet";
+import { MapTemplateSheet } from "./facing-map-template-sheet";
+import { installBuiltinMapTemplate, type MapTemplateTarget } from "@/lib/facing-map-templates";
 import { MapTravel, type MapTravelAnimation } from "./facing-map-travel";
 
-type Sheet = "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | null;
-type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension };
+type Sheet = "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | null;
+type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile };
 export function FacingMapApp({ character, characters, currentMeeting, onBack, onSettings, onArrive }: {
   character: Character; characters: Character[]; currentMeeting?: FacingMeeting;
   onBack: () => void; onSettings: () => void;
@@ -44,7 +50,12 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   const [candidate, setCandidate] = useState<MapCandidate>();
   const [placeDraft, setPlaceDraft] = useState<MapPlace>();
   const [editing, setEditing] = useState(false);
-  const [road, setRoad] = useState<{ from: string; points: MapPoint[]; replacingId?: string }>();
+  const [tileEditing, setTileEditing] = useState(false);
+  const [selectedTileId, setSelectedTileId] = useState<string>();
+  const [replacement, setReplacement] = useState<MapTile>();
+  const [referenceOriginal, setReferenceOriginal] = useState(true);
+  const [imported, setImported] = useState<MapPackage>();
+  const [importAsTemplate, setImportAsTemplate] = useState(false);
   const [companions, setCompanions] = useState<string[]>([]);
   const [targetCharacter, setTargetCharacter] = useState<string>();
   const [secret, setSecret] = useState(false);
@@ -87,6 +98,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   function toggle(list: string[], value: string) { return list.includes(value) ? list.filter(id => id !== value) : [...list, value]; }
   function openGenerate(direction?: MapExtension["direction"]) {
     if (!page) return;
+    setReplacement(undefined);
     setExtension(direction && page.tiles.length ? { direction, tile: mapBoundaryTile(page, direction) } : undefined);
     setPlan({ description: page.parentPlaceId ? `绘制「${page.name}」的内部平面图，保留清晰的房间、设施和通道。` : "", places: [] });
     setCandidate(undefined); setRequirement(""); setError("");
@@ -114,27 +126,51 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   async function generatePlan() {
     if (!atlas || !page) return;
     await run("正在生成文字方案…", async signal => {
-      const result = await planFacingMap(character, atlas, page, characters, requirement, settings, signal, extension);
+      const result = replacement ? await polishMapTilePlan(character, plan, requirement, settings, signal)
+        : await planFacingMap(character, atlas, page, characters, requirement, settings, signal, extension);
       setPlan(result); setCandidate(undefined);
     });
   }
   async function generateImage() {
+    if (replacement && (![replacement.width, replacement.height, replacement.x, replacement.y].every(Number.isFinite) || replacement.width <= 0 || replacement.height <= 0)) { setError("请填写有效的图块坐标和宽高。"); return; }
     if (!plan.description.trim() || !atlas || !page) { setError("请先生成或填写地图描述。"); return; }
     await run("正在生成地图图片…", async signal => {
       const savedPlan = { ...plan, places: plan.places.map(place => ({ ...place })) };
-      const result = await renderFacingMap(character, savedPlan, settings, signal, extension);
-      if (!signal.aborted) setCandidate({ blob: result.blob, url: URL.createObjectURL(result.blob), plan: savedPlan, extension });
+      const result = await renderFacingMap(character, savedPlan, settings, signal, extension, referenceOriginal ? replacement : undefined);
+      if (!signal.aborted) setCandidate({ blob: result.blob, url: URL.createObjectURL(result.blob), plan: savedPlan, extension, replacement });
+    });
+  }
+  async function saveTilePlan() {
+    if (!atlas || !page || !replacement || !plan.description.trim()) return;
+    await run("保存图块方案", async () => {
+      const tile = { ...replacement, description: plan.description };
+      const places = plan.places.map(place => ({ ...place, tileId: tile.id,
+        x: tile.x + place.x / 1000 * tile.width, y: tile.y + place.y / 1000 * tile.height }));
+      setAtlas(await replaceMapTile(atlas.id, page.id, tile, places));
+      setSheet(null); setCandidate(undefined);
     });
   }
   async function saveImage() {
     if (!atlas || !page || !candidate) return;
     await run("保存地图图片", async () => {
       const tile = await storeMapTile(candidate.blob, { x: 0, y: 0 });
-      const position = extensionPosition(candidate.extension?.tile, candidate.extension?.direction ?? "right", tile.width, tile.height);
-      Object.assign(tile, position);
-      const newPlaces = candidate.plan.places.map(place => ({ ...place, id: facingId(),
-        x: tile.x + place.x / 1000 * tile.width, y: tile.y + place.y / 1000 * tile.height }));
-      setAtlas(await commitMapTile(atlas.id, page.id, tile, newPlaces, candidate.plan.description));
+      tile.name = candidate.replacement?.name || `图块 ${page.tiles.length + 1}`;
+      tile.description = candidate.plan.description;
+      if (candidate.replacement) {
+        const previous = candidate.replacement;
+        tile.id = previous.id; tile.x = previous.x; tile.y = previous.y;
+        tile.width = previous.width; tile.height = previous.height;
+        const places = candidate.plan.places.map(place => ({ ...place, tileId: tile.id,
+          x: tile.x + place.x / 1000 * tile.width, y: tile.y + place.y / 1000 * tile.height }));
+        try {
+          setAtlas(await replaceMapTile(atlas.id, page.id, tile, places));
+        } catch (cause) { await deleteThemeAsset(tile.mediaId).catch(() => {}); throw cause; }
+      } else {
+        Object.assign(tile, extensionPosition(candidate.extension?.tile, candidate.extension?.direction ?? "right", tile.width, tile.height));
+        const newPlaces = candidate.plan.places.map(place => ({ ...place, id: facingId(), tileId: tile.id,
+          x: tile.x + place.x / 1000 * tile.width, y: tile.y + place.y / 1000 * tile.height }));
+        setAtlas(await commitMapTile(atlas.id, page.id, tile, newPlaces, candidate.plan.description));
+      }
       setSheet(null); setCandidate(undefined); setSelectedId(undefined);
     });
   }
@@ -142,54 +178,34 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     if (!atlas || !page) return;
     await run("保存原始地图", async () => {
       const tile = await storeMapTile(file, { x: 0, y: 0 });
+      tile.name = file.name;
       if (page.tiles.length) Object.assign(tile, extensionPosition(mapBoundaryTile(page, "right"), "right", tile.width, tile.height));
       setAtlas(await commitMapTile(atlas.id, page.id, tile, [], page.description));
       setSheet(null);
     });
   }
-  async function selectPlace(id: string) {
-    if (!atlas || !page) return;
-    if (road) {
-      if (road.from === id) { setError("请选择另一处地点作为道路终点。"); return; }
-      const saved = { ...page, roads: [...page.roads.filter(item => item.id !== road.replacingId),
-        { id: road.replacingId ?? facingId(), from: road.from, to: id, points: road.points }] };
-      await run("保存道路", async () => { setAtlas(await saveMapPage(atlas.id, saved)); setRoad(undefined); });
-    }
-    setSelectedId(id);
-  }
+  function selectPlace(id: string) { setSelectedId(id); }
   function addPoint(point: MapPoint) {
-    if (road) setRoad({ ...road, points: [...road.points, point] });
-    else if (editing) {
-      setPlaceDraft({ ...point, id: facingId(), name: "", description: "" }); setSheet("edit");
-    } else setSelectedId(undefined);
+    if (tileEditing) return;
+    if (editing) { setPlaceDraft({ ...point, id: facingId(), name: "", description: "", tileId: tileForPlace(page!, { ...point, id: "", name: "", description: "" })?.id }); setSheet("edit"); }
+    else setSelectedId(undefined);
   }
   async function movePlace(id: string, point: MapPoint) {
     if (!atlas || !page || busy) return;
     await run("保存位置", async () => {
       const fresh = loadFacingAtlas(atlas.id)?.pages.find(item => item.id === page.id) ?? page;
-      setAtlas(await saveMapPage(atlas.id, { ...fresh, places: fresh.places.map(place => place.id === id ? { ...place, ...point } : place) }));
+      setAtlas(await saveMapPage(atlas.id, { ...fresh, places: fresh.places.map(place => place.id === id ? { ...place, ...point, tileId: tileForPlace(fresh, { ...place, ...point, tileId: undefined })?.id } : place) }));
     });
   }
   async function savePlace(remove = false) {
     if (!atlas || !page || !placeDraft || (!remove && !placeDraft.name.trim())) return;
     await run("保存地点", async () => {
       setAtlas(await updateFacingAtlas(atlas.id, current => {
-        const removed = new Set(remove ? [placeDraft.id] : []);
-        if (remove) for (let previous = -1; previous !== removed.size;) {
-          previous = removed.size;
-          for (const interior of current.pages.filter(item => item.parentPlaceId && removed.has(item.parentPlaceId))) {
-            interior.places.forEach(place => removed.add(place.id));
-          }
-        }
-        return { ...current,
-          userPlaces: Object.fromEntries(Object.entries(current.userPlaces).filter(([, id]) => !removed.has(id))),
-          pages: current.pages.filter(item => !item.parentPlaceId || !removed.has(item.parentPlaceId)).map(item => {
-            const places = item.id !== page.id ? item.places : remove ? item.places.filter(place => place.id !== placeDraft.id) :
-              item.places.some(place => place.id === placeDraft.id) ? item.places.map(place => place.id === placeDraft.id ? { ...placeDraft, name: placeDraft.name.trim() } : place)
-              : [...item.places, { ...placeDraft, name: placeDraft.name.trim() }];
-            return { ...item, places, entryPlaceId: item.entryPlaceId && removed.has(item.entryPlaceId) ? undefined : item.entryPlaceId,
-              roads: item.roads.filter(road => !removed.has(road.from) && !removed.has(road.to)) };
-          }) };
+        if (remove) return removeMapPlaces(current, [placeDraft.id]);
+        return { ...current, pages: current.pages.map(item => item.id !== page.id ? item : { ...item,
+          places: item.places.some(place => place.id === placeDraft.id)
+            ? item.places.map(place => place.id === placeDraft.id ? { ...placeDraft, name: placeDraft.name.trim() } : place)
+            : [...item.places, { ...placeDraft, name: placeDraft.name.trim() }] }) };
       }));
       setSheet(null); if (remove) setSelectedId(undefined);
     });
@@ -199,6 +215,52 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     await run("打开内部地图", async () => {
       const saved = await createMapInterior(atlas.id, selected);
       setAtlas(saved); setPageId(saved.pages.find(item => item.parentPlaceId === selected.id)!.id); setSelectedId(undefined);
+    });
+  }
+  async function applyTemplate(id: string, target: MapTemplateTarget) {
+    if (!atlas) return;
+    await run("正在加入内置场所…", async signal => {
+      const saved = id.startsWith("custom:") ? await installCustomMapTemplate(atlas.id, id.slice(7), target, signal)
+        : await installBuiltinMapTemplate(atlas.id, id, target, signal);
+      setAtlas(saved.atlas); setPageId(saved.pageId); setSelectedId(undefined); setSheet(null);
+    });
+  }
+  function regenerate(tile: MapTile) {
+    if (!page) return;
+    setReplacement(tile); setExtension(undefined); setReferenceOriginal(true);
+    setPlan({ description: tile.description || page.description || `绘制「${tile.name || page.name}」的地图，保持原有建筑与房间布局。`,
+      places: placesForTile(page, tile.id).map(place => ({ ...place, x: (place.x - page.tiles.find(item => item.id === tile.id)!.x) / page.tiles.find(item => item.id === tile.id)!.width * 1000,
+        y: (place.y - page.tiles.find(item => item.id === tile.id)!.y) / page.tiles.find(item => item.id === tile.id)!.height * 1000 })) });
+    setSettings({ ...loadMapPreferences(), width: tile.pixelWidth, height: tile.pixelHeight });
+    setCandidate(undefined); setRequirement(""); setSheet("generate"); setError("");
+  }
+  async function saveTile(tile: MapTile, order?: "front" | "back") {
+    if (!atlas || !page) return;
+    await run("保存图块", async () => {
+      const saved = await editMapTile(atlas.id, page.id, tile, order);
+      setAtlas(saved); setSelectedTileId(tile.id); setSheet(null);
+    });
+  }
+  async function exportMap(place: boolean) {
+    if (!atlas) return;
+    await run("正在打包地图和原图…", async signal => {
+      const data = await exportMapPackage(atlas, signal, place ? selectedId : undefined);
+      await downloadFile(new Blob([JSON.stringify(data)], { type: "application/json" }), `${data.name.replace(/[\\/:*?"<>|]/g, "_")}-${place ? "场所模板" : "完整地图"}.json`);
+    });
+  }
+  async function readImport(file: File) {
+    setImported(undefined);
+    await run("正在读取地图文件…", async signal => {
+      const data = await readMapPackage(file, signal); setImported(data); setImportAsTemplate(data.kind !== "atlas");
+    });
+  }
+  async function importMap() {
+    if (!imported) return;
+    await run("正在导入地图和原图…", async signal => {
+      const result = await importMapPackage(imported, worldId, members.map(item => item.id), signal, importAsTemplate);
+      if (result.atlas) { setAtlas(result.atlas); setPageId(result.atlas.pages[0]?.id); setSelectedId(undefined); setSheet(null); }
+      else setSheet(atlas ? "templates" : null);
+      setImported(undefined);
     });
   }
   async function refresh() {
@@ -215,16 +277,12 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   }
   function beginTrip(characterIds: string[], placeId = selectedId, invited = false) {
     if (!atlas || !page || !placeId) return;
-    const path = userPlaceId ? mapJourneyRoute(atlas, userPlaceId, placeId) : undefined;
-    let disconnected = false;
+    const path = mapJourneyRoute(atlas, userPlaceId ?? "", placeId);
     const paths = path ? [{ segments: path }, ...characterIds.map(id => {
       const member = characters.find(item => item.id === id);
       const activity = snapshot?.entries.find(item => item.characterId === id);
-      const memberPath = activity ? mapJourneyRoute(atlas, activity.placeId, placeId) : path;
-      if (!memberPath) disconnected = true;
-      return { character: member, segments: memberPath ?? [] };
+      return { character: member, segments: activity ? mapJourneyRoute(atlas, activity.placeId, placeId) ?? path : path };
     })] : [];
-    if (settings.animation === "route" && (!path || disconnected)) { setError("当前位置到目的地尚未连通。请设置我的位置、内部地图的入口并画通道路，或选择前往过场。"); return; }
     setVisitId(facingId()); setProgress(0); setSheet(null);
     if (settings.animation === "route" && path) { setPageId(path[0].pageId); setSelectedId(undefined); }
     setAnimation({ mode: settings.animation, trip: { placeId, characterIds, secret: !characterIds.length && secret,
@@ -257,7 +315,6 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     await onArrive(loadFacingAtlas(atlas.id) ?? atlas, animation.trip, visitId);
   }
   const sceneTitle = page?.parentPlaceId && atlas ? mapPlacePath(atlas, page.parentPlaceId) : atlas?.name ?? "世界地图";
-  const roadPoints = road && page ? [page.places.find(place => place.id === road.from)!, ...road.points].filter(Boolean) : undefined;
   const animatedPaths = animation?.paths.flatMap(path => {
     const frame = mapJourneyFrame(path.segments, progress);
     return frame && frame.pageId === page?.id ? [{ character: path.character, points: frame.points, progress: frame.progress }] : [];
@@ -265,7 +322,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   return <section className="fmap-app">
     <header className="facing-header">
       <button type="button" className="facing-back" aria-label="返回" disabled={!!busy || !!animation} onClick={() => {
-        if (page?.parentPlaceId && atlas) { setPageId(mapPlace(atlas, page.parentPlaceId)?.page.id); setSelectedId(undefined); setRoad(undefined); }
+        if (page?.parentPlaceId && atlas) { setPageId(mapPlace(atlas, page.parentPlaceId)?.page.id); setSelectedId(undefined); }
         else onBack();
       }}><ChevronLeft size={22} /></button>
       <div className="fmap-heading"><h1>{sceneTitle}</h1><small>{world?.name ?? "当前世界"}</small></div>
@@ -275,24 +332,21 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <div className="fmap-toolbar">
         <select aria-label="选择地图" value={atlas.id} disabled={!!busy || !!animation} onChange={event => {
           const next = loadFacingAtlas(event.target.value);
-          if (next) { setAtlas(next); setPageId(next.pages[0]?.id); setSelectedId(undefined); setRoad(undefined); setSnapshotId(undefined); }
+          if (next) { setAtlas(next); setPageId(next.pages[0]?.id); setSelectedId(undefined); setSnapshotId(undefined); }
         }}>{loadFacingAtlases(worldId).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
         <button type="button" className="facing-small" disabled={!!busy || !!animation} onClick={() => setSheet("create")}><Plus size={14} />新建</button>
-        <button type="button" className="facing-small" disabled={!!busy || !!animation} onClick={() => setEditing(!editing)} aria-pressed={editing}>{editing ? "完成编辑" : "编辑地图"}</button>
+        <button type="button" className="facing-small" disabled={!!busy || !!animation} onClick={() => { setEditing(!editing); setTileEditing(false); }} aria-pressed={editing}>{editing ? "完成编辑" : "编辑地图"}</button>
       </div>
       <div className="fmap-stage" data-blurred={animation?.mode === "car" ? "true" : undefined}>
         <FacingMapCanvas atlas={atlas} page={page} characters={characters} snapshot={snapshot} selectedId={selectedId}
           userPlaceId={userPlaceId} userAvatar={identity?.avatarUrl} userName={identity?.name ?? "你"}
-          editing={editing && !busy && !animation} road={roadPoints}
+          editing={editing && !busy && !animation} tileEditing={tileEditing && !busy && !animation} selectedTileId={selectedTileId}
+          onTile={setSelectedTileId} onTileMove={(id, point) => { const tile = page.tiles.find(item => item.id === id); if (tile && !busy) void saveTile({ ...tile, ...point }); }}
           travel={animation?.mode === "route" ? { paths: animatedPaths, dashed: settings.line === "dashed" } : undefined}
           onPlace={id => { if (!busy && !animation) void selectPlace(id); }} onPoint={point => { if (!busy && !animation) addPoint(point); }}
-          onRoadMove={(index, point) => { if (road) setRoad({ ...road, points: road.points.map((value, position) => position === index ? point : value) }); }}
           onMove={(id, point) => void movePlace(id, point)} />
-      </div>
-      {road && <div className="fmap-road-hint">依次点道路转折点，再点终点保存。
-        <button type="button" onClick={() => setRoad({ ...road, points: road.points.slice(0, -1) })}>撤回一点</button>
-        <button type="button" onClick={() => setRoad(undefined)}>取消</button></div>}
-      {selected && !animation && <div className="fmap-detail">
+      {tileEditing && !animation && <div className="fmap-tile-tools"><span>拖动图块调整位置</span><button type="button" className="facing-small" onClick={() => setSheet("tiles")}>编辑所选图块</button><button type="button" className="facing-small" onClick={() => setTileEditing(false)}>完成移动</button></div>}
+      {selected && !tileEditing && !animation && <div className="fmap-detail">
         <div className="facing-row"><h2>{selected.name}</h2><button className="facing-icon" aria-label="关闭地点介绍" onClick={() => setSelectedId(undefined)}><X size={16} /></button></div>
         <p>{selected.description || "可以在编辑模式里补充地点介绍。"}</p>
         {selectedActivities.map(entry => {
@@ -308,27 +362,31 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         })}
         <div className="facing-choices">
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void interior()}>进入内部地图</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>套用场所模板</button>
           <button type="button" className="facing-primary" disabled={!!busy} onClick={() => prepareTrip()}>前往这里</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={() => void exportMap(true)}>导出此地点</button>
           {editing && <>
             {page.parentPlaceId && <button type="button" className="facing-small" disabled={!!busy}
               aria-pressed={page.entryPlaceId === selected.id} onClick={() => void run("保存地图入口", async () => {
                 setAtlas(await saveMapPage(atlas.id, { ...page, entryPlaceId: selected.id }));
               })}>{page.entryPlaceId === selected.id ? "当前地图入口" : "设为本地图入口"}</button>}
             <button type="button" className="facing-small" onClick={() => { setPlaceDraft({ ...selected }); setSheet("edit"); }}>编辑地点</button>
-            <button type="button" className="facing-small" onClick={() => { setRoad({ from: selected.id, points: [] }); setSelectedId(undefined); }}>从这里画道路</button>
             <button type="button" className="facing-small" onClick={() => void run("设置当前位置", async () => {
               setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, userPlaces: { ...current.userPlaces, [identityKey]: selected.id } })));
             })}>设为我的位置</button>
           </>}
         </div>
       </div>}
+      </div>
       {!animation && <footer className="fmap-footer">
         {editing && <p className="fmap-note">轻点空白处添加地点；拖动标记调整位置。</p>}
         <div className="facing-choices">
+          <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>详细场所模板</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => openGenerate()}>生成地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>参考资料</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => uploading.current?.click()}>上传图片</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("tiles")}>图块与扩展</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("transfer")}>导入 / 导出</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>前往动画</button>
           <button type="button" className="facing-small" disabled={!!busy || !page.places.length} onClick={() => void refresh()}><RefreshCw size={13} />刷新动向 · 文字API</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("history")}><History size={13} />历史</button>
@@ -343,7 +401,9 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
             if (frame && frame.pageId !== pageId) setPageId(frame.pageId);
           }
         }} onArrive={arrive} onCancel={() => setAnimation(undefined)} />}
-    </> : <div className="facing-home-empty"><MapIcon size={42} /><p>为这个世界创建一张地图</p><button className="facing-primary" onClick={() => setSheet("create")}>创建地图</button></div>}
+    </> : <div className="facing-home-empty"><MapIcon size={42} /><p>为这个世界创建一张地图</p><button className="facing-primary" onClick={() => setSheet("create")}>创建地图</button><button className="facing-small" onClick={() => setSheet("transfer")}>导入地图或模板</button></div>}
+    {sheet === "templates" && atlas && page && <MapTemplateSheet atlas={atlas} page={page} selectedId={selectedId} busy={!!busy}
+      onImport={() => setSheet("transfer")} onApply={(id, target) => void applyTemplate(id, target)} onClose={closeSheet} />}
     {busy && <div className="fmap-busy" role="status">{busy}<button type="button" onClick={() => controller.current?.abort()}>停止</button></div>}
     {error && <p className="facing-error fmap-error" role="alert">{error}</p>}
     <input ref={uploading} type="file" hidden accept="image/*" onChange={event => {
@@ -360,9 +420,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <p className="fmap-note">创建后可上传底图，或逐步生成文字方案和地图图片。</p>
       <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void (sheet === "create" ? create() : saveSources())}>{sheet === "create" ? "创建并打开" : "保存参考资料"}</button>
     </MapSheet>}
-    {sheet === "generate" && <MapSheet title={extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
+    {sheet === "generate" && <MapSheet title={replacement ? "升级图块与重新生图" : extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
+      <fieldset className="fmap-operation-fields" disabled={!!busy}>
       <label>补充要求<textarea aria-label="补充要求" value={requirement} onChange={event => setRequirement(event.target.value)} placeholder="描述这个世界的范围或想增加的区域。" /></label>
-      <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void generatePlan()}>生成文字方案 · {api?.defaultModel ?? "请配置文字API"}</button>
+      <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void generatePlan()}>{replacement ? "润色现有描述" : "生成文字方案"} · {api?.defaultModel ?? "请配置文字API"}</button>
       <label>地图画面描述<textarea aria-label="地图画面描述" className="fmap-description" value={plan.description} onChange={event => { setPlan({ ...plan, description: event.target.value }); setCandidate(undefined); }} /></label>
       <details><summary>地点清单与坐标（{plan.places.length}）</summary>
         <p className="fmap-note">坐标从0到1000，以本次生成图片的左上角为起点。</p>
@@ -380,14 +441,23 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         <button type="button" className="facing-small" onClick={() => { setPlan({ ...plan, places: [...plan.places, { id: facingId(), name: "新地点", description: "", x: 500, y: 500 }] }); setCandidate(undefined); }}>添加地点</button>
       </details>
       <MapDimensions value={settings} onChange={patch => { setSettings({ ...settings, ...patch }); setCandidate(undefined); }} />
+      {replacement && <>
+        <label className="fmap-check"><input type="checkbox" checked={referenceOriginal} disabled={!!busy} onChange={event => { setReferenceOriginal(event.target.checked); setCandidate(undefined); }} />使用当前图块原图作参考</label>
+        <div className="facing-pair"><label>替换后的地图宽度<input type="number" min={1} value={replacement.width} onChange={event => { setReplacement({ ...replacement, width: +event.target.value }); setCandidate(undefined); }} /></label>
+          <label>替换后的地图高度<input type="number" min={1} value={replacement.height} onChange={event => { setReplacement({ ...replacement, height: +event.target.value }); setCandidate(undefined); }} /></label></div>
+        <button type="button" className="facing-small" onClick={() => { setReplacement({ ...replacement, height: replacement.width * settings.height / settings.width }); setCandidate(undefined); }}>地图区域匹配图片比例</button>
+        <p className="fmap-note">先预览生成结果，保存后替换所选图块。保留地点ID和内部地图，地点随区域尺寸同步调整。</p>
+        <button type="button" className="facing-soft" disabled={!!busy || !plan.description.trim()} onClick={() => void saveTilePlan()}>保存描述、地点与区域</button>
+      </>}
       {extension && <p className="fmap-note">使用相邻图块的边缘作为参考。保存时保留原图；请预览道路与河流是否衔接。</p>}
       <button type="button" className="facing-primary" disabled={!!busy || !plan.description.trim()} onClick={() => void generateImage()}>确认生成地图 · 图片API</button>
       {candidate && <><img className="fmap-candidate" src={candidate.url} alt="地图候选图" />
         {candidate.extension && page && <MapExpansionPreview page={page} source={candidate.url} extension={candidate.extension} />}
-        <div className="facing-pair"><button type="button" className="facing-primary" disabled={!!busy} onClick={() => void saveImage()}>保存并加入地图</button>
+        <div className="facing-pair"><button type="button" className="facing-primary" disabled={!!busy} onClick={() => void saveImage()}>{candidate.replacement ? "保存并替换所选图块" : "保存并加入地图"}</button>
           <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void run("下载原图", () => downloadFile(candidate.blob, "地图原图." + (candidate.blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png")))}>下载原图</button></div>
       </>}
       {error && <p className="facing-error" role="alert">{error}</p>}
+      </fieldset>
     </MapSheet>}
     {sheet === "edit" && placeDraft && <MapSheet title="编辑地点" onClose={closeSheet}>
       <label>地点名称<input value={placeDraft.name} onChange={event => setPlaceDraft({ ...placeDraft, name: event.target.value })} /></label>
@@ -397,30 +467,23 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <button type="button" className="facing-primary" disabled={!!busy || !placeDraft.name.trim()} onClick={() => void savePlace()}>保存地点</button>
       {page?.places.some(place => place.id === placeDraft.id) && <button type="button" className="facing-link facing-delete" disabled={!!busy} onClick={() => void savePlace(true)}>删除地点及内部地图</button>}
     </MapSheet>}
-    {sheet === "tiles" && page && atlas && <MapSheet title="图块与扩展" onClose={closeSheet}>
-      <div className="facing-choices">{(["left", "right", "top", "bottom"] as const).map(direction => <button key={direction} type="button" className="facing-small"
-        disabled={!!busy || !page.tiles.length} onClick={() => openGenerate(direction)}>向{{ left: "左", right: "右", top: "上", bottom: "下" }[direction]}扩展</button>)}</div>
-      {page.tiles.map((tile, index) => <button key={tile.id} type="button" className="facing-soft" disabled={!!busy} onClick={() => void run("下载原图", async () => {
+    {sheet === "transfer" && <MapTransferSheet name={atlas?.name} selectedName={selected?.name} data={imported} asTemplate={importAsTemplate} busy={!!busy}
+      onTemplate={setImportAsTemplate} onFile={file => void readImport(file)} onImport={() => void importMap()} onExport={place => void exportMap(place)} onClose={closeSheet} />}
+    {sheet === "tiles" && page && atlas && <MapTileSheet page={page} selectedId={selectedTileId} busy={!!busy} onSelect={setSelectedTileId}
+      onSave={(tile, order) => void saveTile(tile, order)} onRemove={(id, removePlaces) => void run("删除图块", async () => {
+        setAtlas(await removeMapTile(atlas.id, page.id, id, removePlaces)); setSelectedTileId(undefined); setSelectedId(undefined); setSheet(null);
+      })} onRegenerate={regenerate} onDrag={id => { setSelectedTileId(id); setSelectedId(undefined); setEditing(false); setTileEditing(true); setSheet(null); }}
+      onDownload={tile => void run("下载原图", async () => {
         const url = await getThemeAssetDataUrl(tile.mediaId); if (!url) throw new Error("找不到原图。");
-        const blob = await (await fetch(url)).blob(); await downloadFile(blob, `地图图块-${index + 1}.${blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png"}`);
-      })}>图块 {index + 1} · {tile.pixelWidth} × {tile.pixelHeight} · 下载原图</button>)}
-      <button type="button" className="facing-soft" disabled={!!busy || !page.places.length || !page.tiles.length}
-        onClick={() => void run("正在识图校准地点…", async signal => {
-          const places = await calibrateFacingMap(character, page, signal);
-          setAtlas(await saveMapPage(atlas.id, { ...page, places })); setSheet(null);
-        })}>AI 校准地点 · 识图API</button>
-      {editing && page.roads.map((item, index) => <div className="facing-row" key={item.id}>
-        <span>道路 {index + 1} · {page.places.find(place => place.id === item.from)?.name} — {page.places.find(place => place.id === item.to)?.name}</span>
-        <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setRoad({ from: item.from, points: [...item.points], replacingId: item.id }); setSheet(null); }}>以此重画</button>
-        <button type="button" className="facing-small facing-delete" disabled={!!busy} onClick={() => void run("删除道路", async () =>
-          setAtlas(await saveMapPage(atlas.id, { ...page, roads: page.roads.filter(road => road.id !== item.id) })))}>删除</button>
-      </div>)}
-      {error && <p className="facing-error" role="alert">{error}</p>}
-    </MapSheet>}
+        const blob = await (await fetch(url)).blob(); await downloadFile(blob, `${tile.name || "地图图块"}.${blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png"}`);
+      })} onExpand={openGenerate} onCalibrate={() => void run("正在识图校准地点…", async signal => {
+        const places = await calibrateFacingMap(character, page, signal);
+        setAtlas(await saveMapPage(atlas.id, { ...page, places })); setSheet(null);
+      })} onClose={closeSheet} />}
     {sheet === "animation" && <MapSheet title="前往动画" onClose={closeSheet}>
       <label>动画方式<select value={settings.animation} onChange={event => setSettings({ ...settings, animation: event.target.value as MapPreferences["animation"] })}>
-        <option value="car">地图虚化 · 前往过场</option><option value="route">沿已设道路移动</option></select></label>
-      <p className="fmap-note">跨层移动时，在内部地图的编辑模式里选一个地点设为入口，再画通入口到房间的道路。前往时会自动切换地图。</p>
+        <option value="car">地图虚化 · 前往过场</option><option value="route">头像沿直线移动</option></select></label>
+      <p className="fmap-note">头像从当前位置沿直线前往目的地，无需设置道路。跨地图时自动衔接各地图的入口。</p>
       <label>路线样式<select value={settings.line} onChange={event => setSettings({ ...settings, line: event.target.value as MapPreferences["line"] })}>
         <option value="dashed">虚线</option><option value="solid">实线</option></select></label>
       <label>动画时长（秒）<input type="number" min={1} max={30} value={settings.duration} onChange={event => setSettings({ ...settings, duration: Math.max(1, Math.min(30, +event.target.value || 1)) })} /></label>

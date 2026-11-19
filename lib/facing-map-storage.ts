@@ -8,8 +8,8 @@ registerDynamicPrefix(MAP_PREFIX);
 registerKvMigration(FACING_MAP_SETTINGS_KEY);
 
 export type MapPoint = { x: number; y: number };
-export type MapPlace = MapPoint & { id: string; name: string; description: string };
-export type MapTile = MapPoint & { id: string; mediaId: string; width: number; height: number; pixelWidth: number; pixelHeight: number };
+export type MapPlace = MapPoint & { id: string; name: string; description: string; tileId?: string };
+export type MapTile = MapPoint & { id: string; mediaId: string; width: number; height: number; pixelWidth: number; pixelHeight: number; name?: string; description?: string };
 export type MapRoad = { id: string; from: string; to: string; points: MapPoint[] };
 export type FacingMapPage = {
   id: string;
@@ -19,6 +19,7 @@ export type FacingMapPage = {
   description: string;
   tiles: MapTile[];
   places: MapPlace[];
+  /** Retained for older backups; current travel uses straight lines. */
   roads: MapRoad[];
 };
 export type MapActivity = { characterId: string; placeId: string; activity: string; time: string };
@@ -39,7 +40,7 @@ export type MapPreferences = {
   descriptionPrompt: string; imagePrompt: string; width: number; height: number;
   animation: "route" | "car"; line: "solid" | "dashed"; duration: number;
 };
-const DEFAULTS: MapPreferences = { descriptionPrompt: "", imagePrompt: "", width: 1024, height: 1024, animation: "car", line: "dashed", duration: 4 };
+const DEFAULTS: MapPreferences = { descriptionPrompt: "", imagePrompt: "", width: 1024, height: 1024, animation: "route", line: "dashed", duration: 4 };
 function parse<T>(raw: string | null, fallback: T): T {
   try { return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
 }
@@ -67,10 +68,10 @@ export async function updateFacingAtlas(id: string, update: (atlas: FacingAtlas)
   });
   return result!;
 }
-export async function createFacingAtlas(worldId: string, name: string, characterIds: string[], worldBookIds: string[]) {
+export async function createFacingAtlas(worldId: string, name: string, characterIds: string[], worldBookIds: string[], pages?: FacingMapPage[]) {
   const now = new Date().toISOString();
   const atlas: FacingAtlas = { id: facingId(), worldId, name, characterIds, worldBookIds,
-    pages: [{ id: facingId(), name, description: "", tiles: [], places: [], roads: [] }],
+    pages: pages ?? [{ id: facingId(), name, description: "", tiles: [], places: [], roads: [] }],
     snapshots: [], invitations: [], visits: [], userPlaces: {}, createdAt: now, updatedAt: now };
   await kvUpdatePersisted(MAP_PREFIX + atlas.id, () => JSON.stringify(atlas));
   return atlas;
@@ -136,7 +137,7 @@ export async function commitMapTile(atlasId: string, pageId: string, tile: MapTi
   } catch (cause) { await deleteThemeAsset(tile.mediaId).catch(() => {}); throw cause; }
 }
 export function mapBounds(page: FacingMapPage) {
-  const points = [...page.places, ...page.roads.flatMap(road => road.points)];
+  const points = page.places;
   const left = Math.min(0, ...page.tiles.map(tile => tile.x), ...points.map(point => point.x - 60));
   const top = Math.min(0, ...page.tiles.map(tile => tile.y), ...points.map(point => point.y - 60));
   const right = Math.max(1000, ...page.tiles.map(tile => tile.x + tile.width), ...points.map(point => point.x + 60));
@@ -148,67 +149,48 @@ export function mapBoundaryTile(page: FacingMapPage, direction: "left" | "right"
   return [...page.tiles].sort((a, b) => edge(b) - edge(a))[0];
 }
 export type MapRouteSegment = { pageId: string; points: MapPoint[] };
-type RouteEdge = { from: string; to: string; points: MapPoint[]; pageId?: string };
-
 function routeLength(points: MapPoint[]) {
   return points.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - points[index].x, point.y - points[index].y), 0);
 }
-function shortestMapRoute(places: MapPlace[], edges: RouteEdge[], fromId: string, toId: string): RouteEdge[] | undefined {
-  if (!places.some(place => place.id === fromId) || !places.some(place => place.id === toId)) return;
-  const distance = new Map<string, number>([[fromId, 0]]);
-  const previous = new Map<string, RouteEdge>();
-  const remaining = new Set(places.map(place => place.id));
-  while (remaining.size) {
-    const next = [...remaining].sort((a, b) => (distance.get(a) ?? Infinity) - (distance.get(b) ?? Infinity))[0];
-    if (!Number.isFinite(distance.get(next))) break;
-    remaining.delete(next);
-    if (next === toId) {
-      const result: RouteEdge[] = [];
-      let current = toId;
-      while (previous.has(current)) {
-        const edge = previous.get(current)!;
-        result.unshift(edge); current = edge.from;
-      }
-      return result;
-    }
-    for (const original of edges.filter(edge => edge.from === next || edge.to === next)) {
-      const edge = original.from === next ? original : { ...original, from: original.to, to: original.from, points: [...original.points].reverse() };
-      if (!remaining.has(edge.to)) continue;
-      const candidate = distance.get(next)! + Math.max(1, routeLength(edge.points));
-      if (candidate < (distance.get(edge.to) ?? Infinity)) { distance.set(edge.to, candidate); previous.set(edge.to, edge); }
-    }
-  }
-}
-function mapRoadEdges(page: FacingMapPage): RouteEdge[] {
-  return page.roads.flatMap(road => {
-    const from = page.places.find(place => place.id === road.from), to = page.places.find(place => place.id === road.to);
-    return from && to ? [{ from: from.id, to: to.id, pageId: page.id, points: [from, ...road.points, to] }] : [];
-  });
-}
 export function mapRoute(page: FacingMapPage, fromId: string, toId: string): MapPoint[] | undefined {
-  const steps = shortestMapRoute(page.places, mapRoadEdges(page), fromId, toId);
-  if (!steps) return;
-  return steps.length ? steps.flatMap(step => step.points) : page.places.filter(place => place.id === fromId);
+  const from = page.places.find(place => place.id === fromId), to = page.places.find(place => place.id === toId);
+  return from && to ? [from, to] : undefined;
 }
+function mapEntry(page: FacingMapPage): MapPoint {
+  return page.places.find(place => place.id === page.entryPlaceId) ?? page.places[0] ?? { x: 500, y: 600 };
+}
+/** Straight movement on each displayed map. Legacy saved roads are not required or followed. */
 export function mapJourneyRoute(atlas: FacingAtlas, fromId: string, toId: string): MapRouteSegment[] | undefined {
+  const target = mapPlace(atlas, toId);
+  if (!target) return;
   const start = mapPlace(atlas, fromId);
-  if (!start) return;
-  const edges = atlas.pages.flatMap(mapRoadEdges);
-  for (const page of atlas.pages) {
-    const entrance = page.places.find(place => place.id === page.entryPlaceId);
-    const outside = page.parentPlaceId && mapPlace(atlas, page.parentPlaceId);
-    if (entrance && outside && outside.page.id !== page.id) edges.push({ from: outside.place.id, to: entrance.id, points: [] });
+  if (!start) return [{ pageId: target.page.id, points: [mapEntry(target.page), target.place] }];
+  function ancestors(page: FacingMapPage) {
+    const result: FacingMapPage[] = [];
+    const visited = new Set<string>();
+    let current: FacingMapPage | undefined = page;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id); result.push(current);
+      current = current.parentPlaceId ? mapPlace(atlas, current.parentPlaceId)?.page : undefined;
+    }
+    return result;
   }
-  const steps = shortestMapRoute(atlas.pages.flatMap(page => page.places), edges, fromId, toId);
-  if (!steps) return;
-  const segments: MapRouteSegment[] = [{ pageId: start.page.id, points: [start.place] }];
-  for (const edge of steps) {
-    const destination = mapPlace(atlas, edge.to)!;
-    const pageId = edge.pageId ?? destination.page.id;
-    const points = edge.pageId ? edge.points : [destination.place];
-    const last = segments.at(-1)!;
-    if (last.pageId === pageId) last.points.push(...points);
-    else segments.push({ pageId, points: [...points] });
+  const sourcePages = ancestors(start.page), targetPages = ancestors(target.page);
+  const common = sourcePages.find(page => targetPages.some(item => item.id === page.id));
+  if (!common) return [{ pageId: start.page.id, points: [start.place, mapEntry(start.page)] },
+    { pageId: target.page.id, points: [mapEntry(target.page), target.place] }];
+  const sourceIndex = sourcePages.findIndex(page => page.id === common.id), targetIndex = targetPages.findIndex(page => page.id === common.id);
+  const segments: MapRouteSegment[] = [];
+  let point: MapPoint = start.place;
+  for (const page of sourcePages.slice(0, sourceIndex)) {
+    segments.push({ pageId: page.id, points: [point, mapEntry(page)] });
+    point = mapPlace(atlas, page.parentPlaceId!)!.place;
+  }
+  const descending = targetPages.slice(0, targetIndex).reverse();
+  segments.push({ pageId: common.id, points: [point, descending.length ? mapPlace(atlas, descending[0].parentPlaceId!)!.place : target.place] });
+  for (let index = 0; index < descending.length; index++) {
+    const page = descending[index], next = descending[index + 1];
+    segments.push({ pageId: page.id, points: [mapEntry(page), next ? mapPlace(atlas, next.parentPlaceId!)!.place : target.place] });
   }
   return segments;
 }

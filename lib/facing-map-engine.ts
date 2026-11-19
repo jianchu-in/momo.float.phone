@@ -58,7 +58,7 @@ export async function planFacingMap(lead: Character, atlas: FacingAtlas, page: F
   };
   const raw = await request(lead, [
     "根据用户选中的世界书、角色与要求，规划一张可交互地图。只返回 JSON，description 是给图片模型的完整地图绘图提示词，places 是地点列表。",
-    "图片采用简洁的半俯视地图插画，保持空间结构清楚，提供地点的可见建筑或房间。道路连接由用户后续手动绘制。图片里不画角色头像、文字标签、按钮或UI。",
+    "图片采用简洁的半俯视地图插画，保持空间结构清楚，提供地点的可见建筑或房间以及自然相连的通道。前往时程序直接连接起终点。图片里不画角色头像、文字标签、按钮或UI。",
     page.parentPlaceId ? "这是一个地点的内部平面图，规划房间、设施或楼层区域，保留门与走廊的空间。" : "这是一个世界的局部活动地图，依据人物设定组织住所、工作地和常去地点。",
     extension ? "只规划新增的区域与新地点，在指定边缘延续现有道路、河流和地图视觉风格。" : "",
     "每个地点提供 name、description、x、y。坐标相对于本次生成图片归一化到0至1000，左上为(0,0)，右下为(1000,1000)。在description里说明建筑或房间布局与对应坐标。",
@@ -87,7 +87,18 @@ export function extensionPosition(tile: MapTile | undefined, direction: MapExten
   return { x: tile.x + (direction === "right" ? tile.width * .82 : direction === "left" ? -width + tile.width * .18 : 0),
     y: tile.y + (direction === "bottom" ? tile.height * .82 : direction === "top" ? -height + tile.height * .18 : 0) };
 }
-export async function renderFacingMap(lead: Character, plan: MapPlan, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension) {
+export async function polishMapTilePlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal): Promise<MapPlan> {
+  const raw = await request(lead, [
+    "根据用户要求润色已有地图的画面描述与地点介绍。保持原有地点ID和坐标，不增删地点，补足建筑、房间、材质、光线、空间布局和通道细节。只返回JSON。",
+    '返回 {"description":"完整的地图绘图描述","places":[{"id":"原ID","description":"润色后的地点介绍"}]}。',
+  ].join("\n"), JSON.stringify({ 原方案: plan, 用户要求: requirement, 额外提示词: preferences.descriptionPrompt, 宽高: [preferences.width, preferences.height] }), signal);
+  const data = object(JSON.parse(jsonrepair(raw)));
+  if (!text(data.description)) throw new Error("未返回有效的地图描述，请重试。");
+  const places = Array.isArray(data.places) ? data.places.map(object) : [];
+  return { description: text(data.description), places: plan.places.map(place => ({ ...place,
+    description: text(places.find(item => item.id === place.id)?.description) || place.description })) };
+}
+export async function renderFacingMap(lead: Character, plan: MapPlan, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension, referenceTile?: MapTile) {
   const configured = resolveConfiguredImageGenerationSettings(lead.id, "facing");
   const width = preferences.width, height = preferences.height;
   if (![width, height].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("请填写有效的图片宽高。");
@@ -95,17 +106,20 @@ export async function renderFacingMap(lead: Character, plan: MapPlan, preference
   const settings = { ...configured, size: `${width}x${height}`, openaiPresets: selected
     ? [{ ...selected, size: `${width}x${height}` }] : undefined };
   if (settings.provider === "novelai") {
-    if (extension) throw new Error("地图扩展需要支持参考图的生图接口，请切换面对面的生图配置。");
+    if (extension || referenceTile) throw new Error("地图扩展或参考原图重生需要支持参考图的生图接口，请切换面对面的生图配置。");
     if (!isNovelAiResolution(settings.size)) throw new Error("这个尺寸不受当前 NovelAI 配置支持，请修改宽高。");
     const novel = configured.novelai;
     if (novel) settings.novelai = { ...novel, presets: novel.presets.map(preset => ({ ...preset, resolution: settings.size })) };
   }
   const edge = extension?.tile ? await mapTileReference(extension.tile, extension.direction) : undefined;
+  const original = referenceTile ? await getThemeAssetDataUrl(referenceTile.mediaId) : undefined;
+  if (referenceTile && !original) throw new Error("原图读取失败，请关闭参考原图后重试。");
   const result = await generateImageFromConfiguredApi({ characterId: lead.id, appId: "facing", settings,
     description: [plan.description, "只画地图底图，地点名称、头像与UI由程序叠加。",
       extension ? `本图向原地图的${{ left: "左", right: "右", top: "上", bottom: "下" }[extension.direction]}侧扩展；参考图是原图相邻边缘，请在新图对应边缘保留18%的衔接画面，续接道路、河流、建筑尺度与光线。` : "",
+      referenceTile ? "参考图是正在修改的地图图块。按新描述更新这块地图，保留原有布局、建筑身份及空间关系，适应新的宽高比例。" : "",
       preferences.imagePrompt].filter(Boolean).join("\n"),
-    explicitReferenceImage: edge,
+    explicitReferenceImage: edge ?? original ?? undefined,
     referenceSelection: settings.provider === "novelai" ? undefined : { character: false, user: false },
     signal });
   if (!result) throw new Error("请先启用并配置面对面的生图 API。");
