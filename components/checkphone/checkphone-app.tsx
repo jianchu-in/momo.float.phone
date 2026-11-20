@@ -4,6 +4,7 @@ import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { reverseScope } from "@/lib/reverse-phone-storage";
+import { ReversePhoneLayer } from "./reverse-phone-layer";
 const ReversePhoneApp = dynamic(() => import("./reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
 import {
   AtSign,
@@ -665,7 +666,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   });
 
   // STAGE 2: PURE FULLSCREEN IMMERSIVE SIMULATOR
-  if (ownPhone) return <ReversePhoneApp onClose={() => setOwnPhone(false)} />;
+  if (ownPhone) return <ReversePhoneLayer><ReversePhoneApp onClose={() => setOwnPhone(false)} /></ReversePhoneLayer>;
   if (activeCharacter) {
     return (
       <div className="cp-fullscreen-simulator">

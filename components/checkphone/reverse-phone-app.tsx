@@ -57,9 +57,9 @@ function InspectionPage({ screen, scope, characterId, onBack, onScreen }: { scre
   </section>;
 }
 
-export function ReversePhoneApp({ initialCharacterId, inviteSessionId, resumeSessionId, onClose }: { initialCharacterId?: string; inviteSessionId?: string; resumeSessionId?: string; onClose: () => void }) {
+export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoContinue = false, onClose }: { initialCharacterId?: string; resumeSessionId?: string; autoContinue?: boolean; onClose: () => void }) {
   const [scope] = useState(reverseScope), host = useRef<HTMLDivElement>(null);
-  const run = useReversePhone(scope, host, initialCharacterId, inviteSessionId, resumeSessionId);
+  const run = useReversePhone(scope, host, initialCharacterId, undefined, resumeSessionId, { autoContinue });
   const [panel, setPanel] = useState<"settings" | "browser" | "history" | null>(null);
   const [theme] = useState(readThemeProfile), [assets, setAssets] = useState<Record<string, string>>({});
   const characters = loadCharacters(), character = characters.find(item => item.id === (run.running ? run.session?.characterId : run.characterId));
@@ -68,6 +68,7 @@ export function ReversePhoneApp({ initialCharacterId, inviteSessionId, resumeSes
   useEffect(() => { let live = true; void getThemeAssetMap([theme.wallpaperAssetId, ...Object.values(theme.iconSkins)].filter((id): id is string => !!id)).then(value => { if (live) setAssets(value); }); return () => { live = false; }; }, [theme]);
   useEffect(() => { if (!run.toast) return; const timer = setTimeout(() => run.setToast(""), 2600); return () => clearTimeout(timer); }, [run.toast]);
   async function close() { await run.stop(); onClose(); }
+  async function openPanel(value: "settings" | "history") { if (run.running) await run.stop(); setPanel(value); }
   const back = () => run.setScreen({ app: "desktop" });
   const resumable = run.session && ["paused", "running"].includes(run.session.status) && !run.running;
   return <div className="rp-app" aria-label="我的手机 · 反查岗">
@@ -75,7 +76,7 @@ export function ReversePhoneApp({ initialCharacterId, inviteSessionId, resumeSes
       : panel === "browser" ? <UserBrowser scope={scope} initialCharacterId={run.characterId} onClose={() => setPanel(null)} onSettings={() => setPanel("settings")} />
         : panel === "history" ? <section className="rp-panel"><header className="rp-header"><button onClick={() => setPanel(null)}>返回</button><h2>查手机记录</h2><span /></header><main className="rp-scroll">{!records.length && <p className="rp-empty">还没有查岗记录</p>}{records.map(record => <details className="rp-card" key={record.id}><summary>{record.characterName} · {new Date(record.createdAt).toLocaleString("zh-CN")}<small>{({ running: "已暂停，可继续", paused: "已暂停，可继续", stopped: "已结束", completed: "已完成" })[record.status]}</small></summary>{record.events.map(event => <p key={event.id}>{event.text}</p>)}{["running", "paused"].includes(record.status) && <button onClick={() => { void run.restore(record.id); setPanel(null); }}>恢复这次查岗</button>}</details>)}</main></section>
           : <>
-            <header className="rp-top"><button disabled={run.running} onClick={() => void close()} aria-label="关闭我的手机"><ChevronLeft size={20} /></button><span>{run.running ? `${character?.name ?? "Ta"}正在查岗` : "我的手机"}</span><div><button disabled={run.running} onClick={() => setPanel("history")} aria-label="查手机记录"><History size={18} /></button><button disabled={run.running} onClick={() => setPanel("settings")} aria-label="反查岗设置"><Settings size={18} /></button></div></header>
+            <header className="rp-top"><button onClick={() => void close()} aria-label="关闭我的手机"><ChevronLeft size={20} /></button><span>{run.running ? `${character?.name ?? "Ta"}正在查岗` : "我的手机"}</span><div><button onClick={() => void openPanel("history")} aria-label="查手机记录"><History size={18} /></button><button onClick={() => void openPanel("settings")} aria-label="反查岗设置" title={run.running ? "结束查岗并打开设置" : "反查岗设置"}><Settings size={18} /></button></div></header>
             <div ref={host} className={`rp-stage ${run.screen.app === "desktop" ? "is-desktop" : ""}`}>
               <div className="rp-phone-content" inert={run.running || !!resumable}>
                 {run.screen.app === "desktop" ? <div className="rp-desktop">

@@ -14,7 +14,10 @@ import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import dynamic from "next/dynamic";
 import { REVERSE_OPEN_EVENT, type ReverseChatControl } from "@/lib/reverse-phone-types";
+import { loadReverseSession } from "@/lib/reverse-phone-storage";
+import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
 const ReversePhoneApp = dynamic(() => import("@/components/checkphone/reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
+const ReversePhoneInvitation = dynamic(() => import("@/components/checkphone/reverse-phone-invitation").then(module => module.ReversePhoneInvitation), { ssr: false });
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
 import { StickerSearchSuggest } from "./sticker-search-suggest";
 import { StateValuesPanel } from "./state-values-panel";
@@ -1128,11 +1131,16 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
 }));
 
 export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contactCallRequest, onContactCallHandled, inspection }: ChatRoomProps) {
-    const [reversePhone, setReversePhone] = useState<{ resumeId?: string } | null>(null);
+    const [reversePhone, setReversePhone] = useState<{ resumeId?: string; autoContinue?: boolean } | null>(null);
+    const [reverseInvitation, setReverseInvitation] = useState<{ resumeId?: string } | null>(null);
     useEffect(() => {
         if (inspection) return;
         const open = (event: Event) => { const detail = (event as CustomEvent<{ sessionId: string; resumeId?: string }>).detail;
-            if (detail?.sessionId === session.id) setReversePhone({ resumeId: detail.resumeId }); };
+            if (detail?.sessionId !== session.id || !detail.resumeId) return;
+            const record = loadReverseSession(detail.resumeId);
+            if (!record || record.inviteSessionId !== session.id) return;
+            if (record.accepted === true) setReversePhone({ resumeId: record.id });
+            else if (record.status !== "stopped" && record.accepted !== false) setReverseInvitation({ resumeId: record.id }); };
         window.addEventListener(REVERSE_OPEN_EVENT, open);
         return () => window.removeEventListener(REVERSE_OPEN_EVENT, open);
     }, [session.id, !!inspection]);
@@ -3438,7 +3446,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         onDecline,
         retryInstruction,
     }: ManagedGenerationOptions) => {
-        if (inspection || reversePhone) return;
+        if (inspection || reversePhone || reverseInvitation) return;
         if (isGeneratingRef.current) {
             if (activeGenerationRuns.has(session.id)) return;
             // 上一轮被外部取消/顶替后收尾提前返回过，标记已是陈旧状态：复位后继续本次请求
@@ -3814,7 +3822,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     };
 
     const triggerAIResponse = async () => {
-        if (inspection || reversePhone) return;
+        if (inspection || reversePhone || reverseInvitation) return;
         if (isGeneratingRef.current) {
             if (activeGenerationRuns.has(session.id)) return;
             // 上一轮被外部取消/顶替后收尾提前返回过，标记已是陈旧状态：复位后继续本次请求
@@ -4172,7 +4180,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     // 收起键盘（或关掉表情/加号面板）并安静 N 秒后自动触发回复，
     // 等价于替用户点一次「触发回复」。判定全在 hook 内部，配置关掉后与手动模式一致。
     useKeyboardDismissAutoSend(wrapperRef, {
-        active: !inspection && !reversePhone && !offlineMode && !isMultiSelectMode,
+        active: !inspection && !reversePhone && !reverseInvitation && !offlineMode && !isMultiSelectMode,
         pending: pendingGenerate,
         generating: isGenerating,
         panelOpen: showEmojiPanel || showStickerPanel || showPlusMenu,
@@ -6750,6 +6758,8 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     </button>
                 </div>
             )}
+            {reverseInvitation && !inspection && <ReversePhoneInvitation key={reverseInvitation.resumeId ?? "new-invitation"} characterId={session.contactId} chatSessionId={session.id} resumeSessionId={reverseInvitation.resumeId}
+                onAccepted={resumeId => { setReverseInvitation(null); setReversePhone({ resumeId, autoContinue: true }); }} onClose={() => setReverseInvitation(null)} />}
             {inspection ? <div className="chat-input-bar rp-chat-draft" data-reverse-target="draft">
                 <span>{inspection.typing ? "他正在打字中" : "手机正在被他控制～"}</span>
                 <textarea aria-label="角色代回复内容" value={inspection.draft ?? ""} readOnly />
@@ -6798,7 +6808,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 onOpenCustomPlusAction={handleOpenCustomPlusAction}
                 onStartVideoCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVideoCall(true); }}
                 onStartVoiceCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVoiceCall(true); }}
-                onReversePhone={() => { cancelFollowUp(session.id); clearStuckGeneration(); setShowPlusMenu(false); setReversePhone({}); }}
+                onReversePhone={() => { cancelFollowUp(session.id); clearStuckGeneration(); setShowPlusMenu(false); if (!reverseInvitation) setReverseInvitation({}); }}
                 onSendText={handleSendText}
                 onStopGeneration={clearStuckGeneration}
                 onTriggerAIResponse={triggerAIResponse}
@@ -6867,7 +6877,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 wrapperRef.current.parentElement
             )}
 
-            {reversePhone && !inspection && <div className="rp-external-layer"><ReversePhoneApp initialCharacterId={session.contactId} inviteSessionId={session.id} resumeSessionId={reversePhone.resumeId} onClose={() => setReversePhone(null)} /></div>}
+            {reversePhone && !inspection && <ReversePhoneLayer><ReversePhoneApp initialCharacterId={session.contactId} resumeSessionId={reversePhone.resumeId} autoContinue={reversePhone.autoContinue} onClose={() => setReversePhone(null)} /></ReversePhoneLayer>}
             {activeCustomChatPlus && activeCustomChatPlus.presentation === "none" && (
                 <div className="chat-custom-app-headless" aria-hidden="true">
                     <CustomAppRunner

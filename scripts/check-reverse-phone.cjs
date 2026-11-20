@@ -100,8 +100,8 @@ async function main() {
   // Real orchestration + real stores + mocked stream transport. The fourth row is off screen.
   let latest, root = createRoot(document.getElementById('root'));
   const hook = load('components/checkphone/use-reverse-phone.ts').useReversePhone;
-  function Harness({ resumeSessionId, inviteSessionId } = {}) {
-    const host = React.useRef(null); const value = hook(scope, host, 'a', inviteSessionId, resumeSessionId); latest = value;
+  function Harness({ resumeSessionId, inviteSessionId, runOptions } = {}) {
+    const host = React.useRef(null); const value = hook(scope, host, 'a', inviteSessionId, resumeSessionId, runOptions); latest = value;
     return React.createElement('div', { ref: host }, React.createElement('div', { className: 'chat-main-content' }, sessions.map((s, i) => React.createElement('div', { key: s.id, 'data-reverse-session': s.id, 'data-test-top': i === 3 ? 500 : 70 + i * 70 }, '会话'))));
   }
   await act(async () => { root.render(React.createElement(Harness)); await tick(); });
@@ -179,23 +179,48 @@ async function main() {
   await act(async () => root.unmount());
   // Private-chat invitation persists a real card. Retrying a failed acceptance call reuses that card.
   await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { chat: 'hidden', shopping: 'hidden', browser: 'hidden', reading: 'hidden' } } }));
-  root = createRoot(document.getElementById('root')); let inviteFailed = false;
+  root = createRoot(document.getElementById('root')); let inviteFailed = false, acceptedSessionId = null;
   responder = async kind => {
     if (kind === 'invite') { if (!inviteFailed) { inviteFailed = true; throw new Error('邀请接口失败'); } return { accepted: true, reaction: '好，让我看看' }; }
     if (kind === 'desktop') return { reaction: '看到了', order: [] };
     return {};
   };
   calls = [];
-  await act(async () => { root.render(React.createElement(Harness, { inviteSessionId: sessions[0].id })); });
+  await act(async () => { root.render(React.createElement(Harness, { inviteSessionId: sessions[0].id, runOptions: { invitationOnly: true, onAccepted: id => { acceptedSessionId = id; } } })); });
   await act(async () => { for (let i = 0; i < 200; i++) { await tick(); if (latest?.session?.error === '邀请接口失败') break; } });
   assert.equal(latest.session.status, 'paused');
   const inviteId = latest.session.id, cardId = latest.session.inviteMessageId;
   await act(async () => { await latest.execute(); });
-  assert.equal(latest.session.status, 'completed');
+  assert.equal(latest.session.status, 'paused'); assert.equal(acceptedSessionId, inviteId);
   const cards = chat.loadChatMessages(sessions[0].id).filter(m => m.mediaData?.appSceneId === inviteId);
   assert.equal(cards.length, 1); assert.equal(cards[0].id, cardId); assert.match(cards[0].mediaData.appCardBody, /已同意/);
   assert.equal(chat.loadChatMessages(sessions[0].id).filter(m => m.mediaData?.reversePhoneOperationId === inviteId + ':invite-answer').length, 1);
-  assert.deepEqual(calls.map(c => c.kind), ['invite', 'invite', 'desktop']);
+  assert.deepEqual(calls.map(c => c.kind), ['invite', 'invite'], 'no desktop/API/navigation before the chat answer is saved');
+  await act(async () => root.unmount()); root = createRoot(document.getElementById('root'));
+  await act(async () => { root.render(React.createElement(Harness, { resumeSessionId: acceptedSessionId, runOptions: { autoContinue: true } })); });
+  await act(async () => { for (let i = 0; i < 200; i++) { await tick(); if (latest?.session?.status === 'completed') break; } });
+  assert.equal(latest.session.status, 'completed');
+  assert.deepEqual(calls.map(c => c.kind), ['invite', 'invite', 'desktop'], 'the accepted phone continues without another invitation');
+  await act(async () => root.unmount());
+  // A declined invitation must stay in chat and never announce a shared phone.
+  acceptedSessionId = null; calls = []; responder = async kind => { assert.equal(kind, 'invite'); return { accepted: false, reaction: '这次先不了' }; };
+  root = createRoot(document.getElementById('root'));
+  await act(async () => { root.render(React.createElement(Harness, { inviteSessionId: sessions[0].id, runOptions: { invitationOnly: true, onAccepted: id => { acceptedSessionId = id; } } })); });
+  await act(async () => { for (let i = 0; i < 200; i++) { await tick(); if (latest?.session?.accepted === false) break; } });
+  assert.equal(latest.session.status, 'stopped'); assert.equal(acceptedSessionId, null); assert.deepEqual(calls.map(c => c.kind), ['invite']);
+  await act(async () => root.unmount());
+  // The actual invitation component renders only a chat status until the stored answer accepts.
+  let acceptInvitation, acceptedFromChat = null; calls = [];
+  responder = async kind => { assert.equal(kind, 'invite'); return new Promise(resolve => { acceptInvitation = resolve; }); };
+  const Invitation = load('components/checkphone/reverse-phone-invitation.tsx').ReversePhoneInvitation;
+  root = createRoot(document.getElementById('root'));
+  await act(async () => { root.render(React.createElement(Invitation, { characterId: 'a', chatSessionId: sessions[0].id,
+    onClose() {}, onAccepted: id => { acceptedFromChat = id; const record = storage.loadReverseSession(id); assert.ok(chat.loadChatMessages(sessions[0].id).some(m => m.mediaData?.reversePhoneOperationId === record.id + ':invite-answer')); } })); });
+  await act(async () => { for (let i = 0; i < 200 && !acceptInvitation; i++) await tick(); });
+  assert.ok(document.querySelector('.rp-invitation-status')); assert.ok(!document.querySelector('.rp-app')); assert.equal(acceptedFromChat, null);
+  assert.ok(chat.loadChatMessages(sessions[0].id).some(m => m.mediaType === 'app_card' && m.content.includes('主动邀请你共享屏幕')));
+  await act(async () => { acceptInvitation({ accepted: true, reaction: '好，我同意' }); for (let i = 0; i < 200 && !acceptedFromChat; i++) await tick(); });
+  assert.ok(acceptedFromChat); assert.deepEqual(calls.map(c => c.kind), ['invite']);
   await act(async () => root.unmount());
   // Settings and browser editor operate on the same persistent data as the inspection.
   const host = document.getElementById('root'); root = createRoot(host);
@@ -221,6 +246,14 @@ async function main() {
   assert.equal(calls.length, beforeGenerate + 1); assert.ok(!storage.loadUserBrowser(scope).some(e => e.title === '润色后的周末'));
   await click(button('确认应用')); assert.ok(storage.loadUserBrowser(scope).some(e => e.title === '润色后的周末'));
   await act(async () => root.unmount());
+  // Phone-level portal is a sibling of the original chat, not clipped by its header/input layers.
+  const shell = document.createElement('div'); shell.setAttribute('data-ui', 'phone-screen'); document.body.appendChild(shell);
+  const originalChat = document.createElement('div'); originalChat.className = 'chat-app'; shell.appendChild(originalChat); originalChat.appendChild(host);
+  root = createRoot(host);
+  const Layer = load('components/checkphone/reverse-phone-layer.tsx').ReversePhoneLayer;
+  await act(async () => { root.render(React.createElement(Layer, null, React.createElement('button', { id: 'portal-back' }, '返回'))); });
+  const layer = shell.querySelector('[data-reverse-phone-layer]'); assert.ok(layer); assert.equal(layer.parentElement, shell); assert.ok(!originalChat.contains(layer));
+  assert.ok(layer.querySelector('#portal-back')); await act(async () => root.unmount()); assert.ok(!shell.querySelector('[data-reverse-phone-layer]'));
   console.log('PASS reverse phone: permissions, scope isolation, real messages/remarks, conserved idempotent payments, crash recovery, visible list/recent 20, API plan/retry, title-only shelf, memory, abort, invitation retry, settings and browser editing.');
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

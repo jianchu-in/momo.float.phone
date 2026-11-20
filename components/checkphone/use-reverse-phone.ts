@@ -15,7 +15,8 @@ import { allowedReverseApps, appendReverseEvent, assertReverseScope, createRever
 import { REVERSE_APPS, type ChatDecision, type ReverseApp, type ReverseChatControl, type ReverseResult, type ReverseScope, type ReverseSession, type ReverseTask } from "@/lib/reverse-phone-types";
 
 export type ReverseScreen = { app: "desktop" | ReverseApp; locked?: boolean; section?: string; itemId?: string; chat?: ReverseChatControl };
-export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElement | null>, initialCharacterId?: string, inviteSessionId?: string, resumeSessionId?: string) {
+type ReverseRunOptions = { invitationOnly?: boolean; autoContinue?: boolean; onAccepted?: (sessionId: string) => void };
+export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElement | null>, initialCharacterId?: string, inviteSessionId?: string, resumeSessionId?: string, options: ReverseRunOptions = {}) {
   const [characterId, setCharacterId] = useState(initialCharacterId ?? loadCharacters()[0]?.id ?? "");
   const [session, setSession] = useState<ReverseSession | null>(() => resumeSessionId ? loadReverseSession(resumeSessionId) : null);
   const latest = useRef(session);
@@ -273,11 +274,19 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     busy.current = true; const control = new AbortController(); controller.current = control;
     setRunning(true); setError("");
     try {
-      assertReverseScope(scope); await hydrateChatStorage(); await hydrateReadingStorage(); throwIfAborted(control.signal);
-      for (const receipt of await recoverReversePayments(scope, latest.current!.id)) await event("action", receipt.text, receipt.id);
+      assertReverseScope(scope); await hydrateChatStorage();
+      if (!options.invitationOnly) {
+        await hydrateReadingStorage();
+        for (const receipt of await recoverReversePayments(scope, latest.current!.id)) await event("action", receipt.text, receipt.id);
+      }
       throwIfAborted(control.signal);
       await persist({ ...latest.current!, status: "running", error: undefined });
       if (latest.current!.inviteSessionId && latest.current!.accepted !== true && !(await invite(actor(), control.signal))) return;
+      throwIfAborted(control.signal);
+      if (options.invitationOnly) {
+        await persist({ ...latest.current!, status: "paused" });
+        throwIfAborted(control.signal); options.onAccepted?.(latest.current!.id); return;
+      }
       while (latest.current!.tasks.some(task => task.state === "pending")) {
         const task = latest.current!.tasks.find(task => task.state === "pending")!;
         await playTask(task, control.signal);
@@ -337,7 +346,14 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     latest.current = value; currentTask.current = value.tasks.find(item => item.state === "pending") ?? null; setSession(value); setCharacterId(value.characterId); setError(value.error ?? "");
   }
   useEffect(() => {
-    const timer = setTimeout(() => { if (resumeSessionId) void restore(resumeSessionId); else if (inviteSessionId) void start(true); }, 0);
+    const timer = setTimeout(() => {
+      if (resumeSessionId) void restore(resumeSessionId).then(() => {
+        const record = latest.current;
+        if (record?.scope.key !== scope.key || record.id !== resumeSessionId || record.status === "stopped" || record.status === "completed") return;
+        if (options.invitationOnly || (options.autoContinue && record.accepted === true)) void execute();
+      });
+      else if (inviteSessionId && options.invitationOnly) void start(true);
+    }, 0);
     return () => clearTimeout(timer);
   }, []);
   return { characterId, setCharacterId, session, screen, setScreen, running, loading, speech, error, toast, setToast, touch,
