@@ -9,7 +9,7 @@ import { facingId, type FacingMeeting } from "@/lib/facing-storage";
 import { loadWorldBooks, resolveUserIdentity, loadApiConfigs, loadBindingConfig, resolveBinding } from "@/lib/settings-storage";
 import { downloadFile } from "@/lib/download-utils";
 import { deleteThemeAsset, getThemeAssetDataUrl } from "@/lib/theme-storage";
-import { answerMapInvitation, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap, polishMapTilePlan,
+import { answerMapInvitation, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap, polishMapTilePlan, refineFacingMapPlan,
   type MapExtension, type MapPlan } from "@/lib/facing-map-engine";
 import { commitMapTile, createFacingAtlas, createMapInterior, loadFacingAtlases, loadFacingAtlas, loadMapPreferences,
   mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
@@ -23,9 +23,11 @@ import { MapTransferSheet } from "./facing-map-transfer-sheet";
 import { MapTemplateSheet } from "./facing-map-template-sheet";
 import { installBuiltinMapTemplate, type MapTemplateTarget } from "@/lib/facing-map-templates";
 import { MapTravel, type MapTravelAnimation } from "./facing-map-travel";
+import { deleteFacingAtlas, renameFacingAtlas } from "@/lib/facing-map-storage";
+import { loadMapPlans, saveMapPlan, formatMapPlan, mapPlanPlaces, validateMapPlan } from "@/lib/facing-map-plans";
 
-type Sheet = "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | null;
-type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile };
+type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | null;
+type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile; uploaded?: boolean };
 export function FacingMapApp({ character, characters, currentMeeting, onBack, onSettings, onArrive }: {
   character: Character; characters: Character[]; currentMeeting?: FacingMeeting;
   onBack: () => void; onSettings: () => void;
@@ -46,6 +48,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   const [bookIds, setBookIds] = useState<string[]>([]);
   const [requirement, setRequirement] = useState("");
   const [plan, setPlan] = useState<MapPlan>({ description: "", places: [] });
+  const [planId, setPlanId] = useState("");
+  const [planName, setPlanName] = useState("");
+  const [notice, setNotice] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [extension, setExtension] = useState<MapExtension>();
   const [candidate, setCandidate] = useState<MapCandidate>();
   const [placeDraft, setPlaceDraft] = useState<MapPlace>();
@@ -102,6 +108,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     setExtension(direction && page.tiles.length ? { direction, tile: mapBoundaryTile(page, direction) } : undefined);
     setPlan({ description: page.parentPlaceId ? `绘制「${page.name}」的内部平面图，保留清晰的房间、设施和通道。` : "", places: [] });
     setCandidate(undefined); setRequirement(""); setError("");
+    setPlanId(""); setPlanName(`${page.name}文字方案`); setNotice("");
     setSettings({ ...loadMapPreferences(), ...(page.parentPlaceId ? { width: 1536, height: 1152 } : {}) });
     setSheet("generate");
   }
@@ -127,6 +134,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     if (!atlas || !page) return;
     await run("正在生成文字方案…", async signal => {
       const result = replacement ? await polishMapTilePlan(character, plan, requirement, settings, signal)
+        : plan.description.trim() ? await refineFacingMapPlan(character, plan, requirement, settings, signal)
         : await planFacingMap(character, atlas, page, characters, requirement, settings, signal, extension);
       setPlan(result); setCandidate(undefined);
     });
@@ -135,6 +143,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     if (replacement && (![replacement.width, replacement.height, replacement.x, replacement.y].every(Number.isFinite) || replacement.width <= 0 || replacement.height <= 0)) { setError("请填写有效的图块坐标和宽高。"); return; }
     if (!plan.description.trim() || !atlas || !page) { setError("请先生成或填写地图描述。"); return; }
     await run("正在生成地图图片…", async signal => {
+      validateMapPlan(plan);
       const savedPlan = { ...plan, places: plan.places.map(place => ({ ...place })) };
       const result = await renderFacingMap(character, savedPlan, settings, signal, extension, referenceOriginal ? replacement : undefined);
       if (!signal.aborted) setCandidate({ blob: result.blob, url: URL.createObjectURL(result.blob), plan: savedPlan, extension, replacement });
@@ -153,6 +162,9 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   async function saveImage() {
     if (!atlas || !page || !candidate) return;
     await run("保存地图图片", async () => {
+      validateMapPlan(candidate.plan);
+      if (candidate.replacement && (![candidate.replacement.x, candidate.replacement.y, candidate.replacement.width, candidate.replacement.height].every(Number.isFinite)
+        || candidate.replacement.width <= 0 || candidate.replacement.height <= 0)) throw new Error("请填写有效的图块区域宽高。");
       const tile = await storeMapTile(candidate.blob, { x: 0, y: 0 });
       tile.name = candidate.replacement?.name || `图块 ${page.tiles.length + 1}`;
       tile.description = candidate.plan.description;
@@ -160,15 +172,13 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         const previous = candidate.replacement;
         tile.id = previous.id; tile.x = previous.x; tile.y = previous.y;
         tile.width = previous.width; tile.height = previous.height;
-        const places = candidate.plan.places.map(place => ({ ...place, tileId: tile.id,
-          x: tile.x + place.x / 1000 * tile.width, y: tile.y + place.y / 1000 * tile.height }));
+        const places = mapPlanPlaces(candidate.plan, tile, true);
         try {
           setAtlas(await replaceMapTile(atlas.id, page.id, tile, places));
         } catch (cause) { await deleteThemeAsset(tile.mediaId).catch(() => {}); throw cause; }
       } else {
         Object.assign(tile, extensionPosition(candidate.extension?.tile, candidate.extension?.direction ?? "right", tile.width, tile.height));
-        const newPlaces = candidate.plan.places.map(place => ({ ...place, id: facingId(), tileId: tile.id,
-          x: tile.x + place.x / 1000 * tile.width, y: tile.y + place.y / 1000 * tile.height }));
+        const newPlaces = mapPlanPlaces(candidate.plan, tile);
         setAtlas(await commitMapTile(atlas.id, page.id, tile, newPlaces, candidate.plan.description));
       }
       setSheet(null); setCandidate(undefined); setSelectedId(undefined);
@@ -176,13 +186,33 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   }
   async function upload(file: File) {
     if (!atlas || !page) return;
-    await run("保存原始地图", async () => {
-      const tile = await storeMapTile(file, { x: 0, y: 0 });
-      tile.name = file.name;
-      if (page.tiles.length) Object.assign(tile, extensionPosition(mapBoundaryTile(page, "right"), "right", tile.width, tile.height));
-      setAtlas(await commitMapTile(atlas.id, page.id, tile, [], page.description));
-      setSheet(null);
+    setError("");
+    try {
+      validateMapPlan(plan);
+      if (!file.type.startsWith("image/") || !file.size || file.size > 30 * 1024 * 1024) throw new Error("请选择不超过30 MB的地图图片。");
+      setCandidate({ blob: file, url: URL.createObjectURL(file), plan: structuredClone(plan), extension, replacement, uploaded: true });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法读取已有地图。"); }
+  }
+
+  async function persistPlan(asNew = false) {
+    await run("保存文字方案", async () => {
+      const saved = await saveMapPlan({ ...plan, id: asNew ? undefined : planId || undefined, worldId, name: planName, width: settings.width, height: settings.height });
+      setPlanId(saved.id); setPlanName(saved.name); setNotice("文字方案已保存，可随时选择后生图或上传已有地图。");
     });
+  }
+  async function copyPlan() {
+    setError("");
+    try {
+      const content = formatMapPlan(plan, settings);
+      try { await navigator.clipboard.writeText(content); }
+      catch {
+        const input = document.createElement("textarea"); input.value = content;
+        input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select();
+        try { if (!document.execCommand("copy")) throw new Error("复制失败，请允许浏览器访问剪贴板后重试。"); }
+        finally { input.remove(); }
+      }
+      setNotice("已复制地图描述、地点清单与坐标。");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "复制失败。"); }
   }
   function selectPlace(id: string) { setSelectedId(id); }
   function addPoint(point: MapPoint) {
@@ -232,6 +262,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       places: placesForTile(page, tile.id).map(place => ({ ...place, x: (place.x - page.tiles.find(item => item.id === tile.id)!.x) / page.tiles.find(item => item.id === tile.id)!.width * 1000,
         y: (place.y - page.tiles.find(item => item.id === tile.id)!.y) / page.tiles.find(item => item.id === tile.id)!.height * 1000 })) });
     setSettings({ ...loadMapPreferences(), width: tile.pixelWidth, height: tile.pixelHeight });
+    setPlanId(""); setPlanName(`${tile.name || page.name}文字方案`); setNotice("");
     setCandidate(undefined); setRequirement(""); setSheet("generate"); setError("");
   }
   async function saveTile(tile: MapTile, order?: "front" | "back") {
@@ -335,6 +366,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           if (next) { setAtlas(next); setPageId(next.pages[0]?.id); setSelectedId(undefined); setSnapshotId(undefined); }
         }}>{loadFacingAtlases(worldId).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
         <button type="button" className="facing-small" disabled={!!busy || !!animation} onClick={() => setSheet("create")}><Plus size={14} />新建</button>
+        <button type="button" className="facing-small" disabled={!!busy || !!animation} onClick={() => { setMapName(atlas.name); setDeleteConfirm(false); setSheet("manage"); }}>管理地图</button>
         <button type="button" className="facing-small" disabled={!!busy || !!animation} onClick={() => { setEditing(!editing); setTileEditing(false); }} aria-pressed={editing}>{editing ? "完成编辑" : "编辑地图"}</button>
       </div>
       <div className="fmap-stage" data-blurred={animation?.mode === "car" ? "true" : undefined}>
@@ -384,7 +416,6 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>详细场所模板</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => openGenerate()}>生成地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>参考资料</button>
-          <button type="button" className="facing-small" disabled={!!busy} onClick={() => uploading.current?.click()}>上传图片</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("tiles")}>图块与扩展</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("transfer")}>导入 / 导出</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>前往动画</button>
@@ -409,6 +440,23 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     <input ref={uploading} type="file" hidden accept="image/*" onChange={event => {
       const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void upload(file);
     }} />
+    {sheet === "manage" && atlas && <MapSheet title="管理世界地图" onClose={closeSheet}>
+      <label>地图名称<input aria-label="地图新名称" value={mapName} disabled={!!busy} onChange={event => setMapName(event.target.value)} /></label>
+      <button type="button" className="facing-primary" disabled={!!busy || !mapName.trim()} onClick={() => void run("保存地图名称", async () => {
+        setAtlas(await renameFacingAtlas(atlas.id, mapName)); setSheet(null);
+      })}>保存名称</button>
+      {!deleteConfirm ? <button type="button" className="facing-link facing-delete" disabled={!!busy} onClick={() => setDeleteConfirm(true)}>删除这张世界地图</button>
+        : <div className="fmap-delete-confirm" role="alert">
+          <p>删除「{atlas.name}」及其中全部图块、地点和内部地图？已保存的文字方案与见面记录会保留。</p>
+          <div className="facing-pair"><button type="button" className="facing-soft" disabled={!!busy} onClick={() => setDeleteConfirm(false)}>取消</button>
+            <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void run("删除世界地图", async () => {
+              await deleteFacingAtlas(atlas.id);
+              const next = loadFacingAtlases(worldId)[0];
+              setAtlas(next); setPageId(next?.pages[0]?.id); setSelectedId(undefined); setSnapshotId(undefined); setInvitationId(undefined);
+              setCandidate(undefined); setSelectedTileId(undefined); setEditing(false); setTileEditing(false); setSheet(null);
+            })}>确认删除地图</button></div>
+        </div>}
+    </MapSheet>}
     {(sheet === "create" || sheet === "sources") && <MapSheet title={sheet === "create" ? "创建世界地图" : "地图参考资料"} onClose={closeSheet}>
       <label>地图名称<input value={mapName} onChange={event => setMapName(event.target.value)} /></label>
       <fieldset><legend>参考角色（可多选）</legend>{members.map(item => <label key={item.id} className="fmap-check">
@@ -422,8 +470,14 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     </MapSheet>}
     {sheet === "generate" && <MapSheet title={replacement ? "升级图块与重新生图" : extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
       <fieldset className="fmap-operation-fields" disabled={!!busy}>
+      <label>选择已有文字方案<select aria-label="选择已有文字方案" value={planId} onChange={event => {
+        const saved = loadMapPlans(worldId).find(item => item.id === event.target.value);
+        if (!saved) { setPlanId(""); return; }
+        setPlanId(saved.id); setPlanName(saved.name); setPlan({ description: saved.description, places: saved.places.map(place => ({ ...place })) });
+        setSettings(current => ({ ...current, width: saved.width, height: saved.height })); setCandidate(undefined); setNotice("已载入文字方案，可以继续编辑或润色。");
+      }}><option value="">当前草稿</option>{loadMapPlans(worldId).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>补充要求<textarea aria-label="补充要求" value={requirement} onChange={event => setRequirement(event.target.value)} placeholder="描述这个世界的范围或想增加的区域。" /></label>
-      <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void generatePlan()}>{replacement ? "润色现有描述" : "生成文字方案"} · {api?.defaultModel ?? "请配置文字API"}</button>
+      <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void generatePlan()}>{replacement ? "润色现有描述" : plan.description.trim() ? "继续增加与润色方案" : "生成文字方案"} · {api?.defaultModel ?? "请配置文字API"}</button>
       <label>地图画面描述<textarea aria-label="地图画面描述" className="fmap-description" value={plan.description} onChange={event => { setPlan({ ...plan, description: event.target.value }); setCandidate(undefined); }} /></label>
       <details><summary>地点清单与坐标（{plan.places.length}）</summary>
         <p className="fmap-note">坐标从0到1000，以本次生成图片的左上角为起点。</p>
@@ -440,6 +494,14 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         </div>)}
         <button type="button" className="facing-small" onClick={() => { setPlan({ ...plan, places: [...plan.places, { id: facingId(), name: "新地点", description: "", x: 500, y: 500 }] }); setCandidate(undefined); }}>添加地点</button>
       </details>
+      <label>文字方案名称<input aria-label="文字方案名称" value={planName} onChange={event => setPlanName(event.target.value)} /></label>
+      <div className="facing-choices">
+        <button type="button" className="facing-small" disabled={!plan.description.trim() || !planName.trim()} onClick={() => void persistPlan()}>{planId ? "更新已保存文字方案" : "保存为文字方案"}</button>
+        {planId && <button type="button" className="facing-small" onClick={() => void persistPlan(true)}>另存为新方案</button>}
+        <button type="button" className="facing-small" disabled={!plan.description.trim()} onClick={() => void copyPlan()}>一键复制描述、地点与坐标</button>
+      </div>
+      <p className="fmap-note">一键复制去其他AI平台生成；带回按方案绘制的图片后，地点会按方案坐标自动落位。</p>
+      {notice && <p role="status" className="fmap-note">{notice}</p>}
       <MapDimensions value={settings} onChange={patch => { setSettings({ ...settings, ...patch }); setCandidate(undefined); }} />
       {replacement && <>
         <label className="fmap-check"><input type="checkbox" checked={referenceOriginal} disabled={!!busy} onChange={event => { setReferenceOriginal(event.target.checked); setCandidate(undefined); }} />使用当前图块原图作参考</label>
@@ -450,10 +512,12 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         <button type="button" className="facing-soft" disabled={!!busy || !plan.description.trim()} onClick={() => void saveTilePlan()}>保存描述、地点与区域</button>
       </>}
       {extension && <p className="fmap-note">使用相邻图块的边缘作为参考。保存时保留原图；请预览道路与河流是否衔接。</p>}
+      <button type="button" className="facing-soft" disabled={!!busy || !plan.description.trim()} onClick={() => uploading.current?.click()}>上传已有地图</button>
+      <p className="fmap-note">上传后先预览，点击确认应用，使用当前文字方案的地点清单与坐标，不调用图片API。</p>
       <button type="button" className="facing-primary" disabled={!!busy || !plan.description.trim()} onClick={() => void generateImage()}>确认生成地图 · 图片API</button>
       {candidate && <><img className="fmap-candidate" src={candidate.url} alt="地图候选图" />
         {candidate.extension && page && <MapExpansionPreview page={page} source={candidate.url} extension={candidate.extension} />}
-        <div className="facing-pair"><button type="button" className="facing-primary" disabled={!!busy} onClick={() => void saveImage()}>{candidate.replacement ? "保存并替换所选图块" : "保存并加入地图"}</button>
+        <div className="facing-pair"><button type="button" className="facing-primary" disabled={!!busy} onClick={() => void saveImage()}>{candidate.uploaded ? "确认应用已有地图" : candidate.replacement ? "保存并替换所选图块" : "保存并加入地图"}</button>
           <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void run("下载原图", () => downloadFile(candidate.blob, "地图原图." + (candidate.blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png")))}>下载原图</button></div>
       </>}
       {error && <p className="facing-error" role="alert">{error}</p>}

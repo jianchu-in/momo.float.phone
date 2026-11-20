@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import type { Character } from "@/lib/character-types";
 import { getThemeAssetMap } from "@/lib/theme-storage";
 import { mapImageBounds, coverMapView } from "@/lib/facing-map-viewport";
 import { transformMapTile } from "@/lib/facing-map-editing";
+import { loadMapViewMode, saveMapViewMode } from "@/lib/facing-map-plans";
 import { mapBounds, placeOnMapPage, routePoint, type FacingAtlas, type FacingMapPage, type MapPoint, type MapSnapshot } from "@/lib/facing-map-storage";
 
 export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId, editing, travel, userPlaceId, userAvatar, userName,
@@ -18,7 +19,9 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
   const frame = useRef<HTMLDivElement>(null);
   const [images, setImages] = useState<Record<string, string>>({});
   const views = useRef(new Map<string, { x: number; y: number; scale: number }>());
-  const [cover, setCover] = useState(false);
+  const [cover, setCover] = useState(() => loadMapViewMode() === "cover");
+  const [viewError, setViewError] = useState("");
+  const clipPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [movedTile, setMovedTile] = useState<{ id: string; point: MapPoint }>();
   const [viewport, setViewport] = useState({ width: 390, height: 600 });
   const [view, setView] = useState({ x: 0, y: 0, scale: .4 });
@@ -55,6 +58,12 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
     const scale = cover ? Math.max(rect.width / area.width, rect.height / area.height) : Math.min(rect.width / area.width, rect.height / area.height) * .9;
     apply({ scale, x: (rect.width - area.width * scale) / 2 - area.x * scale,
       y: (rect.height - area.height * scale) / 2 - area.y * scale });
+  }
+  function chooseMode(next: boolean) {
+    setViewError("");
+    setCover(next);
+    if (next === cover) fit();
+    void saveMapViewMode(next ? "cover" : "fit").catch(() => setViewError("看图模式保存失败，请重试。"));
   }
   useEffect(() => {
     let initialized = false;
@@ -156,12 +165,14 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
   function avatar(point: MapPoint, source: string | undefined | null, name: string, key: string, offset = 0) {
     const radius = bubbleSize * .65;
     const x = point.x + offset * radius * 1.65, y = point.y - radius * 2;
-    return <g key={key}>
+    const clipId = `${clipPrefix}-${key.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    return <g key={key} data-map-avatar={key} aria-label={name}>
+      <defs><clipPath id={clipId} clipPathUnits="userSpaceOnUse"><circle cx={x} cy={y} r={radius * .87} /></clipPath></defs>
       <path d={`M ${x - radius / 3} ${y + radius * .7} L ${point.x} ${point.y - 4 / view.scale} L ${x + radius / 3} ${y + radius * .7}`} fill="white" />
       <circle cx={x} cy={y} r={radius} fill="white" stroke="#d4ddd5" strokeWidth={1 / view.scale} />
+      <text x={x} y={y + radius * .3} fontSize={radius} textAnchor="middle" fill="#455848">{name.slice(0, 1)}</text>
       {source ? <image href={source} x={x - radius * .87} y={y - radius * .87} width={radius * 1.74} height={radius * 1.74}
-        preserveAspectRatio="xMidYMid slice" clipPath={`circle(${radius * .87}px at ${x}px ${y}px)`} /> :
-        <text x={x} y={y + radius * .3} fontSize={radius} textAnchor="middle" fill="#455848">{name.slice(0, 1)}</text>}
+        preserveAspectRatio="xMidYMid slice" clipPath={`url(#${clipId})`} onError={event => { event.currentTarget.style.display = "none"; }} /> : null}
     </g>;
   }
   const occupants = new Map<string, Character[]>();
@@ -171,6 +182,8 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
     if (place && character) occupants.set(place.id, [...(occupants.get(place.id) ?? []), character]);
   }
   const userPlace = userPlaceId ? placeOnMapPage(atlas, userPlaceId, page.id) : undefined;
+  const pendingCharacters = characters.filter(member => atlas.characterIds.includes(member.id)
+    && !(snapshot?.entries ?? []).some(entry => entry.characterId === member.id && placeOnMapPage(atlas, entry.placeId, page.id)));
   return <div className="fmap-canvas" ref={frame} data-view-mode={cover ? "cover" : "fit"}>
     {!!page.tiles.length && <svg className="fmap-backdrop" aria-hidden="true" viewBox={`${imageBounds.x} ${imageBounds.y} ${imageBounds.width} ${imageBounds.height}`} preserveAspectRatio="xMidYMid slice">
       {[...page.tiles].reverse().map(tile => images[tile.mediaId] && <image key={tile.id} href={images[tile.mediaId]} x={tile.x} y={tile.y} width={tile.width} height={tile.height} preserveAspectRatio="none" />)}
@@ -198,10 +211,7 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
             <rect x={place.x - Math.max(26, place.name.length * 6) / view.scale} y={place.y + 13 / view.scale}
               width={Math.max(52, place.name.length * 12) / view.scale} height={25 / view.scale} rx={10 / view.scale} fill="#ffffffed" />
             <text x={place.x} y={place.y + 30 / view.scale} fontSize={12 / view.scale} fill="#26352b" textAnchor="middle">{place.name}{page.entryPlaceId === place.id ? " · 入口" : ""}</text>
-            {!travel && members.length === 1 && avatar(place, members[0].avatar, members[0].name, members[0].id)}
-            {!travel && members.length > 1 && <g transform={`translate(${place.x},${place.y - bubbleSize * 1.5})`}>
-              <circle r={bubbleSize * .7} fill="white" /><text fontSize={14 / view.scale} fill="#405649" textAnchor="middle" dy=".35em">{members.length}人</text>
-            </g>}
+            {!travel && members.map((member, index) => avatar(place, member.avatar, member.name, member.id, index - (members.length - 1) / 2))}
           </g>;
         })}
         {!travel && userPlace && avatar({ x: userPlace.x + 30 / view.scale, y: userPlace.y }, userAvatar, userName, "user")}
@@ -210,9 +220,20 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
       </g>
     </svg>
     {!page.tiles.length && <div className="fmap-empty">添加地图图片，或生成这片区域的地图</div>}
+    {!travel && (!userPlace || !!pendingCharacters.length) && <div className="fmap-unlocated" aria-label="地图人物位置">
+      {!userPlace && <div className="fmap-person"><span className="fmap-person-avatar">{userName.slice(0, 1)}{userAvatar && <img src={userAvatar} alt="" onError={event => { event.currentTarget.style.display = "none"; }} />}</span>
+        <span>{userName}<small>{userPlaceId ? "位于其他地图" : "位置待设置"}</small></span></div>}
+      {pendingCharacters.map(member => {
+        const activity = snapshot?.entries.find(entry => entry.characterId === member.id);
+        return <div key={member.id} className="fmap-person"><span className="fmap-person-avatar">{member.name.slice(0, 1)}{member.avatar && <img src={member.avatar} alt="" onError={event => { event.currentTarget.style.display = "none"; }} />}</span>
+          <span>{member.name}<small>{activity ? "位于其他地图" : "动向待更新"}</small></span></div>;
+      })}
+      <small>编辑地点可设置我的位置；刷新动向可更新角色位置。</small>
+    </div>}
+    {viewError && <div className="fmap-view-error" role="alert">{viewError}</div>}
     <div className="fmap-zoom"><button type="button" aria-label="放大地图" onClick={() => zoom(1.3)}>＋</button>
       <button type="button" aria-label="缩小地图" onClick={() => zoom(1 / 1.3)}>－</button>
-      <button type="button" onClick={fit}>{cover ? "重置" : "全图"}</button>
-      <button type="button" aria-pressed={cover} onClick={() => setCover(!cover)}>{cover ? "普通" : "铺满"}</button></div>
+      <button type="button" aria-pressed={!cover} onClick={() => chooseMode(false)}>全图</button>
+      <button type="button" aria-pressed={cover} onClick={() => chooseMode(true)}>铺满</button></div>
   </div>;
 }

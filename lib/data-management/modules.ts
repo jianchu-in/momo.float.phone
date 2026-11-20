@@ -357,6 +357,8 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
           "ai_phone_facing_settings_v1",
           "ai_phone_facing_assets_v1",
           "ai_phone_facing_map_settings_v1",
+          "ai_phone_facing_map_plans_v1",
+          "ai_phone_facing_map_view_v1",
           "ai_phone_vn_scenes_v1",
           "ai_phone_vn_sprites_v1",
           // 剧情公用方案仓库（文风/状态栏/小剧场/快捷输入方案），随创作模块备份

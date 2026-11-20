@@ -87,6 +87,14 @@ export function extensionPosition(tile: MapTile | undefined, direction: MapExten
   return { x: tile.x + (direction === "right" ? tile.width * .82 : direction === "left" ? -width + tile.width * .18 : 0),
     y: tile.y + (direction === "bottom" ? tile.height * .82 : direction === "top" ? -height + tile.height * .18 : 0) };
 }
+export async function refineFacingMapPlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal): Promise<MapPlan> {
+  const raw = await request(lead, [
+    "根据用户补充要求继续扩充、润色已有地图文字方案。以原方案为基础，保留未要求修改的地点名称、坐标与空间关系；可按要求增加地点和区域。返回完整更新后的方案。",
+    '只返回JSON：{"description":"完整画面描述","places":[{"name":"地点名","description":"介绍","x":300,"y":450}]}。坐标归一化至0到1000。',
+  ].join("\n"), JSON.stringify({ 原方案: plan, 补充要求: requirement, 额外提示词: preferences.descriptionPrompt, 宽高: [preferences.width, preferences.height] }), signal);
+  const result = parseMapPlan(raw);
+  return { ...result, places: result.places.map(place => ({ ...place, id: plan.places.find(item => item.name === place.name)?.id ?? place.id })) };
+}
 export async function polishMapTilePlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal): Promise<MapPlan> {
   const raw = await request(lead, [
     "根据用户要求润色已有地图的画面描述与地点介绍。保持原有地点ID和坐标，不增删地点，补足建筑、房间、材质、光线、空间布局和通道细节。只返回JSON。",

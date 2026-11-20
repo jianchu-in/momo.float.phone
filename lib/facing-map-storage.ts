@@ -1,4 +1,4 @@
-import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, registerDynamicPrefix, registerKvMigration } from "./kv-db";
+import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, kvDeletePersisted, registerDynamicPrefix, registerKvMigration } from "./kv-db";
 import { facingId, FACING_MEETING_PREFIX, type FacingMeeting, type FacingScenePosition } from "./facing-storage";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 
@@ -67,6 +67,15 @@ export async function updateFacingAtlas(id: string, update: (atlas: FacingAtlas)
     return JSON.stringify(result);
   });
   return result!;
+}
+export async function renameFacingAtlas(id: string, name: string) {
+  if (!name.trim()) throw new Error("请填写地图名称。");
+  return updateFacingAtlas(id, atlas => ({ ...atlas, name: name.trim(), pages: atlas.pages.map(page =>
+    !page.parentPlaceId && page.name === atlas.name ? { ...page, name: name.trim() } : page) }));
+}
+export async function deleteFacingAtlas(id: string) {
+  // Original images can also belong to exported/custom templates; keep shared media intact.
+  await kvDeletePersisted(MAP_PREFIX + id);
 }
 export async function createFacingAtlas(worldId: string, name: string, characterIds: string[], worldBookIds: string[], pages?: FacingMapPage[]) {
   const now = new Date().toISOString();

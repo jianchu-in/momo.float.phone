@@ -10,6 +10,7 @@ import type { Character } from "@/lib/character-types";
 import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { saveFacingParticipants } from "@/lib/facing-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
 import { FacingAssets } from "./facing-assets";
 import { FacingRoom } from "./facing-room";
@@ -133,6 +134,9 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [characters] = useState(loadCharacters);
   const [preferences, setPreferences] = useState(loadFacingSettings);
   const character = characters.find(item => item.id === preferences.characterId);
+  const participantIds = [...new Set([preferences.characterId, ...(preferences.participantIds ?? [])])].filter((id): id is string => !!id && characters.some(item => item.id === id));
+  const [castDraft, setCastDraft] = useState(participantIds);
+  const castNames = participantIds.map(id => characters.find(item => item.id === id)!.name).join("、");
   const [page, setPage] = useState<Page>("home");
   const [mapOrigin, setMapOrigin] = useState<"home" | "room">("home");
   const [mapSettingsOrigin, setMapSettingsOrigin] = useState<"map" | "settings">("settings");
@@ -157,7 +161,9 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const current = character ? preferences.characters[character.id] ?? {} : {};
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
   const groups = groupFacingScenes(assets, current.portraitId);
-  const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId) : [], [character, identityId, meeting]);
+  const castKey = [...participantIds].sort().join("|");
+  const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId, true)
+    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey) : [], [character, identityId, meeting, castKey]);
   const latest = meetings[0];
   const initialAsset = assets.find(item => item.id === (current.useScene === false ? current.fullPortraitId ?? current.portraitId : current.sceneId ?? current.portraitId));
   const initialGroup = groups.find(group => group.name === (initialAsset ? facingAssetLocation(initialAsset) : undefined)) ?? groups[0];
@@ -166,11 +172,13 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const hotspotScene = settingOrigin === "room" ? room : homeScene;
   const records = page === "records" ? meetings.filter(item => item.type === recordType) : [];
 
-  async function selectCharacter(id: string) {
+  async function selectCharacters() {
     setError("");
-    try { setPreferences(await saveFacingSettings(id)); setAssets(loadFacingAssets(id)); setSheet(null); }
+    try { setPreferences(await saveFacingParticipants(castDraft)); setAssets(loadFacingAssets(castDraft[0])); setSheet(null); }
     catch { setError("角色选择保存失败。"); }
   }
+
+  function openCharacters() { setCastDraft(participantIds); setSheet("characters"); }
 
   async function changeSetting(patch: Partial<FacingCharacterSettings>) {
     if (character) setPreferences(await saveFacingSettings(character.id, patch));
@@ -189,6 +197,13 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   function openRoom(item: FacingMeeting) {
     unlockAudioPlayback();
     setMeeting(loadFacingMeeting(item.id) ?? item);
+    if (item.characterId !== character?.id) {
+      setAssets(loadFacingAssets(item.characterId));
+      setPreferences(current => ({ ...current, characterId: item.characterId,
+        participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)] }));
+      void saveFacingParticipants([item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)])
+        .then(setPreferences).catch(() => setError("见面角色选择保存失败。"));
+    }
     setRecordType(item.type);
     setPage("room");
   }
@@ -198,7 +213,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     setError("");
     const preferred = parent ? facingMeetingPosition(parent).sceneName : homeScene.position.sceneName;
     setOpeningScene(groups.some(group => group.name === preferred) ? preferred : initialGroup?.name ?? FACING_DEFAULT_SCENE);
-    setDraftMeeting(createFacingMeeting(character.id, identityId, type, parent));
+    const draft = createFacingMeeting(character.id, identityId, type, parent);
+    setDraftMeeting(parent ? draft : { ...draft, participantIds });
     setSheet("new");
   }
 
@@ -209,6 +225,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     try {
       const position = facingScenePosition(groups.find(group => group.name === openingScene));
       const started = await saveFacingMeetingStart(draftMeeting, position);
+      setPreferences(await saveFacingParticipants(facingParticipantIds(started)));
       setSheet(null);
       openRoom(started);
     } catch {
@@ -234,7 +251,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     const scene = { ...facingScenePosition(group), sceneName: destination };
     const identity = resolveUserIdentity(character?.id, "facing")?.id ?? null;
     const started = await saveMapArrival(atlas.id, trip, visitId, primaryId, identity, participants, scene, meeting);
-    setPreferences(await saveFacingSettings(primaryId));
+    setPreferences(await saveFacingParticipants([primaryId, ...participants.filter(id => id !== primaryId)]));
     setAssets(targetAssets);
     openRoom(started);
   }
@@ -248,20 +265,19 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       {character ? <>
         <div className="facing-home-stage">
           <FacingStage portrait={homeScene.portrait} scene={homeScene.backdrop} name={character.name} fallback={character.avatar}>
-            <div className="facing-home-label"><small>{homeScene.position.sceneName}</small><strong>{character.name}</strong></div>
+            <div className="facing-home-label"><small>{homeScene.position.sceneName}{participantIds.length > 1 ? ` · ${participantIds.length}人见面` : ""}</small><strong>{castNames}</strong></div>
           </FacingStage>
         </div>
         <footer className="facing-home-actions">
-          {!groups.length && <button type="button" className="facing-link" onClick={() => openAssets("home")}><Images size={16} />添加场景素材</button>}
           {latest && <button type="button" className="facing-primary" onClick={() => openRoom(latest)}>继续上次对话<ChevronRight size={18} /></button>}
           <button type="button" className={latest ? "facing-soft" : "facing-primary"} onClick={() => prepareMeeting("main")}><Plus size={17} />开启新对话</button>
           <div className="facing-pair">
-            <button type="button" className="facing-link" onClick={() => setSheet("characters")}><UserRound size={17} />换角色</button>
+            <button type="button" className="facing-link" onClick={openCharacters}><UserRound size={17} />选择见面角色{participantIds.length > 1 ? ` · ${participantIds.length}人` : ""}</button>
             <button type="button" className="facing-link" onClick={() => { setRecordType(latest?.type ?? "main"); setPage("records"); }}><History size={16} />见面记录</button>
           </div>
         </footer>
       </> : <div className="facing-home-empty"><UserRound size={48} strokeWidth={1.2} />
-        <button type="button" className="facing-primary" onClick={() => setSheet("characters")} disabled={!characters.length}>选择角色</button>
+        <button type="button" className="facing-primary" onClick={openCharacters} disabled={!characters.length}>选择角色</button>
         {!characters.length && <p>先在角色库里添加一位角色。</p>}
       </div>}
     </>}
@@ -385,13 +401,15 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     </>}
     {page === "record" && character && record && <MeetingTranscript record={record} character={character}
       onBack={() => setPage("records")} onContinue={() => openRoom(record)} onFork={() => prepareMeeting("branch", record)} />}
-    {sheet === "characters" && <FacingSheet title="选择角色" close={() => setSheet(null)}>
+    {sheet === "characters" && <FacingSheet title="选择见面角色 · 可多选" close={() => setSheet(null)}>
+      <p className="facing-hint">选择一位进入单人见面，选择多位进入多人见面，各自保留见面记录。</p>
       <div className="facing-list">
-        {characters.map(item => <button type="button" key={item.id} onClick={() => void selectCharacter(item.id)}>
+        {characters.map(item => <button type="button" key={item.id} aria-pressed={castDraft.includes(item.id)} onClick={() => setCastDraft(current => current.includes(item.id) ? current.filter(id => id !== item.id) : [...current, item.id])}>
           <span className="facing-character-avatar">{item.avatar ? <img alt="" src={item.avatar} /> : <UserRound size={19} />}</span>
-          <span>{item.name}</span>{item.id === character?.id && <small>当前</small>}
+          <span>{item.name}</span>{castDraft.includes(item.id) && <small>已选择 ✓</small>}
         </button>)}
       </div>
+      <button type="button" className="facing-primary" disabled={!castDraft.length} onClick={() => void selectCharacters()}>确认选择 · {castDraft.length}人</button>
     </FacingSheet>}
     {sheet === "new" && <FacingSheet title="选择开场场景" close={() => { if (!starting) setSheet(null); }}>
       <label className="facing-opening-scene">开场场景<select value={openingScene} disabled={starting} onChange={event => setOpeningScene(event.target.value)}>

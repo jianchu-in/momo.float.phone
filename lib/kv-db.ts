@@ -243,6 +243,12 @@ export async function kvReadPersisted(key: string): Promise<string | null> {
     return (await kvDb.entries.get(key))?.value ?? null;
 }
 
+export async function kvDeletePersisted(key: string): Promise<void> {
+    await kvDb.entries.delete(key);
+    _cache.delete(key);
+    if (isManagedLegacyKey(key)) removeLegacyLocalStorageKey(key);
+}
+
 export async function kvClaim(key: string): Promise<boolean> {
     return kvDb.transaction("rw", kvDb.entries, async () => {
         if (await kvDb.entries.get(key)) return false;

@@ -136,7 +136,7 @@ export function shouldCheckFacingVisual(round: number, settings?: FacingAutoVisu
   return settings?.enabled === true && round > 0 && round % step === 0;
 }
 
-export type FacingSettings = { characterId?: string; characters: Record<string, FacingCharacterSettings> };
+export type FacingSettings = { characterId?: string; participantIds?: string[]; characters: Record<string, FacingCharacterSettings> };
 
 export type FacingTurn = {
   id: string;
@@ -222,6 +222,17 @@ export async function saveFacingSettings(characterId: string, patch?: Partial<Fa
     return JSON.stringify(saved);
   });
   return saved;
+}
+
+export async function saveFacingParticipants(ids: string[]): Promise<FacingSettings> {
+  const participantIds = [...new Set(ids.filter(Boolean))];
+  if (!participantIds.length) throw new Error("请至少选择一位见面角色。");
+  let saved: FacingSettings;
+  await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
+    saved = { ...readJson<FacingSettings>(raw, { characters: {} }), characterId: participantIds[0], participantIds };
+    return JSON.stringify(saved);
+  });
+  return saved!;
 }
 
 export function loadFacingAssets(characterId: string): FacingAsset[] {
