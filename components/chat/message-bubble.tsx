@@ -866,6 +866,10 @@ function AppCardBubble({ msg, characterId, characterName }: { msg: ChatMessage; 
     } as React.CSSProperties;
     const openApp = () => {
         if (cardOpenDisabled) return;
+        if (d?.appId === "reverse-phone") {
+            window.dispatchEvent(new CustomEvent("reverse-phone-open", { detail: { sessionId: msg.sessionId, resumeId: d.appSceneId } }));
+            return;
+        }
         if (!d?.appId || typeof window === "undefined") return;
         window.dispatchEvent(new CustomEvent("open-app", {
             detail: {

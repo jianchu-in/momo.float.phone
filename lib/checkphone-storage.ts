@@ -228,6 +228,21 @@ export async function savePhoneSnapshot<AppPayload = unknown>(snapshot: CheckPho
   recordCheckPhoneSnapshotEvent(snapshot as CheckPhoneSnapshot);
 }
 
+/** Financial edits must fail visibly and update the cache only after the transaction commits. */
+export async function updatePhoneSnapshot<AppPayload>(characterId: string, appId: CheckPhoneAppId,
+  update: (snapshot: CheckPhoneSnapshot<AppPayload>) => CheckPhoneSnapshot<AppPayload>): Promise<CheckPhoneSnapshot<AppPayload>> {
+  const id = snapshotKey(characterId, appId);
+  const saved = await db.transaction("rw", db.snapshots, async () => {
+    const current = await db.snapshots.get(id);
+    if (!current) throw new Error("角色尚无已保存的资产，请先在查手机中建立角色资产。");
+    const result = update(current as CheckPhoneSnapshot<AppPayload>);
+    await db.snapshots.put(result as CheckPhoneSnapshot);
+    return result;
+  });
+  snapshotCache.set(id, saved as CheckPhoneSnapshot);
+  return saved;
+}
+
 export async function clearPhoneSnapshot(characterId: string, appId: CheckPhoneAppId): Promise<void> {
   const key = snapshotKey(characterId, appId);
   snapshotCache.delete(key);

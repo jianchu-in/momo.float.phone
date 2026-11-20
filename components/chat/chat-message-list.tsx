@@ -817,6 +817,7 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
     return (
         <div
             className={`minimal-list-item${isPinned ? ' chat-pinned' : ''}`}
+            data-reverse-session={session.id}
             onClick={onSelect}
         >
             {isGroup ? (

@@ -2,6 +2,9 @@
 
 import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { reverseScope } from "@/lib/reverse-phone-storage";
+const ReversePhoneApp = dynamic(() => import("./reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
 import {
   AtSign,
   BookOpenText,
@@ -291,6 +294,7 @@ function getAppIconClass(appId: CheckPhoneAppId, isDock = false) {
 }
 
 export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
+  const [ownPhone, setOwnPhone] = useState(false);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeCharId, setActiveCharId] = useState<string | null>(null);
   const [states, setStates] = useState<Record<string, ManifestState>>({});
@@ -661,6 +665,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   });
 
   // STAGE 2: PURE FULLSCREEN IMMERSIVE SIMULATOR
+  if (ownPhone) return <ReversePhoneApp onClose={() => setOwnPhone(false)} />;
   if (activeCharacter) {
     return (
       <div className="cp-fullscreen-simulator">
@@ -1176,6 +1181,10 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
           </div>
 
           <div className="cp-roster-grid">
+            <button className="cp-roster-card" style={{ textAlign: "left", padding: 18, display: "flex", gap: 14, alignItems: "center" }} onClick={() => setOwnPhone(true)}>
+              {reverseScope().userAvatar ? <img src={reverseScope().userAvatar} alt="我的头像" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} /> : <span style={{ width: 48, height: 48, borderRadius: "50%", display: "grid", placeItems: "center", background: "#e4e8ed" }}>{reverseScope().userName.slice(0, 1)}</span>}
+              <span><strong>我的手机</strong><small style={{ display: "block", marginTop: 6, opacity: .6 }}>邀请角色反查岗 · 权限与查看记录</small></span>
+            </button>
             {characters.length === 0 && (
                <div className="cp-roster-empty">No target records found.</div>
             )}

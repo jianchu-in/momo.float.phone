@@ -65,6 +65,7 @@ export type ChatSession = {
     notifyCharacterOnAliasChange?: boolean;
     autoReplied?: boolean; // Whether the initial greeting auto-reply has been triggered
     alias?: string;
+    reversePhoneRemarkOperations?: string[];
     videoBackground?: string;
     /** 视频通话的可见动作描述，按会话保存。未设置时关闭。 */
     videoCallActions?: boolean;
@@ -159,6 +160,8 @@ export type ChatMessage = {
     origin?: "chat" | "reading_discuss" | "custom_app" | "custom_app_background" | "story_floating_phone";
     mediaUrl?: string;
     mediaData?: {
+        reversePhoneOperationId?: string;
+        reversePhoneActorId?: string;
         amount?: number;          // 红包/转账金额
         count?: number;           // 红包个数
         label?: string;           // 红包留言/转账备注/照片描述/位置名/表情名
