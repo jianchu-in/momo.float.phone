@@ -190,6 +190,14 @@ export async function loadAnnotations(bookId: string, chapterIndex: number): Pro
     return annots;
 }
 
+export async function loadAllBookAnnotations(bookId: string): Promise<ReadingAnnotation[]> {
+    return db.annotations.where("[bookId+chapterIndex]").between([bookId, Dexie.minKey], [bookId, Dexie.maxKey]).toArray();
+}
+
+export async function loadAllAnnotations(): Promise<ReadingAnnotation[]> {
+    return db.annotations.toArray();
+}
+
 export async function saveAnnotation(annotation: ReadingAnnotation): Promise<void> {
     await db.annotations.put(annotation);
     const key = annotationKey(annotation.bookId, annotation.chapterIndex);

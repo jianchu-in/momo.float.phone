@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useSyncExternalStore } from "react";
-import { ChevronLeft } from "lucide-react";
-import { CHAT_MESSAGE_PUSHED_EVENT, loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview, resolveChatCharacterAvatar } from "@/lib/chat-storage";
+import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { CHAT_MESSAGE_PUSHED_EVENT, CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings, loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview, resolveChatCharacterAvatar } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
 import { resolveUserIdentity, USER_IDENTITIES_UPDATED_EVENT } from "@/lib/settings-storage";
@@ -98,20 +98,32 @@ type ChatMessageListProps = {
 
 export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, onSelectMascot }: ChatMessageListProps) {
     const [sessions, setSessions] = useState<ChatSession[]>([]);
+    const [chatAppSettingsRev, setChatAppSettingsRev] = useState(0);
+    useEffect(() => {
+        const onSettings = () => setChatAppSettingsRev(v => v + 1);
+        window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, onSettings);
+        return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, onSettings);
+    }, []);
+    const isIMessage = React.useMemo(
+        () => loadChatAppSettings().globalChatUiStyle === "imessage",
+        [chatAppSettingsRev]
+    );
     const [listFilter, setListFilter] = useState("");
     const [listTab, setListTab] = useState<"all" | "private" | "group">("all");
     const [showPlusMenu, setShowPlusMenu] = useState(false);
+    const [showFilterMenu, setShowFilterMenu] = useState(false);
     const plusMenuRef = React.useRef<HTMLSpanElement>(null);
     useEffect(() => {
-        if (!showPlusMenu) return;
+        if (!showPlusMenu && !showFilterMenu) return;
         const handler = (e: PointerEvent) => {
             if (plusMenuRef.current && !plusMenuRef.current.contains(e.target as Node)) {
                 setShowPlusMenu(false);
+                setShowFilterMenu(false);
             }
         };
         document.addEventListener("pointerdown", handler);
         return () => document.removeEventListener("pointerdown", handler);
-    }, [showPlusMenu]);
+    }, [showPlusMenu, showFilterMenu]);
     const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResult, setSearchResult] = useState<Character | null | undefined>(undefined);
@@ -208,105 +220,127 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
     };
 
     return (
-        <div className="relative flex-1 h-full">
+        <div className={`relative flex-1 h-full ${isIMessage ? "imessage-list-page" : ""}`}>
             <PageShell
                 leftAction={
-                    <div className="flex items-center min-w-max">
-                        <button className="page-back-btn shrink-0 mr-2" type="button" onClick={onCloseApp} aria-label="返回">
+                    isIMessage ? (
+                        <button className="page-back-btn shrink-0" type="button" onClick={onCloseApp} aria-label="返回">
                             <ChevronLeft size={24} strokeWidth={1.5} />
                         </button>
-                        <div className="flex items-center gap-[10px]">
-                            <div className="w-[36px] h-[36px] rounded-full overflow-hidden bg-[var(--c-input)] flex items-center justify-center shrink-0">
-                                {identity?.avatarUrl ? (
-                                    <img src={identity.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                                ) : (
-                                    <ChatFallbackAvatar />
-                                )}
-                            </div>
-                            <div className="flex flex-col whitespace-nowrap">
-                                <span className="ts-16 font-bold text-[var(--c-text-title)] leading-tight">{identity?.name || "用户"}</span>
-                                <div className="flex items-center gap-1 mt-1">
-                                    <span className="w-[8px] h-[8px] rounded-full bg-[#2dd36f]"></span>
-                                    <span className="ts-10 text-[var(--c-icon)] font-medium">在线</span>
+                    ) : (
+                        <div className="flex items-center min-w-max">
+                            <button className="page-back-btn shrink-0 mr-2" type="button" onClick={onCloseApp} aria-label="返回">
+                                <ChevronLeft size={24} strokeWidth={1.5} />
+                            </button>
+                            <div className="flex items-center gap-[10px]">
+                                <div className="w-[36px] h-[36px] rounded-full overflow-hidden bg-[var(--c-input)] flex items-center justify-center shrink-0">
+                                    {identity?.avatarUrl ? (
+                                        <img src={identity.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <ChatFallbackAvatar />
+                                    )}
+                                </div>
+                                <div className="flex flex-col whitespace-nowrap">
+                                    <span className="ts-16 font-bold text-[var(--c-text-title)] leading-tight">{identity?.name || "用户"}</span>
+                                    <div className="flex items-center gap-1 mt-1">
+                                        <span className="w-[8px] h-[8px] rounded-full bg-[#2dd36f]"></span>
+                                        <span className="ts-10 text-[var(--c-icon)] font-medium">在线</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    )
                 }
                 rightAction={
-                    <span className="relative flex items-center gap-1" ref={plusMenuRef}>
-                        <button
-                            onClick={() => setShowPlusMenu(!showPlusMenu)}
-                            className="page-back-btn"
-                            type="button"
-                        >
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
-                        </button>
-
-                        {/* Dropout '+' Menu */}
-                        {showPlusMenu && (
-                            <div className="g-dropdown absolute top-[40px] right-0 py-2 px-0 w-[140px] z-[100]">
-                                <MenuOption
-                                    icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>}
-                                    label="发起聊天"
-                                    onClick={() => {
-                                        setShowPlusMenu(false);
-                                        setShowContactPicker(true);
-                                    }}
-                                />
-                                <MenuOption
-                                    icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>}
-                                    label="创建群聊"
-                                    onClick={() => {
-                                        setShowPlusMenu(false);
-                                        setShowGroupCreate(true);
-                                    }}
-                                />
-                                <MenuOption
-                                    icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>}
-                                    label="添加好友"
-                                    onClick={() => {
-                                        setShowPlusMenu(false);
-                                        setIsSearchModalOpen(true);
-                                        setSearchQuery("");
-                                        setSearchResult(undefined);
-
-                                        setIsSendingRequest(false);
-                                        setGreetingText(identity?.name ? `我是${identity.name}` : "你好");
-                                    }}
-                                />
-                            </div>
-                        )}
-                    </span>
+                    isIMessage ? (
+                        <span className="imessage-list-actions relative" ref={plusMenuRef}>
+                            <button
+                                onClick={() => { setShowPlusMenu(!showPlusMenu); setShowFilterMenu(false); }}
+                                className="imessage-list-action"
+                                aria-label="新建" aria-expanded={showPlusMenu}
+                                type="button"
+                            >
+                                <ComposeIcon />
+                            </button>
+                            <button
+                                className="imessage-list-action"
+                                type="button"
+                                aria-label="过滤"
+                                aria-expanded={showFilterMenu}
+                                data-filter-active={listTab !== "all" || undefined}
+                                onClick={() => { setShowFilterMenu(!showFilterMenu); setShowPlusMenu(false); }}
+                            >
+                                <svg width="26" height="26" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M6 10.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5m-2-3a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5m-2-3a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5" /></svg>
+                            </button>
+                            {showFilterMenu && (
+                                <div className="g-dropdown imessage-list-popover" aria-label="过滤会话">
+                                    {(["all", "private", "group"] as const).map(tab => (
+                                        <button
+                                            type="button"
+                                            key={tab}
+                                            className="imessage-filter-option"
+                                            aria-pressed={listTab === tab}
+                                            onClick={() => { setListTab(tab); setShowFilterMenu(false); }}
+                                        >
+                                            <span>{{ all: "全部消息", private: "私聊", group: "群聊" }[tab]}</span>
+                                            <Check size={18} style={{ visibility: listTab === tab ? "visible" : "hidden" }} />
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            {showPlusMenu && (
+                                <div className="g-dropdown imessage-list-popover">
+                                    <MenuOption icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>} label="发起聊天" onClick={() => { setShowPlusMenu(false); setShowContactPicker(true); }} />
+                                    <MenuOption icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>} label="创建群聊" onClick={() => { setShowPlusMenu(false); setShowGroupCreate(true); }} />
+                                    <MenuOption icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>} label="添加好友" onClick={() => { setShowPlusMenu(false); setIsSearchModalOpen(true); setSearchQuery(""); setSearchResult(undefined); setIsSendingRequest(false); setGreetingText(identity?.name ? `我是${identity.name}` : "你好"); }} />
+                                </div>
+                            )}
+                        </span>
+                    ) : (
+                        <span className="relative flex items-center gap-1" ref={plusMenuRef}>
+                            <button onClick={() => setShowPlusMenu(!showPlusMenu)} className="page-back-btn" type="button">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
+                            </button>
+                            {showPlusMenu && (
+                                <div className="g-dropdown absolute top-[40px] right-0 py-2 px-0 w-[140px] z-[100]">
+                                    <MenuOption icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>} label="发起聊天" onClick={() => { setShowPlusMenu(false); setShowContactPicker(true); }} />
+                                    <MenuOption icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>} label="创建群聊" onClick={() => { setShowPlusMenu(false); setShowGroupCreate(true); }} />
+                                    <MenuOption icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>} label="添加好友" onClick={() => { setShowPlusMenu(false); setIsSearchModalOpen(true); setSearchQuery(""); setSearchResult(undefined); setIsSendingRequest(false); setGreetingText(identity?.name ? `我是${identity.name}` : "你好"); }} />
+                                </div>
+                            )}
+                        </span>
+                    )
                 }
             >
-                <div className="px-5 pt-5 pb-3">
+                <div className={isIMessage ? "px-5 pt-1 pb-3" : "px-5 pt-5 pb-3"}>
                     <div className="flex items-center justify-between mb-4 mt-2">
-                        <span className="ts-28 font-bold text-[var(--c-text-title)]">Chats</span>
+                        <span className="ts-28 font-bold text-[var(--c-text-title)]">{isIMessage ? ({ all: "信息", private: "私聊", group: "群聊" }[listTab] || "信息") : "Chats"}</span>
                     </div>
                     <div className="chat-search-bar">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-icon)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                         <input
                             className="chat-search-input ts-15 w-full bg-transparent outline-none text-[var(--c-text-title)] placeholder:text-[var(--c-icon)]"
-                            placeholder="Search chats..."
+                            placeholder={isIMessage ? "搜索" : "Search chats..."}
                             value={listFilter}
                             onChange={(e) => setListFilter(e.target.value)}
                         />
                     </div>
                 </div>
-                <div className="chat-list-tabs" style={{ paddingLeft: 20, paddingRight: 20 }}>
-                    {(["all", "private", "group"] as const).map(tab => (
-                        <button
-                            key={tab}
-                            type="button"
-                            className={`chat-list-tab${listTab === tab ? " active" : ""}`}
-                            onClick={() => setListTab(tab)}
-                        >
-                            {{ all: "All", private: "Private", group: "Groups" }[tab]}
-                        </button>
-                    ))}
-                </div>
-                <div className="px-5 pt-2 flex flex-col">
+                {!isIMessage && (
+                    <div className="chat-list-tabs" style={{ paddingLeft: 20, paddingRight: 20 }}>
+                        {(["all", "private", "group"] as const).map(tab => (
+                            <button
+                                key={tab}
+                                type="button"
+                                className={`chat-list-tab${listTab === tab ? " active" : ""}`}
+                                onClick={() => setListTab(tab)}
+                            >
+                                {{ all: "All", private: "Private", group: "Groups" }[tab]}
+                            </button>
+                        ))}
+                    </div>
+                )}
+                <div className={isIMessage ? "imessage-session-list pt-2 flex flex-col" : "px-5 pt-2 flex flex-col"}>
                     {(() => {
                             const altAccount = findChatAltAccount(chatScope.chatAccountId);
                             const contactIds = new Set(altAccount ? altAccount.friendCharacterIds : loadChatContacts().map(c => c.characterId));
@@ -341,7 +375,7 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             })
                             .map(s => (
                                 <div key={s.id}>
-                                    <SessionItem session={s} onSelect={() => onSelectSession(s)} isPinned={!!s.isPinned} />
+                                    <SessionItem session={s} onSelect={() => onSelectSession(s)} isPinned={!!s.isPinned} isIMessage={isIMessage} />
                                 </div>
                             ));
                             if (!showMascot && regularItems.length === 0) {
@@ -789,7 +823,7 @@ function ContactPicker({ onClose, onSelect }: { onClose: () => void; onSelect: (
     );
 }
 
-function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, onSelect: () => void, isPinned?: boolean }) {
+function SessionItem({ session, onSelect, isPinned, isIMessage }: { session: ChatSession, onSelect: () => void, isPinned?: boolean, isIMessage?: boolean }) {
     const chars = loadCharacters();
     const character = chars.find(c => c.id === session.contactId);
     const lastVisibleMessage = getLastVisibleSessionMessage(session.id);
@@ -819,6 +853,9 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
             className={`minimal-list-item${isPinned ? ' chat-pinned' : ''}`}
             onClick={onSelect}
         >
+            {isIMessage && session.unreadCount > 0 && (
+                <span className="imessage-unread-dot" aria-hidden="true" />
+            )}
             {isGroup ? (
                 <div className="minimal-avatar-wrapper grid grid-cols-2 grid-rows-2 gap-[1px] p-[2px] bg-[var(--c-card-border)] rounded-full overflow-hidden">
                     {groupAvatarItems.map((c) => (
@@ -841,23 +878,24 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
                     ) : (
                         <ChatFallbackAvatar className="pointer-events-none rounded-full" />
                     )}
-                    <span className="minimal-online-dot" />
+                    {!isIMessage && <span className="minimal-online-dot" />}
                 </div>
             )}
             <div className="flex-1 overflow-hidden h-[48px] flex flex-col justify-center gap-1">
                 <div className="flex justify-between items-center">
-                    <span className="ts-16 font-medium text-[var(--c-text-title)] truncate">
-                        {isGroup ? (session.groupName || "群聊") : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
+                    <span className={isIMessage ? "imessage-session-name ts-16 font-medium text-[var(--c-text-title)]" : "ts-16 font-medium text-[var(--c-text-title)] truncate"}>
+                        <span className="truncate">{isGroup ? (session.groupName || "群聊") : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}</span>
+                        {isIMessage && !isGroup && <IdentityBadge />}
                     </span>
-                    <span className="ts-12 text-[var(--c-icon)] font-medium">
-                        {formatChatUiTime(displayTime)}
+                    <span className={isIMessage ? "imessage-session-time ts-12 text-[var(--c-icon)] font-medium" : "ts-12 text-[var(--c-icon)] font-medium"}>
+                        {formatChatUiTime(displayTime)}{isIMessage && <ChevronRight size={14} />}
                     </span>
                 </div>
                 <div className="flex justify-between items-center gap-2">
                     <span className="ts-13 text-[var(--c-text)] opacity-80 truncate font-normal">
                         {preview || getLastNonEmptyPreview(session.id)}
                     </span>
-                    {session.unreadCount > 0 && (
+                    {!isIMessage && session.unreadCount > 0 && (
                         <span
                             className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#ff3b30] text-white text-[10px] leading-[18px] text-center font-semibold shrink-0"
                             aria-label={`${session.unreadCount} 条未读消息`}
@@ -869,4 +907,12 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
             </div>
         </div>
     );
+}
+
+function IdentityBadge() {
+    return <svg className="imessage-identity-badge" width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor" /><path d="m4.8 8 2.1 2.1 4.3-4.3" fill="none" stroke="var(--list-badge-ink, white)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+function ComposeIcon() {
+    return <svg width="25" height="25" viewBox="1 11 22 22" fill="currentColor" aria-hidden="true"><path d="M19.5854 15.2002L18.4482 14.0547L19.0542 13.457C19.3281 13.1914 19.7349 13.1582 19.9922 13.4155L20.1831 13.6147C20.4653 13.8887 20.4653 14.2871 20.1831 14.5859L19.5854 15.2002ZM9.59961 24.2563C9.44189 24.3228 9.27588 24.1318 9.34229 23.9907L10.0894 22.4302L17.834 14.6855L18.9712 15.8062L11.2183 23.5508L9.59961 24.2563ZM6.57812 29.6353C4.85156 29.6353 3.97168 28.7803 3.97168 27.062V17.4995C3.97168 15.7896 4.85156 14.9263 6.57812 14.9263H15.9829L14.6465 16.2627H6.60303C5.77295 16.2627 5.30811 16.7109 5.30811 17.5742V26.9956C5.30811 27.8589 5.77295 28.2988 6.60303 28.2988H16.3066C16.8877 28.2988 17.3442 27.8589 17.3442 26.9956V19.0269L18.6807 17.6904V27.062C18.6807 28.7803 17.8174 29.6353 16.3232 29.6353H6.57812Z" /></svg>;
 }

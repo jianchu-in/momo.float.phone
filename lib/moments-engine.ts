@@ -33,7 +33,10 @@ import {
     loadPresets,
     loadWorldBooks,
     loadRegexes,
+    loadImageGenerationSettings,
 } from "./settings-storage";
+import { getImageGenerationMode } from "./settings-types";
+import { resolveMemoriesPhotoForUse } from "./memories-photo-resolver";
 import { resolveChatScopeUserIdentity } from "./chat-scope-storage";
 import type { PresetConfig, ApiConfig } from "./settings-types";
 import { loadMemoryConfig, incrementEventCounter } from "./memory-storage";
@@ -1234,6 +1237,30 @@ export async function generateMomentPhotoUrl(
 ): Promise<{ url: string; prompt: string } | undefined> {
     try {
         throwIfAborted(signal);
+
+        const imageSettings = loadImageGenerationSettings();
+        const mode = getImageGenerationMode(imageSettings);
+
+        let memoriesMatch = null;
+        if (mode !== "api") {
+            memoriesMatch = await resolveMemoriesPhotoForUse({
+                characterId,
+                description,
+            }).catch((err) => {
+                console.warn("[Memories] 朋友圈检索照片失败，回退生图:", err);
+                return null;
+            });
+        }
+
+        if (memoriesMatch?.imageUrl) {
+            return { url: memoriesMatch.imageUrl, prompt: memoriesMatch.photo.prompt || description };
+        }
+
+        if (mode === "album") {
+            throw new Error("纯用相册模式：未在相册中找到匹配照片，已拦截生图 API");
+        }
+
+        // 3. 回退 API 生图
         const generated = await generateImageFromConfiguredApi({
             description,
             characterId,
@@ -1250,7 +1277,7 @@ export async function generateMomentPhotoUrl(
     } catch (error) {
         if (isAbortError(error)) throw error;
         console.warn("[Moments] Image generation failed:", error);
-        return undefined;
+        throw error;
     }
 }
 

@@ -77,7 +77,7 @@ export const DOCK_DEFAULT: IconId[] = ["settings", "theme", "resources", "charac
 export const ICONS: Record<IconId, IconMeta> = {
   chat: { id: "chat", label: "\u804a\u5929", tone: "var(--c-icon-green)", placeholder: false },
   favorites: { id: "favorites", label: "收藏", tone: "var(--c-icon-amber)", placeholder: false },
-  diary: { id: "diary", label: "手记", tone: "var(--c-icon-violet)", placeholder: false },
+  diary: { id: "diary", label: "iCity", tone: "var(--c-icon-violet)", placeholder: false },
   music: { id: "music", label: "\u97F3\u4E50", tone: "var(--c-icon-coral)", placeholder: false },
   reading: { id: "reading", label: "\u9605\u8BFB", tone: "var(--c-icon-amber)", placeholder: false },
   cocreate: { id: "cocreate", label: "共创", tone: "var(--c-icon-cocreate, #c8b58a)", placeholder: false },

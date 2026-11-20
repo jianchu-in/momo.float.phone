@@ -1,6 +1,9 @@
 import { saveChatImageToIndexedDB } from "./chat-asset-storage";
+import { getImageGenerationMode } from "./settings-types";
 import { syncChatGeneratedImagePromptText, updateChatMessage, type ChatMessage } from "./chat-storage";
 import { generatedImageFilename, generateImageFromConfiguredApi } from "./image-generation-service";
+import { loadImageGenerationSettings } from "./settings-storage";
+import { resolveMemoriesPhotoForUse } from "./memories-photo-resolver";
 import { updateMomentPost } from "./moments-storage";
 import type { MomentPost } from "./moments-types";
 
@@ -77,6 +80,53 @@ export async function generateAndApplyChatGeneratedImage(
     }
 
     try {
+        const imageSettings = loadImageGenerationSettings();
+        const mode = getImageGenerationMode(imageSettings);
+
+        let memoriesMatch = null;
+        if (mode !== "api") {
+            // 混合模式或纯相册模式：优先从相册检索
+            memoriesMatch = await resolveMemoriesPhotoForUse({
+                characterId,
+                description,
+            }).catch((err) => {
+                console.warn("[Memories] 检索照片失败，回退生图:", err);
+                return null;
+            });
+        }
+
+        if (memoriesMatch) {
+            const fileName = generatedImageFilename(description, "image/png");
+            const previousData = message.mediaData ?? {};
+            const nextData: ChatMessage["mediaData"] = {
+                ...previousData,
+                label: description,
+                fileType: "image",
+                fileName,
+                useReferenceImage: effectiveUseReference,
+                useUserReferenceImage: effectiveUseUserReference,
+                imageGenerationMediaRef: memoriesMatch.photo.mediaRef || undefined,
+                imageGenerationPrompt: memoriesMatch.photo.prompt || description,
+                imageGenerationUsedReference: false,
+                imageGenerationStatus: "generated",
+                imageGenerationError: undefined,
+            };
+            const updated = updateChatMessage(message.id, {
+                content: fileName,
+                mediaType: "image",
+                mediaUrl: memoriesMatch.imageUrl,
+                mediaData: nextData,
+            });
+            if (updated) {
+                dispatchChatMessagesUpdated(updated.sessionId, updated);
+                return updated;
+            }
+        }
+
+        if (mode === "album") {
+            throw new Error("纯用相册模式：未在相册中找到匹配照片，已拦截生图 API");
+        }
+
         const generated = await generateImageFromConfiguredApi({
             description,
             characterId,
@@ -168,9 +218,43 @@ export async function retryMomentGeneratedPhoto(
     dispatchMomentsUpdated();
 
     try {
+        const characterId = post.authorType === "character" ? post.authorId : undefined;
+        const imageSettings = loadImageGenerationSettings();
+        const mode = getImageGenerationMode(imageSettings);
+
+        let memoriesMatch = null;
+        if (mode !== "api") {
+            memoriesMatch = await resolveMemoriesPhotoForUse({
+                characterId,
+                description,
+            }).catch((err) => {
+                console.warn("[Memories] 朋友圈重试检索照片失败，回退生图:", err);
+                return null;
+            });
+        }
+
+        if (memoriesMatch?.imageUrl) {
+            const updated = updateMomentPost(post.id, {
+                photoUrl: memoriesMatch.imageUrl,
+                photoDescription: description,
+                photoUseReferenceImage: effectiveUseReference,
+                photoUseUserReferenceImage: effectiveUseUserReference,
+                photoGenerationStatus: "generated",
+                photoGenerationPrompt: memoriesMatch.photo.prompt || description,
+                photoGenerationError: undefined,
+            });
+            if (!updated) throw new Error("原朋友圈不存在，无法替换图片");
+            dispatchMomentsUpdated();
+            return updated;
+        }
+
+        if (mode === "album") {
+            throw new Error("纯用相册模式：未在相册中找到匹配照片，已拦截生图 API");
+        }
+
         const generated = await generateImageFromConfiguredApi({
             description,
-            characterId: post.authorType === "character" ? post.authorId : undefined,
+            characterId,
             appId: "moments",
             useReferenceImage: effectiveUseReference,
             includeUserReferenceImage: effectiveUseUserReference ? undefined : false,

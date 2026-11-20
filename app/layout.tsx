@@ -7,6 +7,7 @@ import { CSSImportEnhancer } from "@/components/css-import-enhancer";
 import { PWAManifestInjector } from "@/components/pwa-manifest-injector";
 import { PWARegistrar } from "@/components/pwa-registrar";
 import "../styles/fonts.css";
+import "../styles/imessage26.css";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -30,6 +31,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <head>
+        <meta name="referrer" content="no-referrer" />
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
         <meta name="theme-color" content="#f8f7f2" />
         <link rel="apple-touch-icon" href="/icon-192.png" />

@@ -14,6 +14,7 @@ import {
     saveReadingAppearance,
     saveReadingBackground,
     saveReadingCustomFont,
+    READING_THEMES,
     type ReadingAppearance,
 } from "@/lib/reading-appearance";
 
@@ -64,9 +65,7 @@ export default function ReadingApp({ onClose }: Props) {
     useEffect(() => {
         hydrateReadingStorage().then(() => setReady(true));
         setAppearance(loadReadingAppearance());
-        void loadReadingBackground().then((blob) => {
-            updateBackgroundUrl(blob ? URL.createObjectURL(blob) : null);
-        });
+        // 背景底图已被用户移除，统一走经典主题系统
         void loadReadingCustomFont().then((blob) => {
             void loadCustomFontFace(blob);
         });
@@ -82,6 +81,9 @@ export default function ReadingApp({ onClose }: Props) {
     ) => {
         const normalized = saveReadingAppearance(nextAppearance);
         setAppearance(normalized);
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("reading-appearance-changed"));
+        }
 
         if (options.clearBackground) {
             await saveReadingBackground(null);
@@ -106,12 +108,14 @@ export default function ReadingApp({ onClose }: Props) {
         }
     };
 
+    const activeThemeObj = READING_THEMES.find((t) => t.id === appearance.themeId) || READING_THEMES[0];
+
     const appearanceStyle = {
         ["--reading-font-family" as "--reading-font-family"]: resolveReadingFontFamily(appearance.fontFamily, customFontFamily),
         ["--reading-font-size" as "--reading-font-size"]: `${appearance.fontSize}px`,
-        ["--reading-text-color" as "--reading-text-color"]: appearance.textColor,
+        ["--reading-text-color" as "--reading-text-color"]: activeThemeObj.textColor,
         ["--reading-line-height" as "--reading-line-height"]: String(appearance.lineHeight),
-        ["--reading-bg-image" as "--reading-bg-image"]: backgroundUrl ? `url("${backgroundUrl}")` : "none",
+        ["--reading-bg-image" as "--reading-bg-image"]: "none",
     } as CSSProperties;
     const hiddenViewerStyle = {
         position: "absolute",
@@ -120,10 +124,10 @@ export default function ReadingApp({ onClose }: Props) {
         pointerEvents: "none",
     } as CSSProperties;
 
-    if (!ready) return <div className="absolute inset-0 z-[100] flex items-center justify-center" style={{ background: "#fffced" }}><span className="ts-14" style={{ color: "#a39487" }}>加载中...</span></div>;
+    if (!ready) return <div className="absolute inset-0 z-[100] flex items-center justify-center" style={{ background: activeThemeObj.bg }}><span className="ts-14" style={{ color: activeThemeObj.subtextColor }}>加载中...</span></div>;
 
     return (
-        <div className="absolute inset-0" style={appearanceStyle}>
+        <div className="absolute inset-0 w-full h-full overflow-hidden transition-colors duration-300" style={{ ...appearanceStyle, backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
             {!activeBook && (
                 <ReadingShelf
                     onOpenBook={setActiveBook}
@@ -134,7 +138,7 @@ export default function ReadingApp({ onClose }: Props) {
                 />
             )}
             {lastBookRef.current && (
-                <div style={activeBook ? undefined : hiddenViewerStyle} aria-hidden={!activeBook}>
+                <div className="absolute inset-0 w-full h-full" style={activeBook ? undefined : hiddenViewerStyle} aria-hidden={!activeBook}>
                     <ReadingViewer book={lastBookRef.current} onBack={() => setActiveBook(null)} />
                 </div>
             )}

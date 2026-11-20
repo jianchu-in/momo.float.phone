@@ -102,7 +102,13 @@ function isExtraPromptMode(mode: DebugMode): mode is ExtraPromptAppId {
     return EXTRA_PROMPT_APPS.some(app => app.id === mode);
 }
 
-export function DebugPromptPanel() {
+export function DebugPromptPanel({
+    managed = false,
+    onManagedClose,
+}: {
+    managed?: boolean;
+    onManagedClose?: () => void;
+} = {}) {
     const chatState = useSyncExternalStore(subscribeDebugChatState, getDebugChatState, () => null);
     const promptSnapshot = useSyncExternalStore(subscribeDebugPromptSnapshot, getDebugPromptSnapshot, () => null);
     const [collapsed, setCollapsed] = useState(true);
@@ -258,11 +264,15 @@ export function DebugPromptPanel() {
     }, [chatSessionOptions, chatState?.session?.id, selectedChatSessionId]);
 
     const handleClosePanel = useCallback(() => {
+        if (managed) {
+            onManagedClose?.();
+            return;
+        }
         setCollapsed(true);
         if (floatingDockEnabled) {
             collapseFloatingDock();
         }
-    }, [floatingDockEnabled]);
+    }, [floatingDockEnabled, managed, onManagedClose]);
 
     useEffect(() => {
         const syncEnabled = (event?: Event) => {
@@ -908,10 +918,10 @@ export function DebugPromptPanel() {
         setAdventureWorldId(adventureWorldOptions[0].id);
     }, [adventureWorldId, adventureWorldOptions]);
 
-    if (!enabled) return null;
+    if (!managed && !enabled) return null;
 
-    const isPanelOpen = !collapsed;
-    const showFloatingButton = collapsed || floatingDockEnabled;
+    const isPanelOpen = managed || !collapsed;
+    const showFloatingButton = !managed && (collapsed || floatingDockEnabled);
     const isDual = floatingDockEnabled && quickActionEnabled && enabled;
     const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
 
@@ -968,7 +978,7 @@ export function DebugPromptPanel() {
         </button>
     ) : null;
 
-    if (collapsed) {
+    if (!managed && collapsed) {
         return floatingButton;
     }
 

@@ -88,6 +88,12 @@ export type ChatSession = {
     chineseThinkingPromptLength?: ChineseThinkingPromptLength;
     /** 流式生成（线下）：开启后该会话的线下 AI 回复边生成边显示（默认关，保持原整段请求行为） */
     streamOffline?: boolean;
+    /** 聊天界面风格：classic=经典普通，imessage=苹果拟态 */
+    chatUiStyle?: "classic" | "imessage";
+    /** 美化预设：classic=经典实色，glass=拟态半透玻璃 */
+    beautyPreset?: "classic" | "glass";
+    /** 兼容旧版开关 */
+    glassBubblesEnabled?: boolean;
     /**
      * 线下摘要自动补提：模型没写 <summary> 时再发一次小请求让它补。默认开；
      * 关掉就只调一次 API，那一轮没摘要（不进短期记忆的事件流）。按次计费的接口想省一半调用时关它。
@@ -380,6 +386,10 @@ export type ChatAppSettings = {
     floatingDockEnabled?: boolean; // 悬浮球贴边半隐藏收拢模式（默认关）
     /** 用剧情 APP 取代聊天输入栏原“线下模式”入口。 */
     storyAsOfflineMode?: boolean;
+    /** 全局聊天界面风格：classic=经典普通，imessage=苹果拟态 */
+    globalChatUiStyle?: "classic" | "imessage";
+    /** 全局美化预设：classic=经典实色，glass=拟态半透玻璃 */
+    globalBeautyPreset?: "classic" | "glass";
 };
 
 // ── 聊天提示音配置 ────────────────────────────────────────────────

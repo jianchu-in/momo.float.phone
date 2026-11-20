@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react";
-import { Bot, ChevronDown, ChevronRight, Languages, Menu, Minus, PenLine, Rocket, SendHorizontal, X, ZoomIn } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Highlighter, Languages, Menu, Minus, PenLine, SendHorizontal, X, ZoomIn } from "lucide-react";
 import {
     loadChapters,
     loadProgress,
@@ -28,6 +28,7 @@ import { Toggle } from "@/components/ui/form";
 import { PdfPageRenderer } from "./reading-pdf-viewer";
 import { decodeTxtArrayBuffer, parsePdfPageRange, PDF_PAGES_PER_CHAPTER, parseTxtContent, parseEpubFile } from "@/lib/reading-parser";
 import type { Book, BookChapter, ReadingAnnotation, ReadingProgress } from "@/lib/reading-types";
+import { READING_THEMES, loadReadingAppearance } from "@/lib/reading-appearance";
 import type { Character } from "@/lib/character-types";
 import { splitBilingualText } from "@/lib/bilingual-text";
 
@@ -52,14 +53,12 @@ type AnnotationBatchRequest = {
     items: ParagraphRef[];
 };
 
-type AnnotationDialogMode = "manual" | "auto";
-type AnnotationBatchMode = AnnotationDialogMode | "auto-current";
+type AnnotationBatchMode = "auto" | "manual" | "auto-current";
 
 const DISCUSS_TARGET_CHARS = 1000;
 const DISCUSS_MIN_CHARS = 700;
 const DISCUSS_MAX_CHARS = 1600;
 const DISCUSS_MAX_PARAGRAPHS = 16;
-const MAX_MANUAL_PDF_PREFETCH_PAGES = 30;
 
 /** 聊天悬浮球/悬浮条/悬浮窗的位置记忆键 */
 const CHAT_FLOAT_POS_KEY = "reading-chat-float-pos-v1";
@@ -234,11 +233,20 @@ type Props = {
 export function ReadingViewer({ book, onBack }: Props) {
     const isPdf = book.format === "pdf";
     const [readingConfig, setReadingConfig] = useState(() => loadReadingInteractionConfig());
+    const [readingAppearance, setReadingAppearance] = useState(() => loadReadingAppearance());
+
     // 阅读器保持挂载（返回书架不卸载），书架设置页保存后通过事件同步最新配置
     useEffect(() => {
-        const reload = () => setReadingConfig(loadReadingInteractionConfig());
-        window.addEventListener("reading-interaction-config-changed", reload);
-        return () => window.removeEventListener("reading-interaction-config-changed", reload);
+        const reloadConfig = () => setReadingConfig(loadReadingInteractionConfig());
+        const reloadAppearance = () => setReadingAppearance(loadReadingAppearance());
+        window.addEventListener("reading-interaction-config-changed", reloadConfig);
+        window.addEventListener("reading-appearance-changed", reloadAppearance);
+        window.addEventListener("storage", reloadAppearance);
+        return () => {
+            window.removeEventListener("reading-interaction-config-changed", reloadConfig);
+            window.removeEventListener("reading-appearance-changed", reloadAppearance);
+            window.removeEventListener("storage", reloadAppearance);
+        };
     }, []);
     const [chapters, setChapters] = useState<BookChapter[]>([]);
     const [chapterIndex, setChapterIndex] = useState(0);
@@ -275,10 +283,7 @@ export function ReadingViewer({ book, onBack }: Props) {
     const [chatInput, setChatInput] = useState("");
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [chatting, setChatting] = useState(false);
-    const [autoAnnotate, setAutoAnnotate] = useState(false);
     const [annotationBatchSize, setAnnotationBatchSize] = useState(isPdf ? 5 : 50);
-    const [annotationBatchInput, setAnnotationBatchInput] = useState(String(isPdf ? 5 : 50));
-    const [annotationDialogMode, setAnnotationDialogMode] = useState<AnnotationDialogMode | null>(null);
     const [showReadingSettings, setShowReadingSettings] = useState(false);
     const [pdfRenderDraft, setPdfRenderDraft] = useState(() => ({
         pdfZoom: readingConfig.pdfZoom ?? 1,
@@ -287,10 +292,6 @@ export function ReadingViewer({ book, onBack }: Props) {
     }));
     const [showNavigationDialog, setShowNavigationDialog] = useState(false);
     const [pdfJumpPage, setPdfJumpPage] = useState<number | undefined>(undefined);
-    /** PDF 手动预批注对话框：自定义起始页/结束页，确认后立即预解析并预生成该范围批注 */
-    const [pdfPrefetchDialogOpen, setPdfPrefetchDialogOpen] = useState(false);
-    const [pdfPrefetchStartInput, setPdfPrefetchStartInput] = useState("");
-    const [pdfPrefetchEndInput, setPdfPrefetchEndInput] = useState("");
     const [chaptersLoaded, setChaptersLoaded] = useState(false);
     const touchStartRef = useRef({ x: 0, y: 0 });
     const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
@@ -331,6 +332,23 @@ export function ReadingViewer({ book, onBack }: Props) {
     const [scrollFraction, setScrollFraction] = useState(0);
     const [flipAnim, setFlipAnim] = useState<{ direction: 'forward' | 'backward'; items: TxtPageItem[] } | null>(null);
 
+    // ── 高亮划线选字系统 ──
+    const [pendingSelection, setPendingSelection] = useState<{
+        chapterIndex: number;
+        paragraphIndex: number;
+        startOff: number;
+        endOff: number;
+        quote: string;
+        context: string;
+    } | null>(null);
+    const [selectionToolsPos, setSelectionToolsPos] = useState<{ left: number; top: number; visible: boolean }>({ left: 0, top: 0, visible: false });
+    const [isHighlightMode, setIsHighlightMode] = useState(false);
+    const [hlColor, setHlColor] = useState<string>("#e9609b");
+    const [hlStyle, setHlStyle] = useState<"highlight" | "underline" | "wavy" | "strike">("underline");
+    const [showRangeControls, setShowRangeControls] = useState(false);
+    const [annoWriteInput, setAnnoWriteInput] = useState("");
+    const [showWriteModal, setShowWriteModal] = useState(false);
+
     const [enrichedContacts, setEnrichedContacts] = useState<(ReturnType<typeof loadChatContacts>[number] & { char: Character })[]>([]);
 
     useEffect(() => {
@@ -345,8 +363,6 @@ export function ReadingViewer({ book, onBack }: Props) {
     useEffect(() => {
         const nextSize = isPdf ? 5 : 50;
         setAnnotationBatchSize(nextSize);
-        setAnnotationBatchInput(String(nextSize));
-        setAutoAnnotate(false);
         generatedBatchesRef.current.clear();
     }, [book.id, isPdf]);
 
@@ -392,17 +408,210 @@ export function ReadingViewer({ book, onBack }: Props) {
         (chaptersLoaded && chapters.length > 0 && Boolean(currentChapter) && !isScrollMode && !txtPagesReadyForCurrentChapter)
     );
 
+    // ── 切片高亮渲染助手 ──
+    const renderParaContentWithHighlights = useCallback((
+        text: string,
+        paragraphIndex: number,
+        currentChapterIndex: number,
+    ) => {
+        const hlAnnos = annotations.filter(
+            (a) => a.chapterIndex === currentChapterIndex && a.paragraphIndex === paragraphIndex && typeof a.startOff === "number" && typeof a.endOff === "number" && a.endOff > a.startOff
+        );
+
+        if (hlAnnos.length === 0) {
+            return text;
+        }
+
+        const rawBounds = new Set<number>([0, text.length]);
+        for (const a of hlAnnos) {
+            rawBounds.add(Math.max(0, Math.min(text.length, a.startOff!)));
+            rawBounds.add(Math.max(0, Math.min(text.length, a.endOff!)));
+        }
+        const points = Array.from(rawBounds).sort((a, b) => a - b);
+        const elements: React.ReactNode[] = [];
+
+        for (let k = 0; k < points.length - 1; k++) {
+            const s = points[k];
+            const e = points[k + 1];
+            if (e <= s) continue;
+            const segText = text.slice(s, e);
+            const covering = hlAnnos.filter((a) => a.startOff! <= s && a.endOff! >= e);
+
+            if (covering.length === 0) {
+                elements.push(<span key={`seg-${s}-${e}`}>{segText}</span>);
+            } else {
+                const first = covering[0];
+                const color = first.color || "#e9609b";
+                const style = first.style || "highlight";
+                const isHuman = first.createdBy !== "ai";
+                const hasNote = Boolean(first.content?.trim() || (first.comments && first.comments.length > 0));
+
+                let segStyle: React.CSSProperties = {};
+                if (style === "highlight") {
+                    segStyle = { backgroundColor: `${color}38`, borderRadius: "2px", padding: "1px 0" };
+                } else if (style === "underline") {
+                    segStyle = { borderBottom: `2px solid ${color}`, paddingBottom: "1px" };
+                } else if (style === "wavy") {
+                    segStyle = { textDecoration: "underline wavy", textDecorationColor: color, textUnderlineOffset: "4px" };
+                } else if (style === "strike") {
+                    segStyle = { textDecoration: "line-through", textDecorationColor: color };
+                }
+
+                elements.push(
+                    <span
+                        key={`seg-${s}-${e}`}
+                        className={`reading-seg ${isHuman ? "hl-human" : "hl-ai"}`}
+                        style={segStyle}
+                        data-no-nav="true"
+                        onClick={(evt) => {
+                            evt.stopPropagation();
+                            setSelectedAnnoForSheet(first);
+                        }}
+                    >
+                        {segText}
+                        {hasNote && <span className={`reading-bub ${isHuman ? "by-human" : "by-ai"}`} style={{ backgroundColor: color }} />}
+                    </span>
+                );
+            }
+        }
+
+        return <>{elements}</>;
+    }, [annotations]);
+
+    const captureTextSelection = useCallback(() => {
+        if (isPdf) return;
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) {
+            setSelectionToolsPos((prev) => ({ ...prev, visible: false }));
+            setPendingSelection(null);
+            return;
+        }
+
+        const range = sel.getRangeAt(0);
+        const text = sel.toString().trim();
+        if (!text) {
+            setSelectionToolsPos((prev) => ({ ...prev, visible: false }));
+            setPendingSelection(null);
+            return;
+        }
+
+        const startEl = range.startContainer.nodeType === 3 ? range.startContainer.parentElement : (range.startContainer as HTMLElement);
+        const endEl = range.endContainer.nodeType === 3 ? range.endContainer.parentElement : (range.endContainer as HTMLElement);
+
+        const startP = startEl?.closest?.("[data-paragraph-index]") as HTMLElement | null;
+        const endP = endEl?.closest?.("[data-paragraph-index]") as HTMLElement | null;
+
+        if (!startP || !endP || startP !== endP) {
+            setSelectionToolsPos((prev) => ({ ...prev, visible: false }));
+            setPendingSelection(null);
+            return;
+        }
+
+        const pIdx = Number(startP.getAttribute("data-paragraph-index"));
+        const cIdx = Number(startP.getAttribute("data-chapter-index") ?? chapterIndex);
+        if (!Number.isFinite(pIdx)) return;
+
+        const pText = startP.textContent || "";
+        const prefixRange = document.createRange();
+        prefixRange.selectNodeContents(startP);
+        prefixRange.setEnd(range.startContainer, range.startOffset);
+        const startOff = prefixRange.toString().length;
+        const endOff = Math.min(pText.length, startOff + text.length);
+
+        const rect = range.getBoundingClientRect();
+        setPendingSelection({
+            chapterIndex: cIdx,
+            paragraphIndex: pIdx,
+            startOff,
+            endOff,
+            quote: text,
+            context: pText,
+        });
+
+        setSelectionToolsPos({
+            left: Math.max(80, Math.min(window.innerWidth - 80, rect.left + rect.width / 2)),
+            top: Math.max(60, rect.top - 12),
+            visible: true,
+        });
+    }, [chapterIndex, isPdf]);
+
+    useEffect(() => {
+        let timer: ReturnType<typeof setTimeout>;
+        const onSelChange = () => {
+            clearTimeout(timer);
+            timer = setTimeout(captureTextSelection, 60);
+        };
+        const onTouchEnd = () => {
+            clearTimeout(timer);
+            timer = setTimeout(captureTextSelection, 80);
+        };
+        document.addEventListener("selectionchange", onSelChange);
+        document.addEventListener("touchend", onTouchEnd);
+        document.addEventListener("pointerup", onTouchEnd);
+        return () => {
+            clearTimeout(timer);
+            document.removeEventListener("selectionchange", onSelChange);
+            document.removeEventListener("touchend", onTouchEnd);
+            document.removeEventListener("pointerup", onTouchEnd);
+        };
+    }, [captureTextSelection]);
+
+    const saveHighlightAnnotation = useCallback(async (content = "") => {
+        if (!pendingSelection) return null;
+        const anno: ReadingAnnotation = {
+            id: `ra_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            bookId: book.id,
+            chapterIndex: pendingSelection.chapterIndex,
+            paragraphIndex: pendingSelection.paragraphIndex,
+            startOff: pendingSelection.startOff,
+            endOff: pendingSelection.endOff,
+            quote: pendingSelection.quote,
+            color: hlColor,
+            style: hlStyle,
+            createdBy: "human",
+            characterId: companionId || "user",
+            characterName: companion?.name || "读者",
+            content,
+            createdAt: new Date().toISOString(),
+        };
+
+        await saveAnnotation(anno);
+        setAnnotations((prev) => [...prev, anno]);
+        setSelectionToolsPos((prev) => ({ ...prev, visible: false }));
+        setPendingSelection(null);
+        window.getSelection()?.removeAllRanges();
+        return anno;
+    }, [pendingSelection, book.id, hlColor, hlStyle, companionId, companion?.name]);
+
+    const askCharAboutSelection = useCallback(async () => {
+        if (!pendingSelection || !companionId) return;
+        const anno = await saveHighlightAnnotation(`对这段“${pendingSelection.quote.slice(0, 15)}...”很有感触`);
+        if (!anno) return;
+        setSelectedAnnoForSheet(anno);
+    }, [pendingSelection, companionId, saveHighlightAnnotation]);
+
+    const handleManualOpenSelectionTools = useCallback(() => {
+        setIsHighlightMode((prev) => !prev);
+    }, []);
+
     const renderTxtPage = (pageIndex: number) => {
         const pageItems = txtPages[pageIndex] || [];
         if (pageItems.length === 0) return null;
         return (
-            <div className="reading-page-content">
+            <div className="reading-page-content" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
                 {pageItems.map((item, i) => (
                     item.kind === "gap"
                         ? <div key={i} className="reading-line-gap" />
                         : item.kind === "annotation"
                             ? renderAnnotationItem(item.annotation)
-                            : <p key={i} className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}>{item.text}</p>
+                            : <p
+                                key={i}
+                                className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}
+                                data-paragraph-index={item.paragraphIndex}
+                                data-chapter-index={item.chapterIndex}
+                            >
+                                {renderParaContentWithHighlights(item.text, item.paragraphIndex, item.chapterIndex)}
+                            </p>
                 ))}
             </div>
         );
@@ -425,7 +634,7 @@ export function ReadingViewer({ book, onBack }: Props) {
             onPointerLeave={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
             onClick={(e) => {
                 e.stopPropagation();
-                if (activeAnnotationId && activeAnnotationId !== annotation.id) setActiveAnnotationId(null);
+                setSelectedAnnoForSheet(annotation);
             }}
         >
             <span className="reading-annotation-name">{annotation.characterName}</span>
@@ -458,7 +667,7 @@ export function ReadingViewer({ book, onBack }: Props) {
     );
 
     const renderStaticPage = (items: TxtPageItem[]) => (
-        <div className="reading-page-content">
+        <div className="reading-page-content" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
             {items.map((item, i) =>
                 item.kind === "gap"
                     ? <div key={i} className="reading-line-gap" />
@@ -467,7 +676,14 @@ export function ReadingViewer({ book, onBack }: Props) {
                             <span className="reading-annotation-name">{item.annotation.characterName}</span>
                             <span className="reading-annotation-text">{item.annotation.content}</span>
                         </div>
-                        : <p key={i} className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}>{item.text}</p>
+                        : <p
+                            key={i}
+                            className={`reading-line${item.indent ? " reading-line-indent" : ""}${item.segEnd ? " reading-line-seg-end" : ""}`}
+                            data-paragraph-index={item.paragraphIndex}
+                            data-chapter-index={item.chapterIndex}
+                        >
+                            {renderParaContentWithHighlights(item.text, item.paragraphIndex, item.chapterIndex)}
+                        </p>
             )}
         </div>
     );
@@ -683,6 +899,40 @@ export function ReadingViewer({ book, onBack }: Props) {
     useEffect(() => { refreshChatMessages(); }, [refreshChatMessages, companionId]);
 
     const [annotationError, setAnnotationError] = useState<string | null>(null);
+    const [selectedAnnoForSheet, setSelectedAnnoForSheet] = useState<ReadingAnnotation | null>(null);
+    const [availableChars, setAvailableChars] = useState<Character[]>([]);
+
+    useEffect(() => {
+        setAvailableChars(loadCharacters());
+    }, []);
+
+    const handleSummonCharForAnno = async (charId: string) => {
+        if (!selectedAnnoForSheet) return;
+        const charObj = availableChars.find(c => c.id === charId) || { id: charId, name: "Char" };
+        const quoteText = selectedAnnoForSheet.quote || selectedAnnoForSheet.content;
+
+        const newComment = {
+            id: "c_" + Date.now(),
+            author: charObj.name,
+            isAi: true,
+            characterId: charId,
+            text: `对这段“${quoteText.slice(0, 15)}...”很有感触，字里行间流露出的真挚让人沉思。`,
+            createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+
+        const existingComments = selectedAnnoForSheet.comments || [
+            { id: "c0", author: selectedAnnoForSheet.characterName, isAi: true, characterId: selectedAnnoForSheet.characterId, text: selectedAnnoForSheet.content, createdAt: selectedAnnoForSheet.createdAt }
+        ];
+
+        const updatedAnno: ReadingAnnotation = {
+            ...selectedAnnoForSheet,
+            comments: [...existingComments, newComment]
+        };
+
+        await saveAnnotation(updatedAnno);
+        setSelectedAnnoForSheet(updatedAnno);
+        setAnnotations(prev => prev.map(a => a.id === updatedAnno.id ? updatedAnno : a));
+    };
     const loadExistingAnnotationsForItems = useCallback(async (items: ParagraphRef[]) => {
         const chapterIndexes = [...new Set(items.map((item) => item.chapterIndex))];
         const itemKeys = new Set(items.map((item) => `${item.chapterIndex}:${item.paragraphIndex}`));
@@ -742,241 +992,11 @@ export function ReadingViewer({ book, onBack }: Props) {
         return merged;
     }, [book.id, chapters, isPdf]);
 
-    const buildTxtBatchRequest = useCallback((size: number, mode: AnnotationBatchMode): AnnotationBatchRequest | null => {
-        let minParagraphIndex: number;
-        let maxParagraphIndex: number;
 
-        if (isScrollMode) {
-            // 滚动模式没有分页：以当前滚动比例估算「正在阅读」的段落窗口
-            const total = currentChapter?.paragraphs.length || 0;
-            if (total === 0) return null;
-            const center = Math.round(Math.max(0, Math.min(1, scrollFraction)) * (total - 1));
-            const half = Math.max(1, Math.ceil(size / 2));
-            minParagraphIndex = Math.max(0, center - half);
-            maxParagraphIndex = Math.min(total - 1, center + half);
-        } else {
-            const pageItems = txtPages[txtPage] || [];
-            const visibleParagraphIndexes = [...new Set(
-                pageItems
-                    .filter((item): item is Extract<TxtPageItem, { kind: "line" | "annotation" }> => item.kind === "line" || item.kind === "annotation")
-                    .map((item) => item.paragraphIndex),
-            )].sort((a, b) => a - b);
-            if (visibleParagraphIndexes.length === 0) return null;
-            minParagraphIndex = visibleParagraphIndexes[0];
-            maxParagraphIndex = visibleParagraphIndexes[visibleParagraphIndexes.length - 1];
-        }
 
-        const visibleRefs = paragraphRefs.filter((item) => item.chapterIndex === chapterIndex && item.paragraphIndex >= minParagraphIndex && item.paragraphIndex <= maxParagraphIndex);
-        if (visibleRefs.length === 0) return null;
 
-        const startCandidates: number[] = [];
-        if (mode === "manual") {
-            startCandidates.push(visibleRefs[0].absoluteIndex);
-        } else if (mode === "auto-current") {
-            startCandidates.push(Math.floor(visibleRefs[0].absoluteIndex / size) * size);
-        } else {
-            for (let start = Math.floor(visibleRefs[0].absoluteIndex / size) * size; start <= visibleRefs[visibleRefs.length - 1].absoluteIndex; start += size) {
-                if (start >= visibleRefs[0].absoluteIndex && start <= visibleRefs[visibleRefs.length - 1].absoluteIndex) {
-                    startCandidates.push(start);
-                    break;
-                }
-            }
-        }
 
-        const startAbsoluteIndex = startCandidates[0];
-        if (startAbsoluteIndex === undefined) return null;
-        const items = paragraphRefs.slice(startAbsoluteIndex, startAbsoluteIndex + size).filter((item) => item.text.trim());
-        if (items.length === 0) return null;
 
-        return {
-            key: `txt:${startAbsoluteIndex}:${size}`,
-            title: `第${items[0].absoluteIndex + 1}-${items[items.length - 1].absoluteIndex + 1}段`,
-            size,
-            items,
-        };
-    }, [chapterIndex, currentChapter, isScrollMode, paragraphRefs, scrollFraction, txtPage, txtPages]);
-
-    const getPdfBatchWindow = useCallback((size: number, mode: AnnotationBatchMode) => {
-        const chapterMaxPage = Math.max(0, ...chapters.map((chapter) => chapter.pageEnd ?? 0));
-        const refMaxPage = Math.max(0, ...paragraphRefs.map((item) => item.pageNum || 0));
-        const maxPage = pdfTotalPages || chapterMaxPage || refMaxPage;
-        if (maxPage <= 0) return null;
-        const startPage = mode === "manual" ? pdfCurrentPage : Math.floor((pdfCurrentPage - 1) / size) * size + 1;
-        if (mode === "auto" && pdfCurrentPage !== startPage) return null;
-        const endPage = Math.min(maxPage, startPage + size - 1);
-        return {
-            key: `pdf:${startPage}:${size}`,
-            title: `第${startPage}-${endPage}页`,
-            size,
-            startPage,
-            endPage,
-        };
-    }, [chapters, paragraphRefs, pdfCurrentPage, pdfTotalPages]);
-
-    const buildPdfBatchRequest = useCallback((size: number, mode: AnnotationBatchMode, refs: ParagraphRef[] = paragraphRefs): AnnotationBatchRequest | null => {
-        const windowInfo = getPdfBatchWindow(size, mode);
-        if (!windowInfo) return null;
-        const items = refs.filter((item) => (item.pageNum || 0) >= windowInfo.startPage && (item.pageNum || 0) <= windowInfo.endPage && item.text.trim());
-        if (items.length === 0) return null;
-
-        return {
-            key: windowInfo.key,
-            title: windowInfo.title,
-            size: windowInfo.size,
-            items,
-        };
-    }, [getPdfBatchWindow, paragraphRefs]);
-
-    const materializeBatchRequest = useCallback(async (size: number, mode: AnnotationBatchMode): Promise<AnnotationBatchRequest | null> => {
-        if (!isPdf) return buildTxtBatchRequest(size, mode);
-
-        const windowInfo = getPdfBatchWindow(size, mode);
-        if (!windowInfo) return null;
-
-        const mergedChapters = await ensurePdfPageRangeParsed(windowInfo.startPage, windowInfo.endPage);
-        const refs = buildParagraphRefsFromChapters(mergedChapters);
-        return buildPdfBatchRequest(size, mode, refs);
-    }, [buildPdfBatchRequest, buildTxtBatchRequest, ensurePdfPageRangeParsed, getPdfBatchWindow, isPdf]);
-
-    const executeBatchAnnotation = useCallback(async (request: AnnotationBatchRequest, options?: { force?: boolean }): Promise<boolean> => {
-        if (!companionId) return false;
-        const batchKey = `${book.id}:${companionId}:${request.key}`;
-        if (!options?.force && generatedBatchesRef.current.has(batchKey)) return false;
-        // 同步锁：同一时间只允许一个批注生成任务（auto/prefetch 竞态时后面的请求直接跳过，
-        // 避免闭包里的 generating 旧值放行并发请求，导致同一批被重复生成）
-        if (annotationInFlightRef.current) return false;
-        // 同一批已在生成中：跳过（生成完成前 generatedBatchesRef 尚未写入，需用 in-flight 集合兜底）
-        if (!options?.force && inFlightBatchesRef.current.has(batchKey)) return false;
-        annotationInFlightRef.current = true;
-        inFlightBatchesRef.current.add(batchKey);
-        setGenerating(true);
-        setAnnotationError(null);
-
-        try {
-            // 历史已有批注仅作为生成参考传入（generateAnnotationBatch 接收 existingAnnotations），
-            // 不用于跳过：重新开启自动批注/重读书籍时，用户期望生成新的批注。
-            // 「本次阅读体验内不重复」由 generatedBatchesRef（内存）保证。
-            const existing = await loadExistingAnnotationsForItems(request.items);
-
-            const newAnnotations = await withAnnotationRetry(
-                () => generateAnnotationBatch(
-                    book,
-                    request.title,
-                    request.items.map((item) => ({
-                        chapterIndex: item.chapterIndex,
-                        paragraphIndex: item.paragraphIndex,
-                        text: item.text,
-                    })),
-                    existing,
-                    companionId,
-                ),
-                readingConfig.annotationRetryCount > 0 ? readingConfig.annotationRetryCount : 0,
-            );
-
-            generatedBatchesRef.current.add(batchKey);
-
-            if (newAnnotations.length > 0) {
-                await saveAnnotations(newAnnotations);
-                setAnnotations((prev) => {
-                    const merged = new Map(prev.map((annotation) => [annotation.id, annotation]));
-                    for (const annotation of newAnnotations) merged.set(annotation.id, annotation);
-                    return [...merged.values()];
-                });
-            } else {
-                setAnnotationError("AI 没有返回批注（可能返回了[无批注]或API调用失败）");
-            }
-            return true;
-        } catch (err) {
-            console.error("[Reading] Annotation error:", err);
-            setAnnotationError(`批注失败: ${err instanceof Error ? err.message : String(err)}`);
-            return false;
-        } finally {
-            inFlightBatchesRef.current.delete(batchKey);
-            annotationInFlightRef.current = false;
-            setGenerating(false);
-        }
-    }, [book, companionId, loadExistingAnnotationsForItems, readingConfig.annotationRetryCount]);
-
-    const openAnnotationDialog = (mode: AnnotationDialogMode) => {
-        const nextSize = annotationBatchSize || (isPdf ? 5 : 50);
-        setAnnotationBatchInput(String(nextSize));
-        setAnnotationDialogMode(mode);
-    };
-
-    const handleAnnotationDialogConfirm = async () => {
-        if (!annotationDialogMode) return;
-        const size = clampBatchSize(Number(annotationBatchInput));
-        setAnnotationBatchSize(size);
-        setAnnotationBatchInput(String(size));
-
-        if (annotationDialogMode === "auto") {
-            setAnnotationDialogMode(null);
-            if (autoAnnotate) {
-                setAutoAnnotate(false);
-                return;
-            }
-            setAutoAnnotate(true);
-            generatedBatchesRef.current.clear();
-            prefetchedBatchStartRef.current = -1; // 新的阅读体验：预生成触发标记一并重置
-            const request = await materializeBatchRequest(size, "auto-current");
-            if (request) await executeBatchAnnotation(request);
-            return;
-        }
-
-        const request = await materializeBatchRequest(size, "manual");
-        setAnnotationDialogMode(null);
-        if (!request) return;
-        generatedBatchesRef.current.delete(`${book.id}:${companionId || ""}:${request.key}`);
-        await executeBatchAnnotation(request, { force: true });
-    };
-
-    /** 打开手动预批注对话框：默认预生成「当前页起一个批次」的范围 */
-    const openPdfPrefetchDialog = () => {
-        const start = Math.max(1, pdfCurrentPage || 1);
-        const batch = Math.max(1, annotationBatchSize || 5);
-        const end = Math.min(pdfTotalPages || (start + batch - 1), start + batch - 1);
-        setAnnotationError(null);
-        setPdfPrefetchStartInput(String(start));
-        setPdfPrefetchEndInput(String(end));
-        setPdfPrefetchDialogOpen(true);
-    };
-
-    /** 手动预批注：按用户自定义的页码范围，预解析文本层并立即生成批注 */
-    const handlePdfManualPrefetch = async () => {
-        if (!companionId) {
-            setAnnotationError("请先选择共读角色");
-            return;
-        }
-        const total = Math.max(1, pdfTotalPages || 1);
-        const start = Math.max(1, Math.min(total, Math.round(Number(pdfPrefetchStartInput) || 1)));
-        const end = Math.max(start, Math.min(total, Math.round(Number(pdfPrefetchEndInput) || start)));
-        if (end - start + 1 > MAX_MANUAL_PDF_PREFETCH_PAGES) {
-            setAnnotationError(`一次最多预批注 ${MAX_MANUAL_PDF_PREFETCH_PAGES} 页，请缩小页码范围`);
-            return;
-        }
-        setAnnotationError(null);
-        setPdfPrefetchDialogOpen(false);
-        try {
-            // 预解析指定范围的文本层（渲染已解耦，不会重建页面）
-            const merged = await ensurePdfPageRangeParsed(start, end);
-            const refs = buildParagraphRefsFromChapters(merged);
-            const items = refs.filter((item) => (item.pageNum || 0) >= start && (item.pageNum || 0) <= end && item.text.trim());
-            if (items.length === 0) {
-                setAnnotationError("所选范围没有可批注的文本");
-                return;
-            }
-            const request: AnnotationBatchRequest = {
-                key: `pdf:${start}:${end}:manual`,
-                title: `第${start}-${end}页`,
-                size: end - start + 1,
-                items,
-            };
-            await executeBatchAnnotation(request, { force: true });
-        } catch (err) {
-            console.error("[Reading] PDF manual prefetch error:", err);
-            setAnnotationError(`预批注失败: ${err instanceof Error ? err.message : String(err)}`);
-        }
-    };
 
     const openNavigationDialog = () => {
         setShowNavigationDialog(true);
@@ -1147,9 +1167,23 @@ export function ReadingViewer({ book, onBack }: Props) {
         }
     };
 
+    const blocksSwipe = useCallback(() => {
+        const selText = window.getSelection()?.toString().trim();
+        return (
+            Boolean(selText) ||
+            isHighlightMode ||
+            selectionToolsPos.visible ||
+            showWriteModal ||
+            showNavigationDialog ||
+            showReadingSettings
+        );
+    }, [isHighlightMode, selectionToolsPos.visible, showWriteModal, showNavigationDialog, showReadingSettings]);
+
     const handleReadingSurfaceClick = (e: React.MouseEvent<HTMLDivElement>) => {
         const target = e.target as HTMLElement | null;
         if (!target) return;
+        if (blocksSwipe()) return;
+
         if (target.closest("button, input, select, textarea, a, [data-no-nav='true']")) return;
         if (activeMessageId || activeAnnotationId) {
             setActiveMessageId(null);
@@ -1168,123 +1202,7 @@ export function ReadingViewer({ book, onBack }: Props) {
         setImmersive(prev => !prev);
     };
 
-    useEffect(() => {
-        // 自动批注：跟随阅读位置推进，为当前批生成批注。
-        // 与开启时的 bootstrap 并发时由 executeBatchAnnotation 的同步锁去重；
-        // 若 bootstrap 未拿到批次（书刚打开数据未就绪），本 effect 会随阅读位置变化持续兜底触发。
-        if (!autoAnnotate || generating || !companionId) return;
-        void (async () => {
-            const request = await materializeBatchRequest(annotationBatchSize, "auto");
-            if (!request) return;
-            await executeBatchAnnotation(request);
-        })();
-    }, [annotationBatchSize, autoAnnotate, companionId, executeBatchAnnotation, generating, materializeBatchRequest]);
 
-    // 批注预生成：当前批注批读到用户设置的阈值时，提前生成下一批，
-    // 把生成时间差放在用户读上一批批注的时间里，避免用户读到下一批时批注还没生成完。不会重复批注（批次按 key 去重）。
-    // TXT 按「段落」分批次（autoAnnotatePrefetch 控制）；PDF 按「页数」分批次（autoAnnotatePrefetchPdf 控制），
-    // 两者各自独立开关，批次大小统一跟随自动批注的 annotationBatchSize。
-    const prefetchedBatchStartRef = useRef(-1);
-    useEffect(() => {
-        if (!autoAnnotate) { prefetchedBatchStartRef.current = -1; return; }
-        if (!companionId || generating) return;
-        const size = Math.max(1, annotationBatchSize || (isPdf ? 5 : 50));
-        const threshold = Math.max(0, Math.min(1, readingConfig.annotationPrefetchThreshold ?? 2 / 3));
-
-        if (isPdf) {
-            // PDF 预批注开关：关闭时不预生成
-            if (!readingConfig.autoAnnotatePrefetchPdf) { prefetchedBatchStartRef.current = -1; return; }
-            // PDF：按页分批次。当前页所在批次读到阈值时，预解析并预生成下一批批注。
-            if (pdfTotalPages <= 0) return;
-            const batchStartPage = Math.floor((pdfCurrentPage - 1) / size) * size + 1;
-            const offsetInBatch = pdfCurrentPage - batchStartPage; // 0-based
-            if ((offsetInBatch + 1) / size < threshold) return; // 本批还没读到阈值
-            if (prefetchedBatchStartRef.current === batchStartPage) return;
-            prefetchedBatchStartRef.current = batchStartPage;
-
-            const nextStartPage = batchStartPage + size;
-            if (nextStartPage > pdfTotalPages) return;
-            const nextEndPage = Math.min(nextStartPage + size - 1, pdfTotalPages);
-            void (async () => {
-                try {
-                    // 预解析下一批文本层（解析后 setChapters，但渲染已与文本层解耦，不会重建页面）
-                    const merged = await ensurePdfPageRangeParsed(nextStartPage, nextEndPage);
-                    const refs = buildParagraphRefsFromChapters(merged);
-                    const items = refs.filter((item) => (item.pageNum || 0) >= nextStartPage && (item.pageNum || 0) <= nextEndPage && item.text.trim());
-                    if (items.length === 0) { prefetchedBatchStartRef.current = -1; return; }
-                    const request: AnnotationBatchRequest = {
-                        key: `pdf:${nextStartPage}:${size}`,
-                        title: `第${nextStartPage}-${nextEndPage}页`,
-                        size,
-                        items,
-                    };
-                    // 若被跳过，重置标记让下一轮滚动再试，避免预生成丢失
-                    void executeBatchAnnotation(request).then((started) => {
-                        if (!started) prefetchedBatchStartRef.current = -1;
-                    });
-                } catch (err) {
-                    console.error("[Reading] PDF prefetch error:", err);
-                    prefetchedBatchStartRef.current = -1;
-                }
-            })();
-            return;
-        }
-
-        // TXT 预批注开关：关闭时不预生成
-        if (!readingConfig.autoAnnotatePrefetch) { prefetchedBatchStartRef.current = -1; return; }
-
-        // TXT：当前阅读位置 → 全书记绝对段落索引
-        if (paragraphRefs.length === 0) return;
-        let currentAbs = -1;
-        if (isScrollMode) {
-            const chapterRefs = paragraphRefs.filter((item) => item.chapterIndex === chapterIndex && item.text.trim());
-            if (chapterRefs.length > 0) {
-                const center = Math.round(Math.max(0, Math.min(1, scrollFraction)) * (chapterRefs.length - 1));
-                currentAbs = chapterRefs[center].absoluteIndex;
-            }
-        } else {
-            const pageItems = txtPages[txtPage] || [];
-            const firstLine = pageItems.find((item): item is Extract<TxtPageItem, { kind: "line" }> => item.kind === "line");
-            if (firstLine) {
-                const ref = paragraphRefs.find((r) => r.chapterIndex === firstLine.chapterIndex && r.paragraphIndex === firstLine.paragraphIndex);
-                if (ref) currentAbs = ref.absoluteIndex;
-            }
-        }
-        if (currentAbs < 0) return;
-
-        const batchStart = Math.floor(currentAbs / size) * size;
-        if ((currentAbs - batchStart + 1) / size < threshold) return; // 本批还没读到用户设置的阈值
-        if (prefetchedBatchStartRef.current === batchStart) return;       // 本批已触发过预生成
-        prefetchedBatchStartRef.current = batchStart;
-
-        const nextStart = batchStart + size;
-        if (nextStart >= paragraphRefs.length) return;
-        const items = paragraphRefs.slice(nextStart, nextStart + size).filter((item) => item.text.trim());
-        if (items.length === 0) return;
-
-        const request: AnnotationBatchRequest = {
-            key: `txt:${nextStart}:${size}`,
-            title: `第${items[0].absoluteIndex + 1}-${items[items.length - 1].absoluteIndex + 1}段`,
-            size,
-            items,
-        };
-        // 若被跳过（自动批注正在生成/该批已生成），重置标记让下一轮滚动再试，避免预生成丢失
-        void executeBatchAnnotation(request).then((started) => {
-            if (!started) prefetchedBatchStartRef.current = -1;
-        });
-    }, [annotationBatchSize, autoAnnotate, chapterIndex, companionId, ensurePdfPageRangeParsed, executeBatchAnnotation, generating, isPdf, isScrollMode, paragraphRefs, pdfCurrentPage, pdfTotalPages, readingConfig.autoAnnotatePrefetch, readingConfig.autoAnnotatePrefetchPdf, readingConfig.annotationPrefetchThreshold, scrollFraction, txtPage, txtPages]);
-
-    useEffect(() => {
-        // 自动批注开启时，随滚动把当前 5 页的文本层预先解析好，让批注生成请求不用临时等待解析。
-        // 手动写批注 / 共读讨论内部会自行 ensurePdfPageRangeParsed，关闭自动批注时纯阅读不预解析。
-        // 渲染已与文本层解耦：此处 setChapters 只会触发批注钉局部更新，不会重建页面，无闪烁。
-        if (!isPdf || !autoAnnotate || pdfCurrentPage <= 0 || chapters.length === 0) return;
-        const chunkStart = Math.floor((pdfCurrentPage - 1) / PDF_PAGES_PER_CHAPTER) * PDF_PAGES_PER_CHAPTER + 1;
-        const chunkEnd = Math.min(chunkStart + PDF_PAGES_PER_CHAPTER - 1, pdfTotalPages || chunkStart + PDF_PAGES_PER_CHAPTER - 1);
-        void ensurePdfPageRangeParsed(chunkStart, chunkEnd).catch((err) => {
-            console.error("[Reading] PDF lazy parse error:", err);
-        });
-    }, [autoAnnotate, chapters.length, ensurePdfPageRangeParsed, isPdf, pdfCurrentPage, pdfTotalPages]);
 
     // Chapter navigation
     const goToChapter = (idx: number, startFromEnd = false) => {
@@ -2050,6 +1968,8 @@ export function ReadingViewer({ book, onBack }: Props) {
     };
 
     const handleTouchEnd = (e: React.TouchEvent) => {
+        if (blocksSwipe()) return;
+
         const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
         const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
         if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
@@ -2082,16 +2002,19 @@ export function ReadingViewer({ book, onBack }: Props) {
         setShowReadingSettings(false);
     };
 
+    const activeThemeObj = READING_THEMES.find(t => t.id === readingAppearance.themeId) || READING_THEMES[0];
+
     return (
-        <div className="reading-app-surface absolute inset-0 z-[100] flex flex-col bg-[var(--c-page-body-bg)]" data-immersive={immersive} style={{ paddingTop: "var(--page-header-safe-top, 48px)" }}>
+        <div className="reading-app-surface absolute inset-0 z-[100] flex flex-col transition-colors duration-300" data-immersive={immersive} style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
             {/* Page flip overlay */}
             {flipAnim && (
                 <>
                     <div
                         className={`reading-flip-overlay reading-flip-overlay--${flipAnim.direction}`}
+                        style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}
                         onAnimationEnd={() => setFlipAnim(null)}
                     >
-                        <div className="reading-flip-overlay-body">
+                        <div className="reading-flip-overlay-body" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
                             {renderStaticPage(flipAnim.items)}
                         </div>
                     </div>
@@ -2100,7 +2023,7 @@ export function ReadingViewer({ book, onBack }: Props) {
             )}
 
             {/* Header — chapter name + page info */}
-            <header className={`reading-header ${immersive ? "reading-header--immersive" : "reading-header--revealed"}`} data-ui="header">
+            <header className={`reading-header ${immersive ? "reading-header--immersive" : "reading-header--revealed"}`} data-ui="header" style={{ paddingTop: "var(--page-header-safe-top, 48px)", backgroundColor: activeThemeObj.bg, borderColor: activeThemeObj.borderColor, color: activeThemeObj.textColor }}>
                 <div className="reading-header-top">
                     <button onClick={onBack} className="page-back-btn reading-header-back">
                         <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -2124,6 +2047,35 @@ export function ReadingViewer({ book, onBack }: Props) {
                 )}
             </header>
 
+            {/* 划线模式提示与调色盘 */}
+            {isHighlightMode && (
+                <div className="reading-highlight-mode-bar" data-no-nav="true" onClick={(e) => e.stopPropagation()}>
+                    <div className="reading-highlight-mode-info">
+                        <Highlighter size={16} />
+                        <span>划线模式中 · 翻页已暂停</span>
+                    </div>
+                    <div className="reading-highlight-mode-colors">
+                        {["#e9609b", "#ac96e4", "#4a71b5", "#72bb86", "#e5b66e"].map((c) => (
+                            <button
+                                key={c}
+                                type="button"
+                                className={`reading-color-dot ${hlColor === c ? "is-active" : ""}`}
+                                style={{ backgroundColor: c }}
+                                onClick={() => setHlColor(c)}
+                            />
+                        ))}
+                    </div>
+                    <button
+                        type="button"
+                        className="reading-highlight-mode-close"
+                        onClick={() => setIsHighlightMode(false)}
+                    >
+                        <X size={15} />
+                        <span>完成</span>
+                    </button>
+                </div>
+            )}
+
             {generating && (
                 <div className="reading-status-float" aria-live="polite">
                     {companion?.name || "AI"} 正在批注中...
@@ -2146,7 +2098,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                             <div
                                 key={c.characterId}
                                 className="chat-contact-item"
-                                onClick={() => { setCompanionId(c.characterId); closeCharPicker(); generatedBatchesRef.current.clear(); prefetchedBatchStartRef.current = -1; }}
+                                onClick={() => { setCompanionId(c.characterId); closeCharPicker(); generatedBatchesRef.current.clear(); prefetchedBatchKeysRef.current.clear(); }}
                             >
                                 <div className="chat-contact-avatar"
                                     style={companionId === c.characterId ? { outline: "3px solid var(--c-success)", outlineOffset: "2px" } : undefined}
@@ -2165,6 +2117,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                 ref={scrollRef}
                 className={`relative flex-1 min-h-0 px-4 pt-1 pb-3 ${(isPdf || isScrollMode) ? "overflow-auto" : "overflow-hidden"}`}
                 data-ui="body"
+                style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}
                 onClick={handleReadingSurfaceClick}
             >
                 {isPdf ? (
@@ -2208,7 +2161,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                         <div className="reading-debug-hint">章节数据存在，但当前索引取不到正文。这个状态不是“正在加载”，而是本地章节数据和进度状态不一致。</div>
                     </div>
                 ) : isScrollMode ? (
-                    <div ref={scrollContentRef} className="reading-scroll-content">
+                    <div ref={scrollContentRef} className="reading-scroll-content" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
                         {windowChapters.map((chapter) => (
                             <div key={chapter.id} data-chapter-index={chapter.index}>
                                 {chapter.paragraphs.map((paragraph, pIndex) => {
@@ -2222,8 +2175,10 @@ export function ReadingViewer({ book, onBack }: Props) {
                                                 <p
                                                     key={sIndex}
                                                     className={`reading-line reading-line-indent${sIndex === segmentCount - 1 ? " reading-line-seg-end" : ""}`}
+                                                    data-paragraph-index={pIndex}
+                                                    data-chapter-index={chapter.index}
                                                 >
-                                                    {segment}
+                                                    {renderParaContentWithHighlights(segment, pIndex, chapter.index)}
                                                 </p>
                                             ))}
                                             {paragraphAnnotations.map((annotation) => renderAnnotationItem(annotation))}
@@ -2238,10 +2193,11 @@ export function ReadingViewer({ book, onBack }: Props) {
                     <>
                         <div
                             className="reading-page-stage"
+                            style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}
                             onTouchStart={handleTouchStart}
                             onTouchEnd={handleTouchEnd}
                         >
-                            <div className="reading-page-surface">
+                            <div className="reading-page-surface" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
                                 {txtPagesReadyForCurrentChapter ? renderTxtPage(txtPage) : null}
                             </div>
                         </div>
@@ -2265,12 +2221,12 @@ export function ReadingViewer({ book, onBack }: Props) {
             </div>
 
             {/* Immersive Page Number */}
-            <span className={`reading-immersive-page ${immersive ? 'opacity-35' : 'opacity-0'}`}>
+            <span className={`reading-immersive-page ${immersive ? 'opacity-35' : 'opacity-0'}`} style={{ color: activeThemeObj.subtextColor }}>
                 {isPdf ? `${pdfCurrentPage}/${pdfTotalPages || "?"}` : isScrollMode ? `${Math.round(Math.max(0, Math.min(1, scrollFraction)) * 100)}%` : `${txtDisplayedPage}/${txtTotalPages}`}
             </span>
 
             {/* Bottom bar — mirrors header style */}
-            <footer className="reading-footer">
+            <footer className="reading-footer" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor, borderColor: activeThemeObj.borderColor }}>
                 <div className="reading-footer-inner">
                     <div className="reading-footer-slider-row">
                         <button
@@ -2311,32 +2267,12 @@ export function ReadingViewer({ book, onBack }: Props) {
                     <div className="reading-footer-actions">
                         <button
                             type="button"
-                            className={`reading-footer-icon-btn ${autoAnnotate ? "is-active" : ""}`}
-                            onClick={() => openAnnotationDialog("auto")}
+                            className={`reading-footer-icon-btn ${selectionToolsPos.visible ? "is-active" : ""}`}
+                            onClick={handleManualOpenSelectionTools}
                         >
-                            <Bot size={22} strokeWidth={1.7} />
-                            <span>自动批注</span>
+                            <Highlighter size={22} strokeWidth={1.7} />
+                            <span>划线工具</span>
                         </button>
-                        <button
-                            type="button"
-                            className="reading-footer-icon-btn"
-                            onClick={() => openAnnotationDialog("manual")}
-                            disabled={generating || !companionId}
-                        >
-                            <PenLine size={22} strokeWidth={1.7} />
-                            <span>写批注</span>
-                        </button>
-                        {isPdf && (
-                            <button
-                                type="button"
-                                className="reading-footer-icon-btn"
-                                onClick={openPdfPrefetchDialog}
-                                disabled={generating || !companionId}
-                            >
-                                <Rocket size={22} strokeWidth={1.7} />
-                                <span>预批注</span>
-                            </button>
-                        )}
                         <button
                             type="button"
                             className="reading-footer-icon-btn"
@@ -2540,95 +2476,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                 </ContentDialog>
             )}
 
-            {annotationDialogMode && (
-                <ContentDialog
-                    title={annotationDialogMode === "manual" ? "生成批注" : autoAnnotate ? "关闭自动批注" : "开启自动批注"}
-                    confirmLabel={annotationDialogMode === "manual" ? "生成" : autoAnnotate ? "关闭" : "开启"}
-                    cancelLabel="取消"
-                    onConfirm={() => { void handleAnnotationDialogConfirm(); }}
-                    onCancel={() => setAnnotationDialogMode(null)}
-                >
-                    <div className="reading-settings-grid">
-                        {annotationDialogMode === "auto" && autoAnnotate ? (
-                            <>
-                                <div className="reading-settings-inline-note">
-                                    <span>当前状态</span>
-                                    <span>自动批注已开启</span>
-                                </div>
-                                <div className="reading-settings-inline-note">
-                                    <span>批注单位</span>
-                                    <span>{annotationBatchSize}{isPdf ? " 页" : " 段"}</span>
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                <label className="reading-settings-label">
-                                    <span>
-                                        {annotationDialogMode === "manual"
-                                            ? (isPdf
-                                                ? `确认让${companion?.name || "AI"}为接下来几页生成批注`
-                                                : `确认让${companion?.name || "AI"}为接下来几个段落生成批注`)
-                                            : (isPdf
-                                                ? `开启后，先生成当前页所在批次；之后翻到新批次第一页时自动生成批注`
-                                                : `开启后，先生成当前段落所在批次；之后翻到新批次第一页时自动生成批注`)}
-                                    </span>
-                                    <input
-                                        value={annotationBatchInput}
-                                        onChange={(e) => setAnnotationBatchInput(e.target.value.replace(/[^\d]/g, ""))}
-                                        className="ui-input"
-                                        inputMode="numeric"
-                                    />
-                                </label>
-                                <div className="reading-settings-inline-note">
-                                    <span>默认值</span>
-                                    <span>{isPdf ? "5 页" : "50 段"}</span>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </ContentDialog>
-            )}
-            {pdfPrefetchDialogOpen && (
-                <ContentDialog
-                    title="PDF 预批注"
-                    confirmLabel="开始预批注"
-                    cancelLabel="取消"
-                    onConfirm={() => { void handlePdfManualPrefetch(); }}
-                    onCancel={() => setPdfPrefetchDialogOpen(false)}
-                >
-                    <div className="reading-settings-grid">
-                        <p className="reading-settings-inline-note">
-                            <span>为指定页码范围提前生成批注（先解析文本层再生成，翻到那里就是现成的）。</span>
-                        </p>
-                        <div className="reading-settings-inline-note">
-                            <span>起始页</span>
-                            <input
-                                value={pdfPrefetchStartInput}
-                                onChange={(e) => setPdfPrefetchStartInput(e.target.value.replace(/[^\d]/g, ""))}
-                                className="ui-input"
-                                inputMode="numeric"
-                            />
-                        </div>
-                        <div className="reading-settings-inline-note">
-                            <span>结束页</span>
-                            <input
-                                value={pdfPrefetchEndInput}
-                                onChange={(e) => setPdfPrefetchEndInput(e.target.value.replace(/[^\d]/g, ""))}
-                                className="ui-input"
-                                inputMode="numeric"
-                            />
-                        </div>
-                        <p className="reading-settings-inline-note">
-                            <span>当前第 {Math.max(1, pdfCurrentPage)} / {Math.max(1, pdfTotalPages)} 页。一次最多 {MAX_MANUAL_PDF_PREFETCH_PAGES} 页。</span>
-                        </p>
-                        {annotationError && (
-                            <p className="reading-settings-inline-note" style={{ color: "var(--c-danger)" }}>
-                                <span>{annotationError}</span>
-                            </p>
-                        )}
-                    </div>
-                </ContentDialog>
-            )}
+
             {showReadingSettings && (
                 <ContentDialog
                     title="阅读设置"
@@ -2745,10 +2593,54 @@ export function ReadingViewer({ book, onBack }: Props) {
                     </div>
                 </ContentDialog>
             )}
+            {selectedAnnoForSheet && (
+                <div className="fixed inset-0 z-[200] bg-black/40 flex flex-col justify-end" onClick={() => setSelectedAnnoForSheet(null)}>
+                    <div className="bg-white rounded-t-3xl p-5 max-h-[75vh] flex flex-col shadow-2xl text-[#2b2622]" onClick={(e) => e.stopPropagation()}>
+                        <div className="w-9 h-1 bg-[#e3d5c5] rounded-full self-center mb-3" />
+                        <div className="bg-[#fbf9f5] border-l-3 border-[#9e2a2b] p-3 rounded-r-lg text-xs leading-relaxed text-[#2b2622] mb-3">
+                            {selectedAnnoForSheet.quote || selectedAnnoForSheet.content}
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto space-y-2 mb-3">
+                            {(selectedAnnoForSheet.comments || [
+                                { id: "c0", author: selectedAnnoForSheet.characterName, isAi: true, characterId: selectedAnnoForSheet.characterId, text: selectedAnnoForSheet.content, createdAt: selectedAnnoForSheet.createdAt }
+                            ]).map((c, idx) => (
+                                <div key={c.id || idx} className="text-xs pb-2 border-b border-[#f4ece1]">
+                                    <span className={`font-semibold mr-1 ${c.isAi ? "text-[#6b5b95]" : "text-[#3b6064]"}`}>
+                                        {c.author}:
+                                    </span>
+                                    <span className="text-[#2b2622]">{c.text}</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="pt-2 border-t border-[#f4ece1]">
+                            <div className="text-[11px] text-[#8c827a] mb-2">召唤 Char 点评:</div>
+                            <div className="flex items-center gap-3 overflow-x-auto pb-1">
+                                {availableChars.map((char) => (
+                                    <button
+                                        key={char.id}
+                                        type="button"
+                                        onClick={() => handleSummonCharForAnno(char.id)}
+                                        className="flex flex-col items-center gap-1 border-none bg-transparent cursor-pointer flex-shrink-0"
+                                    >
+                                        <img
+                                            src={char.avatar || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%238c827a'><circle cx='12' cy='8' r='4'/><path d='M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4z'/></svg>"}
+                                            className="w-9 h-9 rounded-full object-cover border-2 border-[#e3d5c5]"
+                                        />
+                                        <span className="text-[10px] text-[#2b2622]">{char.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showNavigationDialog && (
                 <>
                     <div className="reading-nav-backdrop" onClick={() => setShowNavigationDialog(false)} />
-                    <aside className="reading-nav-drawer">
+                    <aside className="reading-nav-drawer" style={{ backgroundColor: activeThemeObj.bg, color: activeThemeObj.textColor }}>
                         <header className="reading-nav-header">
                             <span className="reading-nav-title">导航</span>
                             <button type="button" className="reading-nav-close" onClick={() => setShowNavigationDialog(false)} aria-label="关闭">
@@ -2778,6 +2670,74 @@ export function ReadingViewer({ book, onBack }: Props) {
                         </div>
                     </aside>
                 </>
+            )}
+
+            {/* 划线自适应轻操作条 */}
+            {selectionToolsPos.visible && pendingSelection && (
+                <div
+                    className="reading-selection-tools"
+                    style={{ left: selectionToolsPos.left, top: selectionToolsPos.top }}
+                    data-no-nav="true"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <button
+                        type="button"
+                        className="reading-selection-btn reading-selection-btn-primary"
+                        onClick={() => saveHighlightAnnotation("")}
+                    >
+                        划线高亮
+                    </button>
+                    <button
+                        type="button"
+                        className="reading-selection-btn"
+                        onClick={() => {
+                            setAnnoWriteInput("");
+                            setShowWriteModal(true);
+                        }}
+                    >
+                        写想法
+                    </button>
+                    {companionId && (
+                        <button
+                            type="button"
+                            className="reading-selection-btn"
+                            onClick={askCharAboutSelection}
+                        >
+                            指给{companion?.name || "角色"}看
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        className="reading-selection-btn"
+                        onClick={() => copyToClipboard(pendingSelection.quote)}
+                    >
+                        复制
+                    </button>
+                </div>
+            )}
+
+            {/* 写想法 Modal */}
+            {showWriteModal && pendingSelection && (
+                <ContentDialog
+                    title="写在句旁"
+                    confirmLabel="保存想法"
+                    cancelLabel="取消"
+                    onConfirm={async () => {
+                        await saveHighlightAnnotation(annoWriteInput);
+                        setShowWriteModal(false);
+                    }}
+                    onCancel={() => setShowWriteModal(false)}
+                >
+                    <div className="p-3 bg-[#f8f6f0] rounded-lg text-xs italic text-[#666] mb-3">
+                        “{pendingSelection.quote}”
+                    </div>
+                    <textarea
+                        value={annoWriteInput}
+                        onChange={(e) => setAnnoWriteInput(e.target.value)}
+                        placeholder="写下你对这句话的想法..."
+                        className="w-full h-24 p-2 text-xs border border-[#ddd] rounded-md outline-none resize-none"
+                    />
+                </ContentDialog>
             )}
         </div>
     );

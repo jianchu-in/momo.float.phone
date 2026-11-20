@@ -337,3 +337,6 @@ export async function sendTestOfflinePush(): Promise<{ ok: boolean; error?: stri
     if (!data.ok) return { ok: false, error: data.error || "发送失败。" };
     return { ok: true };
 }
+
+/** 兼容现实桥与壳内测试调用的别名 */
+export const sendShellTestPush = sendTestOfflinePush;

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { AlertCircle, Camera, ChevronDown, Image, Info, Plus, Power, RefreshCw, ScanFace, Sparkles, Trash2, Upload, UserRound } from "lucide-react";
-import type { ImageGenerationSettings as ImageGenerationSettingsType, NovelAiPreset, OpenAiImagePreset } from "@/lib/settings-types";
+import { getImageGenerationMode, type ImageGenerationMode, type ImageGenerationSettings as ImageGenerationSettingsType, NovelAiPreset, OpenAiImagePreset } from "@/lib/settings-types";
 import {
     DEFAULT_IMAGE_GENERATION_SETTINGS,
     DEFAULT_NOVELAI_PRESET,
@@ -613,6 +613,7 @@ export function ImageGenerationSettings() {
         if (characterScrollDragRef.current?.pointerId === event.pointerId) characterScrollDragRef.current = null;
     };
 
+    const currentMode = getImageGenerationMode(settings);
     const selectedCharacter = characters.find(character => character.id === selectedCharacterId) || null;
     const selectedReference = selectedCharacter ? settings.characterReferences?.[selectedCharacter.id] : undefined;
     const characterListOverflows = characterScrollMetrics.scrollHeight > characterScrollMetrics.clientHeight + 1;
@@ -642,6 +643,58 @@ export function ImageGenerationSettings() {
                     <span className="menu-right settings-tools-menu-toggle">
                         <Toggle checked={settings.enabled} onChange={(enabled) => updateSettings({ enabled })} className="settings-toggle-control" />
                     </span>
+                </div>
+                <div className="menu-item border-t border-[var(--c-card-border)] flex-col !items-start gap-2.5 p-4">
+                    <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center gap-3">
+                            <span className="card-icon" style={{ "--icon-color": "#10B981" } as CSSProperties}>
+                                <Camera size={22} strokeWidth={1.75} />
+                            </span>
+                            <span className="settings-tools-menu-copy">
+                                <span className="menu-label appearance-menu-item-label">生图模式</span>
+                                <span className="menu-desc settings-tools-menu-desc">
+                                    {currentMode === "hybrid" && "混合：优先相册，未命中自动生图 API"}
+                                    {currentMode === "album" && "纯相册：仅检索相册，未命中拦截生图"}
+                                    {currentMode === "api" && "纯 API：跳过相册，每次直接调用生图 API"}
+                                </span>
+                            </span>
+                        </div>
+                    </div>
+                    <div className="w-full bg-[var(--c-input)] p-1 rounded-xl flex gap-1 border border-[var(--c-card-border)] mt-1">
+                        <button
+                            type="button"
+                            className={`flex-1 py-1.5 px-2 rounded-lg text-center ts-12 font-medium transition-all ${
+                                currentMode === "hybrid"
+                                    ? "bg-[var(--c-card,#fff)] text-[var(--c-action-blue,#246bfd)] font-semibold shadow-sm"
+                                    : "text-[var(--c-text,#666)] hover:text-[var(--c-text-title,#111)] opacity-80"
+                            }`}
+                            onClick={() => updateSettings({ mode: "hybrid", albumOnlyMode: false })}
+                        >
+                            混合模式
+                        </button>
+                        <button
+                            type="button"
+                            className={`flex-1 py-1.5 px-2 rounded-lg text-center ts-12 font-medium transition-all ${
+                                currentMode === "album"
+                                    ? "bg-[var(--c-card,#fff)] text-[var(--c-action-blue,#246bfd)] font-semibold shadow-sm"
+                                    : "text-[var(--c-text,#666)] hover:text-[var(--c-text-title,#111)] opacity-80"
+                            }`}
+                            onClick={() => updateSettings({ mode: "album", albumOnlyMode: true })}
+                        >
+                            纯用相册
+                        </button>
+                        <button
+                            type="button"
+                            className={`flex-1 py-1.5 px-2 rounded-lg text-center ts-12 font-medium transition-all ${
+                                currentMode === "api"
+                                    ? "bg-[var(--c-card,#fff)] text-[var(--c-action-blue,#246bfd)] font-semibold shadow-sm"
+                                    : "text-[var(--c-text,#666)] hover:text-[var(--c-text-title,#111)] opacity-80"
+                            }`}
+                            onClick={() => updateSettings({ mode: "api", albumOnlyMode: false })}
+                        >
+                            纯用 API
+                        </button>
+                    </div>
                 </div>
             </div>
 

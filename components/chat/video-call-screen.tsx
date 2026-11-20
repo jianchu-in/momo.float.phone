@@ -23,6 +23,8 @@ import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { useCallScreenSounds } from "@/lib/chat-sound";
+import { useCallAutoChat } from "./use-call-auto-chat";
+import { CallAutoChatControl } from "./call-auto-chat-control";
 
 // ── Types ───────────────────────────────────────────
 
@@ -422,10 +424,14 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         return { cleanParts, stateValues };
     }, [session.id, session.contactId]);
 
+    const autoChatNotifyUserSpokeRef = useRef<() => void>(() => {});
+    const autoChatNotifyAssistantSpokeRef = useRef<(spoke: boolean) => void>(() => {});
+
     // ── Full conversation turn ──────────────────────
 
     const runConversationTurn = useCallback(async (userText?: string) => {
         if (userText) {
+            autoChatNotifyUserSpokeRef.current();
             const userMsg = pushChatMessage({ sessionId: session.id, role: "user", content: userText });
             messagesRef.current = [...messagesRef.current, userMsg];
             setSubtitles(prev => [...prev, { id: userMsg.id, role: "user", text: userText }]);
@@ -471,14 +477,38 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 } catch (e) { console.warn("[VideoCall] TTS failed:", e); }
             }
 
-            if (stateRef.current !== "ENDED") setCallState("IDLE");
+            if (stateRef.current !== "ENDED") {
+                setCallState("IDLE");
+                autoChatNotifyAssistantSpokeRef.current(cleanParts.length > 0);
+            }
         } catch (error: any) {
             if (stateRef.current !== "ENDED") {
                 setSubtitles(prev => [...prev, { id: `err-${Date.now()}`, role: "assistant", text: `⚠️ ${error?.message || "发送失败"}` }]);
                 setCallState("IDLE");
+                autoChatNotifyAssistantSpokeRef.current(false);
             }
         }
     }, [session, processAIResponse, captureCameraFrame, playCallAudio]);
+
+    const autoChat = useCallAutoChat({
+        active: callState !== "CONNECTING" && callState !== "ENDED",
+        callStateRef: stateRef,
+        runTurn: () => {
+            void runConversationTurn();
+        },
+        beforeTrigger: () => {
+            if (sttRef.current) {
+                sttRef.current.abort();
+                sttRef.current = null;
+            }
+            setInterimText("");
+        },
+    });
+
+    useEffect(() => {
+        autoChatNotifyUserSpokeRef.current = autoChat.notifyUserSpoke;
+        autoChatNotifyAssistantSpokeRef.current = autoChat.notifyAssistantSpoke;
+    }, [autoChat.notifyUserSpoke, autoChat.notifyAssistantSpoke]);
 
     // ── Auto-listen ────────────────────────────────
 
@@ -649,6 +679,13 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         <div className="absolute inset-0 z-[100] flex flex-col bg-black text-white overflow-hidden call-keyboard-shift" style={keyboardOffsetStyle}>
             <CallVolumeControl />
 
+            {callState !== "CONNECTING" && callState !== "ENDED" && (
+                <CallAutoChatControl
+                    config={autoChat.config}
+                    onUpdate={autoChat.update}
+                />
+            )}
+
             {onMinimize && callState !== "ENDED" && (
                 <button
                     type="button"
@@ -799,7 +836,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                     <button
                         type="button"
                         onClick={handleRegenerate}
-                        className="call-regenerate-btn"
+                        className="call-regenerate-btn shrink-0"
                         disabled={callState !== "IDLE"}
                         aria-label="让对方重新回复"
                         title="让对方重新回复"
@@ -810,17 +847,17 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                         </svg>
                     </button>
-                    <div className="call-text-input-shell">
+                    <div className="call-text-input-shell flex-1 min-w-0">
                         <input
                             value={typedText}
                             onChange={e => setTypedText(e.target.value)}
-                            className="call-text-input"
+                            className="call-text-input flex-1 min-w-0"
                             placeholder={callState === "IDLE" ? "输入你想说的话..." : "稍等对方说完..."}
                             disabled={callState !== "IDLE"}
                         />
                         <button
                             type="submit"
-                            className="call-text-send-btn"
+                            className="call-text-send-btn shrink-0"
                             disabled={!typedText.trim() || callState !== "IDLE"}
                             aria-label="发送"
                         >

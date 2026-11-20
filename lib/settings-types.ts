@@ -242,8 +242,20 @@ export type NovelAiSettings = {
     presets: NovelAiPreset[];
 };
 
+export type ImageGenerationMode = "hybrid" | "album" | "api";
+
+export function getImageGenerationMode(settings: Partial<ImageGenerationSettings> | undefined | null): ImageGenerationMode {
+    if (settings?.mode) return settings.mode;
+    if (settings?.albumOnlyMode === true) return "album";
+    return "hybrid";
+}
+
 export type ImageGenerationSettings = {
     enabled: boolean;
+    /** 生图模式：hybrid=混合模式（优先相册，未命中生图API）；album=纯相册；api=纯API生图 */
+    mode?: ImageGenerationMode;
+    /** 纯用相册模式（向后兼容） */
+    albumOnlyMode?: boolean;
     provider?: ImageGenerationProvider;
     requestMode: ImageGenerationRequestMode;
     // OpenAI 模式配置（旧字段保留用于兼容迁移）
@@ -338,6 +350,7 @@ export type BindingSlot = {
     userIdentityId?: string;
     worldBookIds?: string[];
     regexIds?: string[];
+    worldBookMode?: "replace" | "inherit";
 };
 
 // Character binding: character defaults + per-app overrides

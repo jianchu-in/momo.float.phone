@@ -5,7 +5,7 @@ import { ImagePlus, Palette, Trash2, Type } from "lucide-react";
 import { ContentDialog } from "@/components/ui/modal";
 import { ColorInput, Select, Slider } from "@/components/ui/form";
 import type { ReadingAppearance } from "@/lib/reading-appearance";
-import { READING_FONT_OPTIONS } from "@/lib/reading-appearance";
+import { READING_FONT_OPTIONS, READING_THEMES } from "@/lib/reading-appearance";
 
 type Props = {
     appearance: ReadingAppearance;
@@ -161,51 +161,22 @@ export function ReadingAppearanceDialog({ appearance, backgroundUrl, onClose, on
                 <section className="reading-settings-group">
                     <div className="reading-settings-heading">
                         <Palette size={15} />
-                        <span>全屏背景</span>
+                        <span>色彩主题</span>
                     </div>
-                    <div
-                        className="reading-bg-preview"
-                        style={hasPreview ? { backgroundImage: `url("${previewUrl}")` } : undefined}
-                    >
-                        {!hasPreview && <span>书架页和阅读页共用背景</span>}
+                    <div className="grid grid-cols-3 gap-2 my-2">
+                        {READING_THEMES.map((theme) => (
+                            <button
+                                key={theme.id}
+                                type="button"
+                                onClick={() => setDraft((prev) => ({ ...prev, themeId: theme.id }))}
+                                className={`p-2.5 rounded-xl border flex flex-col items-center gap-1.5 transition-all ${draft.themeId === theme.id ? "border-[#9e2a2b] font-semibold shadow-sm" : "border-[#e3d5c5]/60"}`}
+                                style={{ backgroundColor: theme.bg }}
+                            >
+                                <div className="w-5 h-5 rounded-full border border-black/10" style={{ backgroundColor: theme.cardBg }} />
+                                <span className="text-xs" style={{ color: theme.textColor }}>{theme.name}</span>
+                            </button>
+                        ))}
                     </div>
-                    <div className="reading-settings-actions">
-                        <button
-                            type="button"
-                            className="ui-btn ui-btn-outline"
-                            onClick={() => fileRef.current?.click()}
-                            disabled={saving}
-                        >
-                            <ImagePlus size={14} />
-                            <span>{hasPreview ? "更换背景" : "选择背景"}</span>
-                        </button>
-                        <button
-                            type="button"
-                            className="ui-btn ui-btn-ghost"
-                            onClick={() => {
-                                setBackgroundFile(null);
-                                setClearBackground(true);
-                                setPreviewUrl(null);
-                            }}
-                            disabled={saving || (!hasPreview && !backgroundFile)}
-                        >
-                            <Trash2 size={14} />
-                            <span>清除</span>
-                        </button>
-                    </div>
-                    <input
-                        ref={fileRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                            const file = e.target.files?.[0] || null;
-                            e.target.value = "";
-                            if (!file) return;
-                            setBackgroundFile(file);
-                            setClearBackground(false);
-                        }}
-                    />
                 </section>
             </div>
         </ContentDialog>

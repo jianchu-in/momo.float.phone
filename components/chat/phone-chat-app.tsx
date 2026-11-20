@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef, useMemo } from "react";
 import { ChatMessageList } from "./chat-message-list";
 import { ChatContactsList } from "./chat-contacts-list";
 import { MomentsFeed } from "./moments-feed";
@@ -8,11 +8,13 @@ import { ChatRoom } from "./chat-room";
 import { MascotChatRoom } from "./mascot-chat-room";
 import { UserProfilePanel } from "./user-profile-panel";
 import { MessageCircle, Users, Aperture, UserRound } from "lucide-react";
-import { ChatSession, type ChatMessage, loadChatSessions, pushChatMessage, hydrateChatStorage, markChatSessionRead, setActiveChatSessionId } from "@/lib/chat-storage";
+import { ChatSession, type ChatMessage, loadChatSessions, pushChatMessage, hydrateChatStorage, markChatSessionRead, setActiveChatSessionId, loadChatAppSettings, CHAT_APP_SETTINGS_UPDATED_EVENT } from "@/lib/chat-storage";
 import type { MomentPost } from "@/lib/moments-types";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 import { loadCharacters } from "@/lib/character-storage";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
+import { CHAT_APPEARANCE_OPEN, loadChatNightMode, saveChatNightMode } from "@/lib/chat-appearance";
+import "@/styles/chat-night.css";
 import { kvGet } from "@/lib/kv-db";
 import { formatXiaohongshuShareForPrompt, type ChatSharePayload } from "@/lib/chat-share";
 import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT } from "@/lib/chat-notification-events";
@@ -75,10 +77,30 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     const [chatAppCSS, setChatAppCSS] = useState(() =>
         typeof window !== "undefined" ? kvGet("chat-app-custom-css") || "" : ""
     );
+    const [chatAppSettingsRev, setChatAppSettingsRev] = useState(0);
+    useEffect(() => {
+        const onSettings = () => setChatAppSettingsRev(v => v + 1);
+        window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, onSettings);
+        return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, onSettings);
+    }, []);
+    const isIMessage = useMemo(
+        () => loadChatAppSettings().globalChatUiStyle === "imessage",
+        [chatAppSettingsRev]
+    );
     // Cache all visited sessions so their ChatRoom stays mounted (hidden)
     const [visitedSessions, setVisitedSessions] = useState<Map<string, ChatSession>>(new Map());
     const [dbReady, setDbReady] = useState(false);
     const [hideTabBar, setHideTabBar] = useState(false);
+    const [nightMode, setNightMode] = useState(loadChatNightMode);
+    const [appearanceOpen, setAppearanceOpen] = useState(false);
+
+    useEffect(() => {
+        const open = () => setAppearanceOpen(true);
+        const close = (event: KeyboardEvent) => { if (event.key === "Escape") setAppearanceOpen(false); };
+        window.addEventListener(CHAT_APPEARANCE_OPEN, open);
+        window.addEventListener("keydown", close);
+        return () => { window.removeEventListener(CHAT_APPEARANCE_OPEN, open); window.removeEventListener("keydown", close); };
+    }, []);
 
     // Hydrate IndexedDB → in-memory caches on mount
     useEffect(() => {
@@ -309,12 +331,30 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
 
     return (
         <div
+            data-chat-theme={nightMode ? "dark" : "light"}
             className="chat-app absolute inset-0 flex flex-col overflow-hidden z-10"
             {...(activeSession || activeMascot ? { "data-room-active": "" } : {})}
             {...(hideTabBar || contactProfileOpen ? { "data-tabbar-hidden": "" } : {})}
         >
             {/* Homepage appearance CSS is the lowest chat styling layer. */}
             {chatAppCSS && <SessionCustomCSS css={chatAppCSS} scope=".chat-app" />}
+            {appearanceOpen && (
+                <div className="chat-appearance-scrim" onClick={() => setAppearanceOpen(false)}>
+                    <section role="dialog" aria-modal="true" aria-labelledby="chat-appearance-title" className="chat-appearance-dialog" onClick={event => event.stopPropagation()}>
+                        <h2 id="chat-appearance-title">{nightMode ? "切换日间模式" : "切换夜间模式"}</h2>
+                        <div className="chat-appearance-actions">
+                            <button type="button" autoFocus onClick={() => {
+                                const next = !nightMode;
+                                saveChatNightMode(next);
+                                setNightMode(next);
+                                window.dispatchEvent(new Event("chat-night-mode-updated"));
+                                setAppearanceOpen(false);
+                            }}>确认</button>
+                            <button type="button" onClick={() => setAppearanceOpen(false)}>取消</button>
+                        </div>
+                    </section>
+                </div>
+            )}
             {/* The Main Content Area */}
             <div className="chat-main-content relative flex-1 flex flex-col overflow-hidden" {...(activeSession || activeMascot ? { "data-covered-by-room": "" } : {})}>
                 {activeTab === "messages" && <ChatMessageList onCloseApp={onClose} activeSession={activeSession} onSelectSession={(session) => { setActiveMascot(false); setActiveSession(session); }} onSelectMascot={handleSelectMascot} />}
@@ -347,7 +387,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             </div>
 
             {/* Bottom Navigation Bar — hide when inside a chat room */}
-            <nav className="chat-tab-bar chat-bottom-glass-bar" data-ui="nav" style={{ display: activeSession || activeMascot || hideTabBar || contactProfileOpen ? "none" : undefined }}>
+            <nav className={`chat-tab-bar ${isIMessage ? "chat-bottom-glass-bar" : ""}`} data-ui="nav" style={{ display: activeSession || activeMascot || hideTabBar || contactProfileOpen ? "none" : undefined }}>
                 <button
                     className={`chat-tab ${activeTab === "messages" ? "chat-tab-active" : ""}`}
                     onClick={() => setActiveTab("messages")}

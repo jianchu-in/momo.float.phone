@@ -1,4 +1,4 @@
-import { loadChatAppSettings } from "./chat-storage";
+import { kvGet } from "./kv-db";
 import { formatZonedPromptTimestamp, getSystemTimeZone } from "./character-time";
 
 const PROMPT_TIMESTAMP_PATTERN = "\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}";
@@ -38,7 +38,15 @@ function escapeRegExp(value: string): string {
 
 export function resolvePromptTimeAware(value?: boolean): boolean {
   if (typeof value === "boolean") return value;
-  return loadChatAppSettings().timeAware !== false;
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = kvGet("ai_phone_chat_settings_v1");
+    if (!raw) return true;
+    const parsed = JSON.parse(raw);
+    return parsed.timeAware !== false;
+  } catch {
+    return true;
+  }
 }
 
 export function formatPromptTimestamp(isoStr: string, options?: PromptTimestampOptions): string {

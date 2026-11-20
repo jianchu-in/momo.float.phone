@@ -5,11 +5,34 @@ import { openIndexedDbAtLeast } from "./idb-open";
 
 export type ReadingFontFamilyId = "system" | "song" | "serif" | "sans" | "custom";
 
+export type ReadingThemeId = "paper" | "warm" | "night" | "ink" | "rose" | "sage";
+
+export type ReadingThemeConfig = {
+    id: ReadingThemeId;
+    name: string;
+    bg: string;
+    cardBg: string;
+    textColor: string;
+    subtextColor: string;
+    accentColor: string;
+    borderColor: string;
+};
+
+export const READING_THEMES: ReadingThemeConfig[] = [
+    { id: "paper", name: "纸白", bg: "#f7f4ef", cardBg: "#ffffff", textColor: "#2c2520", subtextColor: "#8a7e75", accentColor: "#9e2a2b", borderColor: "#e3d5c5" },
+    { id: "warm", name: "手账", bg: "#fcf8f2", cardBg: "#f5ede2", textColor: "#382d24", subtextColor: "#998574", accentColor: "#b89870", borderColor: "#e8dcce" },
+    { id: "night", name: "夜读", bg: "#18181b", cardBg: "#27272a", textColor: "#e4e4e7", subtextColor: "#9a9a9e", accentColor: "#d4a373", borderColor: "#3f3f46" },
+    { id: "ink", name: "水墨", bg: "#121212", cardBg: "#1e1e1e", textColor: "#f4f4f5", subtextColor: "#a1a1aa", accentColor: "#c97a63", borderColor: "#27272a" },
+    { id: "rose", name: "玫瑰", bg: "#faf4f5", cardBg: "#ffffff", textColor: "#3a2226", subtextColor: "#9e7a82", accentColor: "#d4889a", borderColor: "#ebd5db" },
+    { id: "sage", name: "青苔", bg: "#f4f7f4", cardBg: "#ffffff", textColor: "#1c291c", subtextColor: "#788c78", accentColor: "#7a9a6a", borderColor: "#d5ebd8" },
+];
+
 export type ReadingAppearance = {
     fontFamily: ReadingFontFamilyId;
     fontSize: number;
     textColor: string;
     lineHeight: number;
+    themeId?: ReadingThemeId;
     customFontName?: string;
 };
 
@@ -33,6 +56,7 @@ export const DEFAULT_READING_APPEARANCE: ReadingAppearance = {
     fontSize: 20,
     textColor: "#111111",
     lineHeight: 2.3,
+    themeId: "paper",
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -49,14 +73,16 @@ function normalizeAppearance(raw: Partial<ReadingAppearance> | null | undefined)
         : DEFAULT_READING_APPEARANCE.fontFamily;
     const fontSize = clamp(Number(raw?.fontSize ?? DEFAULT_READING_APPEARANCE.fontSize) || DEFAULT_READING_APPEARANCE.fontSize, 12, 30);
     const lineHeight = clamp(Number(raw?.lineHeight ?? DEFAULT_READING_APPEARANCE.lineHeight) || DEFAULT_READING_APPEARANCE.lineHeight, 1.2, 2.8);
-    const textColor = typeof raw?.textColor === "string" && raw.textColor.trim()
+    const themeId = READING_THEMES.some((t) => t.id === raw?.themeId) ? raw!.themeId! : "paper";
+    const themeObj = READING_THEMES.find((t) => t.id === themeId) || READING_THEMES[0];
+    const textColor = typeof raw?.textColor === "string" && raw.textColor.trim() && raw.textColor !== DEFAULT_READING_APPEARANCE.textColor
         ? raw.textColor.trim()
-        : DEFAULT_READING_APPEARANCE.textColor;
+        : themeObj.textColor;
     const customFontName = typeof raw?.customFontName === "string" && raw.customFontName.trim()
         ? raw.customFontName.trim()
         : undefined;
 
-    return { fontFamily, fontSize, textColor, lineHeight, customFontName };
+    return { fontFamily, fontSize, textColor, lineHeight, themeId, customFontName };
 }
 
 export function resolveReadingFontFamily(fontFamily: ReadingFontFamilyId, customFontFamily?: string): string {
