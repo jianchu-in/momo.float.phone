@@ -1,0 +1,67 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const Module = require("node:module");
+const ts = require("typescript");
+require("fake-indexeddb/auto");
+const { window } = require("linkedom").parseHTML('<html><body><div id="root"></div></body></html>');
+Object.assign(global, { window, document: window.document, HTMLElement: window.HTMLElement, Node: window.Node, Event: window.Event, CustomEvent: window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true });
+const local = new Map();
+global.localStorage = window.localStorage = { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key), key: index => [...local.keys()][index], get length() { return local.size; } };
+const project = path.resolve(__dirname, "..");
+const resolve = Module._resolveFilename;
+Module._resolveFilename = function(request, parent, ...rest) { return resolve.call(this, request.startsWith("@/") ? path.join(project, request.slice(2)) : request, parent, ...rest); };
+for (const ext of [".ts", ".tsx"]) require.extensions[ext] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
+}).outputText, filename);
+const React = require("react");
+const { act } = React;
+const { createRoot } = require("react-dom/client");
+const load = name => require(path.join(project, name));
+const tick = () => new Promise(resolve => setTimeout(resolve, 20));
+async function main() {
+  await load('lib/kv-db.ts').hydrateKvDb();
+  await load('lib/settings-db.ts').hydrateSettingsDb();
+  const worlds = load('lib/character-world-storage.ts');
+  const scope = load('lib/chat-scope-storage.ts');
+  const chars = ['a','b'].map(id => ({ id, name: id, avatar: '', createdAt: '', updatedAt: '' }));
+  load('lib/character-storage.ts').saveCharacters(chars);
+  const selectedWorld = worlds.createCharacterWorldGroup('筛选测试世界');
+  worlds.moveCharacterToWorld('a', selectedWorld.id);
+  const Switcher = load('components/chat/chat-scope-switcher.tsx').ChatScopeSwitcher;
+  // Model the real clipped profile header, then a nested story phone.
+  const screen = document.createElement('div'); screen.dataset.ui = 'phone-screen';
+  screen.innerHTML = '<div class="chat-app"><header style="overflow:hidden;backdrop-filter:blur(20px)"><div id="trigger"></div></header></div>';
+  document.body.append(screen);
+  let root = createRoot(screen.querySelector('#trigger'));
+  const click = async element => { assert.ok(element); await act(async()=>{element.dispatchEvent(new window.Event('click',{bubbles:true})); await tick();}); };
+  const find = text => [...screen.querySelectorAll('button')].find(el => el.textContent.includes(text));
+  await act(async()=>root.render(React.createElement(Switcher)));
+  await click(screen.querySelector('[aria-label="切换身份和世界观"]'));
+  const layer = screen.querySelector('[role="dialog"]');
+  assert.equal(layer.parentElement, screen, 'filter escapes clipped header and app panes');
+  assert.ok(!screen.querySelector('header .modal-overlay'));
+  await click(find('选择世界观'));
+  await click(find('筛选测试世界'));
+  assert.equal(scope.loadChatScope().worldId, selectedWorld.id);
+  assert.equal(scope.characterMatchesChatScope(chars[0].id), true);
+  assert.equal(scope.characterMatchesChatScope(chars[1].id), false);
+  await click(layer.querySelector('.modal-header button'));
+  assert.ok(!screen.querySelector('[role="dialog"]'));
+  await click(screen.querySelector('[aria-label="切换身份和世界观"]'));
+  assert.ok(find('选择世界观').textContent.includes('筛选测试世界'));
+  await click(find('恢复全部'));
+  assert.equal(scope.loadChatScope().worldId, null);
+  assert.equal(scope.characterMatchesChatScope(chars[1].id), true);
+  await act(async()=>root.unmount());
+  screen.innerHTML = '<div class="story-floating-chat-app"><header id="nested-trigger"></header></div>';
+  const nested=screen.firstElementChild;
+  root=createRoot(screen.querySelector('#nested-trigger'));
+  await act(async()=>root.render(React.createElement(Switcher)));
+  await click(screen.querySelector('[aria-label="切换身份和世界观"]'));
+  assert.equal(screen.querySelector('[role="dialog"]').parentElement,nested,'nested phone owns its own filter');
+  await act(async()=>root.unmount());
+  assert.ok(!screen.querySelector('[role="dialog"]'));
+  console.log('Chat world filter: open, world selection, filtering, reopen, reset and nested phone passed.');
+}
+main().then(()=>process.exit(0)).catch(error=>{console.error(error);process.exit(1);});
