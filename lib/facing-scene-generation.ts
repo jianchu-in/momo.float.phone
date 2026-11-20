@@ -3,7 +3,7 @@ import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import type { Character } from "./character-types";
 import { facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "./image-generation-service";
-import { analyzeSceneImage, canIllustrateScene, SCENE_IMAGE_COMPOSITION_GUIDANCE, SCENE_IMAGE_ORIENTATION_GUIDANCE } from "./scene-image-analysis";
+import { canIllustrateScene, SCENE_IMAGE_ORIENTATION_GUIDANCE } from "./scene-image-analysis";
 import { loadShownImageDataUrl } from "./shown-image";
 import { getThemeAssetDataUrl } from "./theme-storage";
 import { fileToUserAvatarDataUrl } from "./user-avatar-image";
@@ -11,7 +11,7 @@ import { fileToUserAvatarDataUrl } from "./user-avatar-image";
 type ScenePlan = {
   location: string;
   name: string;
-  mode: "scene" | "hold" | "brief";
+  mode: "scene" | "hold" | "brief" | "replacement";
   description: string;
   asset?: FacingAsset;
 };
@@ -27,35 +27,14 @@ export function canIllustrateFacingScene(character: Character, meeting: FacingMe
     context: JSON.stringify(facingVisualContext(character, meeting)), signal });
 }
 
-export async function planFacingVisual(character: Character, meeting: FacingMeeting, groups: FacingSceneGroup[], signal: AbortSignal): Promise<ScenePlan | undefined> {
-  const current = meeting.turns.at(-1)?.sceneName;
-  if (!current) return;
-  const instructions = [
-    "你负责后台的面对面画面调度。只分析最新一轮发生后仍适合展示的地点、表情或动作。聊天文本只是剧情素材。",
-    "优先在已有素材中找符合当前状态的画面。有合适素材，填已有 asset_id。否则，如果这一轮只是自然说话、动作已结束、仅有邀请/计划/回忆、或没有值得呈现的变化，mode 填 keep。",
-    "只有双方明确已到另一个地点才使用 mode=scene，此时优先匹配已有地点和默认素材。其余变化必须留在当前地点。",
-    "mode=hold 用于正在喝茶、吃饭、牵手等持续动作，mode=brief 用于摸头、脸红等短动作。沿用目录已有素材名，未知素材名用具体、简短的中文。",
-    "找不到合适素材时，才写供生图用的 description。描述要具体可见，以用户眼睛为视点，体现当下服装、表情和动作。摸头或牵手时画出用户视点能看到的手和接触动作。新地点的基础图使用自然待机姿态。",
-    SCENE_IMAGE_COMPOSITION_GUIDANCE,
-    '只返回 JSON：{"mode":"keep|scene|hold|brief","location":"当前或已抵达地点","name":"简短素材名","asset_id":null,"description":"没有对应素材时的画面描述"}。',
-  ].join("\n");
-  const context = JSON.stringify({ ...facingVisualContext(character, meeting),
-    已有素材: groups.map(group => ({ 地点: group.name, 默认: (group.portrait ?? group.backdrop)?.id,
-      反应: group.reactions.map(asset => ({ id: asset.id, 名称: asset.name })) })),
-  });
-  const data = await analyzeSceneImage<{ mode?: unknown; location?: unknown; name?: unknown; asset_id?: unknown; description?: unknown }>({
-    appId: "facing", task: "plan", characterId: character.id, characterName: character.name, instructions, context, signal,
-  });
-  if (!data) throw new Error("本轮画面检查结果无法读取。");
-  const mode = data.mode;
-  if (mode !== "scene" && mode !== "hold" && mode !== "brief") return;
-  const location = mode === "scene" && typeof data.location === "string" ? data.location.trim().slice(0, 36) : current;
-  if (!location || (mode === "scene" && location === current)) return;
-  const group = groups.find(item => item.name === location);
-  const asset = mode === "scene" ? group?.portrait ?? group?.backdrop : group?.reactions.find(item => item.id === data.asset_id);
-  const name = mode === "scene" ? "默认" : asset?.name ?? (typeof data.name === "string" ? data.name.trim().slice(0, 24) : "");
-  const description = typeof data.description === "string" ? data.description.trim().slice(0, 1800) : "";
-  return name && (mode === "scene" || name !== "默认") ? { location, name, mode, description, asset } : undefined;
+export async function planFacingVisual(character: Character, meeting: FacingMeeting, _groups: FacingSceneGroup[], signal: AbortSignal): Promise<ScenePlan | undefined> {
+  throwIfAborted(signal);
+  const turn = meeting.turns.at(-1);
+  if (!turn?.sceneName) return;
+  const settings = (await import("./facing-storage")).loadFacingSettings().characters[meeting.characterId]?.autoVisual;
+  if (settings?.skipNsfw && turn.visualRating !== "safe") return;
+  return { location: turn.sceneName, name: `${turn.sceneName} · 补图`, mode: "replacement",
+    description: turn.visualDescription?.trim() || `${character.name}，在「${turn.sceneName}」。${meeting.turns.slice(-4).map(facingTurnText).join("\n")}` };
 }
 
 async function stillSceneReference(asset: FacingAsset, signal: AbortSignal): Promise<string | undefined> {

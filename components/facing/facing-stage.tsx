@@ -119,7 +119,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
     }}>
       {mediaUrl && foreground
         ? <FacingMedia key={mediaKey} url={mediaUrl} mediaType={reactionUrl ? reaction?.motionMediaType ?? foreground.mediaType : portraitDraft ? portraitDraft.mediaType : portrait?.motionMediaType ?? foreground.mediaType} name={foreground.name}
-            onRatio={value => setRatio({ key: mediaKey, value })} loop={!reactionUrl} onEnd={onReactionEnd} />
+            onRatio={value => setRatio({ key: mediaKey, value })} loop={!reactionUrl || reaction?.composition !== "full"} onEnd={reaction?.composition === "full" ? onReactionEnd : undefined} />
         : fallback
           ? <FacingMedia key={mediaKey} url={fallback} mediaType="image/png" name={name} onRatio={value => setRatio({ key: mediaKey, value })} />
           : !hideBlank && <div className="facing-blank-portrait"><UserRound size={64} strokeWidth={1} aria-hidden /></div>}

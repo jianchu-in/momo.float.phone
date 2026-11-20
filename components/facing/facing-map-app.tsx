@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, History, Map as MapIcon, Plus, RefreshCw, Settings2, X } from "lucide-react";
 import type { Character } from "@/lib/character-types";
-import { getCharacterWorldGroup } from "@/lib/character-world-storage";
+import { getCharacterWorldGroup, loadCharacterWorldGroups } from "@/lib/character-world-storage";
 import { loadChatScope } from "@/lib/chat-scope-storage";
 import { facingId, type FacingMeeting } from "@/lib/facing-storage";
 import { loadWorldBooks, resolveUserIdentity, loadApiConfigs, loadBindingConfig, resolveBinding } from "@/lib/settings-storage";
@@ -24,6 +24,7 @@ import { MapTemplateSheet } from "./facing-map-template-sheet";
 import { installBuiltinMapTemplate, type MapTemplateTarget } from "@/lib/facing-map-templates";
 import { MapTravel, type MapTravelAnimation } from "./facing-map-travel";
 import { deleteFacingAtlas, renameFacingAtlas } from "@/lib/facing-map-storage";
+import { mapCharacterResidence, mapResidentIds, saveMapResidents } from "@/lib/facing-map-storage";
 import { loadMapPlans, saveMapPlan, formatMapPlan, mapPlanPlaces, validateMapPlan } from "@/lib/facing-map-plans";
 
 type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | null;
@@ -33,10 +34,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   onBack: () => void; onSettings: () => void;
   onArrive: (atlas: FacingAtlas, trip: MapTrip, visitId: string) => Promise<void>;
 }) {
-  const world = getCharacterWorldGroup(character.id);
-  const worldId = world?.id ?? character.id;
-  const members = characters.filter(item => world?.memberIds.includes(item.id) ?? item.id === character.id);
+  const worldId = mapCharacterResidence(character.id) ?? getCharacterWorldGroup(character.id)?.id ?? character.id;
+  const world = loadCharacterWorldGroups().find(item => item.id === worldId);
   const [atlas, setAtlas] = useState<FacingAtlas | undefined>(() => loadFacingAtlases(worldId)[0]);
+  const members = characters.filter(item => atlas ? mapResidentIds(atlas).includes(item.id) : (world?.memberIds.includes(item.id) ?? item.id === character.id) && (!mapCharacterResidence(item.id) || mapCharacterResidence(item.id) === worldId));
   const [pageId, setPageId] = useState(atlas?.pages[0]?.id);
   const [selectedId, setSelectedId] = useState<string>();
   const [sheet, setSheet] = useState<Sheet>(atlas ? null : "create");
@@ -111,6 +112,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     setPlanId(""); setPlanName(`${page.name}文字方案`); setNotice("");
     setSettings({ ...loadMapPreferences(), ...(page.parentPlaceId ? { width: 1536, height: 1152 } : {}) });
     setSheet("generate");
+    setBookIds([...(atlas?.worldBookIds ?? [])]);
   }
   async function create() {
     if (!mapName.trim()) { setError("请填写地图名称。"); return; }
@@ -121,21 +123,23 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   }
   function editSources() {
     if (!atlas) return;
-    setCharacterIds([...atlas.characterIds]); setBookIds([...atlas.worldBookIds]); setMapName(atlas.name); setSheet("sources");
+    setCharacterIds([...mapResidentIds(atlas)]); setBookIds([...atlas.worldBookIds]); setMapName(atlas.name); setSheet("sources");
   }
   async function saveSources() {
     if (!atlas || !mapName.trim()) return;
-    await run("保存参考资料", async () => {
-      setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, name: mapName.trim(), characterIds, worldBookIds: bookIds })));
+    await run("保存生活角色", async () => {
+      setAtlas(await saveMapResidents(atlas, characterIds));
       setSheet(null);
     });
   }
   async function generatePlan() {
     if (!atlas || !page) return;
     await run("正在生成文字方案…", async signal => {
-      const result = replacement ? await polishMapTilePlan(character, plan, requirement, settings, signal)
-        : plan.description.trim() ? await refineFacingMapPlan(character, plan, requirement, settings, signal)
-        : await planFacingMap(character, atlas, page, characters, requirement, settings, signal, extension);
+      if (JSON.stringify(atlas.worldBookIds) !== JSON.stringify(bookIds)) setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, worldBookIds: bookIds })));
+      const sources = { atlas, characters, worldBookIds: bookIds };
+      const result = replacement ? await polishMapTilePlan(character, plan, requirement, settings, signal, sources)
+        : plan.description.trim() ? await refineFacingMapPlan(character, plan, requirement, settings, signal, sources)
+        : await planFacingMap(character, atlas, page, characters, requirement, settings, signal, extension, sources);
       setPlan(result); setCandidate(undefined);
     });
   }
@@ -143,9 +147,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     if (replacement && (![replacement.width, replacement.height, replacement.x, replacement.y].every(Number.isFinite) || replacement.width <= 0 || replacement.height <= 0)) { setError("请填写有效的图块坐标和宽高。"); return; }
     if (!plan.description.trim() || !atlas || !page) { setError("请先生成或填写地图描述。"); return; }
     await run("正在生成地图图片…", async signal => {
+      if (JSON.stringify(atlas.worldBookIds) !== JSON.stringify(bookIds)) setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, worldBookIds: bookIds })));
       validateMapPlan(plan);
       const savedPlan = { ...plan, places: plan.places.map(place => ({ ...place })) };
-      const result = await renderFacingMap(character, savedPlan, settings, signal, extension, referenceOriginal ? replacement : undefined);
+      const result = await renderFacingMap(character, savedPlan, settings, signal, extension, referenceOriginal ? replacement : undefined, { atlas, characters, worldBookIds: bookIds });
       if (!signal.aborted) setCandidate({ blob: result.blob, url: URL.createObjectURL(result.blob), plan: savedPlan, extension, replacement });
     });
   }
@@ -397,15 +402,15 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>套用场所模板</button>
           <button type="button" className="facing-primary" disabled={!!busy} onClick={() => prepareTrip()}>前往这里</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void exportMap(true)}>导出此地点</button>
+          <button type="button" className="facing-small" disabled={!!busy} aria-pressed={userPlaceId === selected.id} onClick={() => void run("设置当前位置", async () => {
+            setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, userPlaces: { ...current.userPlaces, [identityKey]: selected.id } })));
+          })}>{userPlaceId === selected.id ? "我的当前位置" : "设为我的位置"}</button>
           {editing && <>
             {page.parentPlaceId && <button type="button" className="facing-small" disabled={!!busy}
               aria-pressed={page.entryPlaceId === selected.id} onClick={() => void run("保存地图入口", async () => {
                 setAtlas(await saveMapPage(atlas.id, { ...page, entryPlaceId: selected.id }));
               })}>{page.entryPlaceId === selected.id ? "当前地图入口" : "设为本地图入口"}</button>}
             <button type="button" className="facing-small" onClick={() => { setPlaceDraft({ ...selected }); setSheet("edit"); }}>编辑地点</button>
-            <button type="button" className="facing-small" onClick={() => void run("设置当前位置", async () => {
-              setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, userPlaces: { ...current.userPlaces, [identityKey]: selected.id } })));
-            })}>设为我的位置</button>
           </>}
         </div>
       </div>}
@@ -415,7 +420,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         <div className="facing-choices">
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>详细场所模板</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => openGenerate()}>生成地图</button>
-          <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>参考资料</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>生活角色 · {members.length}</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("tiles")}>图块与扩展</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("transfer")}>导入 / 导出</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>前往动画</button>
@@ -457,19 +462,22 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
             })}>确认删除地图</button></div>
         </div>}
     </MapSheet>}
-    {(sheet === "create" || sheet === "sources") && <MapSheet title={sheet === "create" ? "创建世界地图" : "地图参考资料"} onClose={closeSheet}>
-      <label>地图名称<input value={mapName} onChange={event => setMapName(event.target.value)} /></label>
-      <fieldset><legend>参考角色（可多选）</legend>{members.map(item => <label key={item.id} className="fmap-check">
-        <input type="checkbox" checked={characterIds.includes(item.id)} onChange={() => setCharacterIds(toggle(characterIds, item.id))} />{item.name}
+    {(sheet === "create" || sheet === "sources") && <MapSheet title={sheet === "create" ? "创建世界地图" : "生活角色"} onClose={closeSheet}>
+      {sheet === "create" && <label>地图名称<input value={mapName} onChange={event => setMapName(event.target.value)} /></label>}
+      <fieldset><legend>在这个世界生活的角色（可多选）</legend>{characters.map(item => <label key={item.id} className="fmap-check">
+        <input type="checkbox" disabled={!characterIds.includes(item.id) && !!mapCharacterResidence(item.id) && mapCharacterResidence(item.id) !== worldId} checked={characterIds.includes(item.id)} onChange={() => setCharacterIds(toggle(characterIds, item.id))} />{item.name}{mapCharacterResidence(item.id) && mapCharacterResidence(item.id) !== worldId && <small>已在其他世界生活</small>}
       </label>)}</fieldset>
-      <fieldset><legend>参考世界书（可多选）</legend>{books.map(book => <label key={book.id} className="fmap-check">
+      {sheet === "create" && <fieldset><legend>参考世界书（可多选）</legend>{books.map(book => <label key={book.id} className="fmap-check">
         <input type="checkbox" checked={bookIds.includes(book.id)} onChange={() => setBookIds(toggle(bookIds, book.id))} />{book.name}
-      </label>)}{!books.length && <p>暂无世界书</p>}</fieldset>
-      <p className="fmap-note">创建后可上传底图，或逐步生成文字方案和地图图片。</p>
-      <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void (sheet === "create" ? create() : saveSources())}>{sheet === "create" ? "创建并打开" : "保存参考资料"}</button>
+      </label>)}{!books.length && <p>暂无世界书</p>}</fieldset>}
+      <p className="fmap-note">生活角色决定这个世界的居民、地图动向与同行名单；先从原世界移除，才能加入另一个世界。生成地图时可以另选参考世界书。</p>
+      <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void (sheet === "create" ? create() : saveSources())}>{sheet === "create" ? "创建并打开" : "保存生活角色"}</button>
     </MapSheet>}
     {sheet === "generate" && <MapSheet title={replacement ? "升级图块与重新生图" : extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
       <fieldset className="fmap-operation-fields" disabled={!!busy}>
+      <details><summary>生成参考资料</summary><p className="fmap-note">本世界生活角色：{members.map(item => item.name).join("、") || "暂无"}。可在生活角色中管理；参考其他世界书不会增加生活角色。</p>
+        {books.map(book => <label className="fmap-check" key={book.id}><input type="checkbox" checked={bookIds.includes(book.id)} onChange={() => setBookIds(toggle(bookIds, book.id))} />{book.name}</label>)}
+      </details>
       <label>选择已有文字方案<select aria-label="选择已有文字方案" value={planId} onChange={event => {
         const saved = loadMapPlans(worldId).find(item => item.id === event.target.value);
         if (!saved) { setPlanId(""); return; }

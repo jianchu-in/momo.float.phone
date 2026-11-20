@@ -11,7 +11,7 @@ export function useFacingSpeaker(character: Character, location: string, multi: 
   const assets = loadFacingAssets(character.id);
   const groups = groupFacingScenes(assets, settings.portraitId);
   const group = groups.find(item => item.name === location) ?? groups.find(item => item.name === location.split(" · ").at(-1));
-  const portrait = group?.portrait ?? group?.backdrop;
+  const portrait = group?.portrait;
   const config = resolveConfiguredImageGenerationSettings(character.id, "facing");
   const reference = config.characterReferences?.[character.id];
   const upload = settings.autoVisual?.referenceMediaRef;
@@ -29,7 +29,7 @@ export function useFacingSpeaker(character: Character, location: string, multi: 
     })();
     return () => { active = false; };
   }, [multi, portrait?.id, key, refId, upload]);
-  return { portrait, backdrop: group?.portrait ? group.backdrop : undefined,
-    reaction: assets.find((item: FacingAsset) => item.id === reactionId),
+  return { portrait, backdrop: group?.backdrop,
+    reaction: assets.find((item: FacingAsset) => item.id === reactionId && (item.generated || group?.reactions.some(allowed => allowed.id === item.id))),
     reference: referenceImage?.key === key ? referenceImage.url : undefined };
 }

@@ -86,7 +86,7 @@ async function main() {
   const MapApp = load("components/facing/facing-map-app.tsx").FacingMapApp;
   const mapProps = { character: chars[0], characters: chars, onBack() {}, onSettings() {}, async onArrive() {} };
   await mount(React.createElement(MapApp, mapProps));
-  assert.ok(!button("上传图片")); assert.equal(host.querySelectorAll(".fmap-person").length, 3, "unknown locations still display avatars");
+  assert.ok(!button("上传图片")); assert.equal(host.querySelectorAll(".fmap-person").length, 0, "unlocated people do not cover the map");
   await click(button("铺满")); assert.equal(plans.loadMapViewMode(), "cover");
   await unmount(); await mount(React.createElement(MapApp, mapProps)); assert.equal(host.querySelector(".fmap-canvas").dataset.viewMode, "cover");
   await click(button("全图")); await unmount(); await mount(React.createElement(MapApp, mapProps)); assert.equal(host.querySelector(".fmap-canvas").dataset.viewMode, "fit");
@@ -102,6 +102,11 @@ async function main() {
   assert.ok(button("确认应用已有地图")); assert.equal(imageCalls, 0);
   await click(button("确认应用已有地图"));
   const updated = storage.loadFacingAtlas(atlas.id); assert.equal(updated.pages[0].tiles.length, 1);
+  const placeNode = host.querySelector('[data-place="' + updated.pages[0].places[0].id + '"]');
+  await act(async () => { props(placeNode).onKeyDown({ key: "Enter", preventDefault() {} }); await tick(); });
+  assert.ok(button("设为我的位置"), "normal place click offers a location action without edit mode");
+  await click(button("设为我的位置"));
+  assert.equal(storage.loadFacingAtlas(atlas.id).userPlaces.default, updated.pages[0].places[0].id);
   assert.equal(updated.pages[0].places[0].x, 750); assert.equal(updated.pages[0].places[0].y, 125);
   const bytes = await load("lib/theme-storage.ts").getThemeAssetDataUrl(updated.pages[0].tiles[0].mediaId);
   assert.equal(bytes, "data:image/png;base64," + Buffer.from("uploaded-original").toString("base64"));
@@ -121,6 +126,6 @@ async function main() {
   assert.equal(plans.loadMapPlans(world).length, 1, "deleting a map retains reusable text plans");
   assert.equal(await load("lib/theme-storage.ts").getThemeAssetDataUrl(updated.pages[0].tiles[0].mediaId), bytes);
   await act(async () => root.unmount());
-  console.log("PASS: multi-character entry, map rename/delete, plan persistence/refinement, uploaded originals and coordinates, persistent view modes, and visible unlocated avatars");
+  console.log("PASS: multi-character entry, map rename/delete, plan persistence/refinement, uploaded originals and coordinates, persistent view modes, and hidden unlocated people");
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

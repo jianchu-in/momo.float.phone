@@ -244,3 +244,8 @@
 .facing-audio-nav button:disabled { opacity: .3; cursor: default; }
 .facing-speaker-badge { align-self: flex-start; display: flex; align-items: center; gap: 8px; border-radius: 30px; padding: 5px 12px 5px 5px; margin-bottom: 8px; color: var(--facing-message-color); }
 .facing-speaker-badge img, .facing-speaker-badge > span { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: #eee4; }
+
+.facing-library-tile { min-width: 0; position: relative; }
+.facing-library-select { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 0; font-size: 11px; color: #7f7385; }
+.facing-portrait-folder { margin: 12px 0; padding: 8px 0 4px 12px; border-left: 1px solid #d9d0df; }
+.facing-portrait-folder > summary { cursor: pointer; font-size: 13px; color: #77647e; margin-bottom: 12px; }

@@ -4,6 +4,8 @@ import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 
 const MAP_PREFIX = "ai_phone_facing_map_v1:";
 export const FACING_MAP_SETTINGS_KEY = "ai_phone_facing_map_settings_v1";
+export const FACING_RESIDENTS_KEY = "ai_phone_facing_residents_v1";
+registerKvMigration(FACING_RESIDENTS_KEY);
 registerDynamicPrefix(MAP_PREFIX);
 registerKvMigration(FACING_MAP_SETTINGS_KEY);
 
@@ -58,6 +60,39 @@ export function loadFacingAtlases(worldId: string) {
     .filter((atlas): atlas is FacingAtlas => !!atlas && atlas.worldId === worldId)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
+type ResidentRegistry = Record<string, { characterIds: string[]; atlasIds: string[]; name: string }>;
+function residentRegistry(raw = kvGet(FACING_RESIDENTS_KEY)): ResidentRegistry {
+  const registry = parse<ResidentRegistry>(raw, {});
+  for (const key of kvKeysWithPrefix(MAP_PREFIX)) {
+    const atlas = parse<FacingAtlas | null>(kvGet(key), null);
+    if (!atlas || registry[atlas.worldId]) continue;
+    const maps = loadFacingAtlases(atlas.worldId);
+    registry[atlas.worldId] = { name: atlas.name, characterIds: [...new Set(maps.flatMap(item => item.characterIds))], atlasIds: maps.map(item => item.id) };
+  }
+  return registry;
+}
+export function mapResidentIds(atlas: FacingAtlas) { return residentRegistry()[atlas.worldId]?.characterIds ?? atlas.characterIds; }
+export function mapCharacterResidence(characterId: string) {
+  return Object.entries(residentRegistry()).find(([, value]) => value.characterIds.includes(characterId))?.[0];
+}
+function assignResidents(registry: ResidentRegistry, worldId: string, ids: string[], atlasId: string, name: string) {
+  for (const [other, value] of Object.entries(registry)) {
+    if (other !== worldId && ids.some(id => value.characterIds.includes(id))) throw new Error(`部分角色已在「${value.name}」生活，请先从原世界移除。`);
+  }
+  registry[worldId] = { name, characterIds: [...new Set(ids)], atlasIds: [...new Set([...(registry[worldId]?.atlasIds ?? []), atlasId])] };
+  return registry;
+}
+export async function saveMapResidents(atlas: FacingAtlas, ids: string[]) {
+  const characterIds = [...new Set(ids)];
+  await kvUpdatePersistedEntries({
+    [FACING_RESIDENTS_KEY]: raw => JSON.stringify(assignResidents(residentRegistry(raw), atlas.worldId, characterIds, atlas.id, atlas.name)),
+    ...Object.fromEntries(loadFacingAtlases(atlas.worldId).map(map => [MAP_PREFIX + map.id, (raw: string | null) => {
+      const current = parse(raw, map);
+      return JSON.stringify({ ...current, characterIds, updatedAt: new Date().toISOString() });
+    }])),
+  });
+  return loadFacingAtlas(atlas.id)!;
+}
 export async function updateFacingAtlas(id: string, update: (atlas: FacingAtlas) => FacingAtlas) {
   let result: FacingAtlas | undefined;
   await kvUpdatePersisted(MAP_PREFIX + id, raw => {
@@ -76,13 +111,28 @@ export async function renameFacingAtlas(id: string, name: string) {
 export async function deleteFacingAtlas(id: string) {
   // Original images can also belong to exported/custom templates; keep shared media intact.
   await kvDeletePersisted(MAP_PREFIX + id);
+  await kvUpdatePersisted(FACING_RESIDENTS_KEY, raw => {
+    const registry = residentRegistry(raw);
+    for (const [world, data] of Object.entries(registry)) {
+      data.atlasIds = data.atlasIds.filter(item => item !== id);
+      if (!data.atlasIds.length) delete registry[world];
+    }
+    return JSON.stringify(registry);
+  });
 }
 export async function createFacingAtlas(worldId: string, name: string, characterIds: string[], worldBookIds: string[], pages?: FacingMapPage[]) {
   const now = new Date().toISOString();
   const atlas: FacingAtlas = { id: facingId(), worldId, name, characterIds, worldBookIds,
     pages: pages ?? [{ id: facingId(), name, description: "", tiles: [], places: [], roads: [] }],
     snapshots: [], invitations: [], visits: [], userPlaces: {}, createdAt: now, updatedAt: now };
-  await kvUpdatePersisted(MAP_PREFIX + atlas.id, () => JSON.stringify(atlas));
+  await kvUpdatePersistedEntries({
+    [FACING_RESIDENTS_KEY]: raw => {
+      const registry = residentRegistry(raw);
+      atlas.characterIds = [...new Set([...(registry[worldId]?.characterIds ?? []), ...characterIds])];
+      return JSON.stringify(assignResidents(registry, worldId, atlas.characterIds, atlas.id, name));
+    },
+    [MAP_PREFIX + atlas.id]: () => JSON.stringify(atlas),
+  });
   return atlas;
 }
 export function mapPlace(atlas: FacingAtlas, id: string) {
@@ -112,7 +162,7 @@ export function mapActivitySnapshot(atlas: FacingAtlas, snapshotId?: string): Ma
     ...previous.filter(entry => !visit.characterIds.includes(entry.characterId)),
     ...visit.characterIds.map(characterId => ({ characterId, placeId: visit.placeId, activity: "和用户一起抵达这里", time: visit.at })),
   ], saved?.entries ?? []);
-  return { id: saved?.id ?? "arrivals", createdAt: saved?.createdAt ?? atlas.updatedAt, entries };
+  return { id: saved?.id ?? "arrivals", createdAt: saved?.createdAt ?? atlas.updatedAt, entries: entries.filter(entry => mapResidentIds(atlas).includes(entry.characterId)) };
 }
 export async function saveMapPage(atlasId: string, page: FacingMapPage) {
   return updateFacingAtlas(atlasId, atlas => ({ ...atlas, pages: atlas.pages.map(item => item.id === page.id ? page : item) }));

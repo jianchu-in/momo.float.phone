@@ -1,8 +1,9 @@
 import { jsonrepair } from "jsonrepair";
+import { mapResidentIds } from "./facing-map-storage";
 import { throwIfAborted } from "./abort-utils";
 import type { Character } from "./character-types";
 import { loadCharacters } from "./character-storage";
-import { getCharacterWorldGroup } from "./character-world-storage";
+import { getCharacterWorldGroup, loadCharacterWorldGroups } from "./character-world-storage";
 import { buildChatPromptMessages, sendLLMRequestPreferStream } from "./chat-engine";
 import { createOrGetSession, loadChatMessages, pushChatMessage } from "./chat-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "./image-generation-service";
@@ -21,6 +22,13 @@ import type { LLMMessage } from "./llm-prompt-assembler";
 
 export type MapPlan = { description: string; places: MapPlace[] };
 export type MapExtension = { tile?: MapTile; direction: "right" | "left" | "top" | "bottom" };
+export type MapGenerationSources = { atlas: FacingAtlas; characters: Character[]; worldBookIds?: string[] };
+export function mapGenerationSources(sources?: MapGenerationSources) {
+  if (!sources) return undefined;
+  return { 居住规则: "本世界只有以下已选择的生活角色，不从世界书或历史方案中额外添加具名居民。",
+    生活角色: sources.characters.filter(item => mapResidentIds(sources.atlas).includes(item.id)).map(({ id, name, persona }) => ({ id, name, persona: persona?.slice(0, 1600) })),
+    参考世界书: loadWorldBooks().filter(book => (sources.worldBookIds ?? sources.atlas.worldBookIds).includes(book.id)).map(book => ({ name: book.name, 内容: book.entries.filter(entry => !entry.disable).map(entry => entry.content).join("\n").slice(0, 6000) })) };
+}
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -45,15 +53,16 @@ async function request(lead: Character, instructions: string, content: string | 
   return cleanStreamText(raw, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] }).replace(/^```(?:json)?\s*|\s*```$/gi, "").trim();
 }
 export async function planFacingMap(lead: Character, atlas: FacingAtlas, page: FacingMapPage, characters: Character[],
-  requirement: string, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension): Promise<MapPlan> {
-  const books = loadWorldBooks().filter(book => atlas.worldBookIds.includes(book.id));
+  requirement: string, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension, sources?: MapGenerationSources): Promise<MapPlan> {
+  const books = loadWorldBooks().filter(book => (sources?.worldBookIds ?? atlas.worldBookIds).includes(book.id));
   const input = {
-    世界: getCharacterWorldGroup(lead.id)?.description, 地图: page.name,
+    世界: loadCharacterWorldGroups().find(group => group.id === atlas.worldId)?.description, 地图: page.name,
     上级地点: page.parentPlaceId ? mapPlacePath(atlas, page.parentPlaceId) : undefined,
     已有地点: page.places, 扩展方向: extension?.direction,
     用户要求: requirement, 画面描述额外提示词: preferences.descriptionPrompt,
     宽高: [preferences.width, preferences.height],
-    角色: characters.filter(character => atlas.characterIds.includes(character.id)).map(({ id, name, persona }) => ({ id, name, persona })),
+    角色: characters.filter(character => mapResidentIds(atlas).includes(character.id)).map(({ id, name, persona }) => ({ id, name, persona })),
+    居住规则: "本世界只有这些生活角色，不因参考世界书中的其他角色增添居民。",
     世界书: books.map(book => ({ name: book.name, entries: book.entries.filter(entry => !entry.disable).map(entry => entry.content) })),
   };
   const raw = await request(lead, [
@@ -87,26 +96,26 @@ export function extensionPosition(tile: MapTile | undefined, direction: MapExten
   return { x: tile.x + (direction === "right" ? tile.width * .82 : direction === "left" ? -width + tile.width * .18 : 0),
     y: tile.y + (direction === "bottom" ? tile.height * .82 : direction === "top" ? -height + tile.height * .18 : 0) };
 }
-export async function refineFacingMapPlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal): Promise<MapPlan> {
+export async function refineFacingMapPlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal, sources?: MapGenerationSources): Promise<MapPlan> {
   const raw = await request(lead, [
     "根据用户补充要求继续扩充、润色已有地图文字方案。以原方案为基础，保留未要求修改的地点名称、坐标与空间关系；可按要求增加地点和区域。返回完整更新后的方案。",
     '只返回JSON：{"description":"完整画面描述","places":[{"name":"地点名","description":"介绍","x":300,"y":450}]}。坐标归一化至0到1000。',
-  ].join("\n"), JSON.stringify({ 原方案: plan, 补充要求: requirement, 额外提示词: preferences.descriptionPrompt, 宽高: [preferences.width, preferences.height] }), signal);
+  ].join("\n"), JSON.stringify({ 原方案: plan, 参考资料: mapGenerationSources(sources), 补充要求: requirement, 额外提示词: preferences.descriptionPrompt, 宽高: [preferences.width, preferences.height] }), signal);
   const result = parseMapPlan(raw);
   return { ...result, places: result.places.map(place => ({ ...place, id: plan.places.find(item => item.name === place.name)?.id ?? place.id })) };
 }
-export async function polishMapTilePlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal): Promise<MapPlan> {
+export async function polishMapTilePlan(lead: Character, plan: MapPlan, requirement: string, preferences: MapPreferences, signal: AbortSignal, sources?: MapGenerationSources): Promise<MapPlan> {
   const raw = await request(lead, [
     "根据用户要求润色已有地图的画面描述与地点介绍。保持原有地点ID和坐标，不增删地点，补足建筑、房间、材质、光线、空间布局和通道细节。只返回JSON。",
     '返回 {"description":"完整的地图绘图描述","places":[{"id":"原ID","description":"润色后的地点介绍"}]}。',
-  ].join("\n"), JSON.stringify({ 原方案: plan, 用户要求: requirement, 额外提示词: preferences.descriptionPrompt, 宽高: [preferences.width, preferences.height] }), signal);
+  ].join("\n"), JSON.stringify({ 原方案: plan, 参考资料: mapGenerationSources(sources), 用户要求: requirement, 额外提示词: preferences.descriptionPrompt, 宽高: [preferences.width, preferences.height] }), signal);
   const data = object(JSON.parse(jsonrepair(raw)));
   if (!text(data.description)) throw new Error("未返回有效的地图描述，请重试。");
   const places = Array.isArray(data.places) ? data.places.map(object) : [];
   return { description: text(data.description), places: plan.places.map(place => ({ ...place,
     description: text(places.find(item => item.id === place.id)?.description) || place.description })) };
 }
-export async function renderFacingMap(lead: Character, plan: MapPlan, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension, referenceTile?: MapTile) {
+export async function renderFacingMap(lead: Character, plan: MapPlan, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension, referenceTile?: MapTile, sources?: MapGenerationSources) {
   const configured = resolveConfiguredImageGenerationSettings(lead.id, "facing");
   const width = preferences.width, height = preferences.height;
   if (![width, height].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("请填写有效的图片宽高。");
@@ -123,7 +132,7 @@ export async function renderFacingMap(lead: Character, plan: MapPlan, preference
   const original = referenceTile ? await getThemeAssetDataUrl(referenceTile.mediaId) : undefined;
   if (referenceTile && !original) throw new Error("原图读取失败，请关闭参考原图后重试。");
   const result = await generateImageFromConfiguredApi({ characterId: lead.id, appId: "facing", settings,
-    description: [plan.description, "只画地图底图，地点名称、头像与UI由程序叠加。",
+    description: [plan.description, "只画地图底图，地点名称、头像与UI由程序叠加。", sources ? JSON.stringify(mapGenerationSources(sources)) : "",
       extension ? `本图向原地图的${{ left: "左", right: "右", top: "上", bottom: "下" }[extension.direction]}侧扩展；参考图是原图相邻边缘，请在新图对应边缘保留18%的衔接画面，续接道路、河流、建筑尺度与光线。` : "",
       referenceTile ? "参考图是正在修改的地图图块。按新描述更新这块地图，保留原有布局、建筑身份及空间关系，适应新的宽高比例。" : "",
       preferences.imagePrompt].filter(Boolean).join("\n"),
@@ -167,8 +176,8 @@ async function characterMemory(character: Character) {
     近期记忆: recent.unifiedRecentItems, 核心记忆: core ? formatCoreMemories(core) : "", 长期记忆: long ? formatLongTermMemories(long) : "" };
 }
 export async function refreshMapActivities(lead: Character, atlas: FacingAtlas, characters: Character[], signal: AbortSignal): Promise<MapSnapshot> {
-  const group = getCharacterWorldGroup(lead.id);
-  const members = characters.filter(character => group?.memberIds.includes(character.id) ?? atlas.characterIds.includes(character.id));
+  const members = characters.filter(character => mapResidentIds(atlas).includes(character.id));
+  if (!members.length) return { id: facingId(), createdAt: new Date().toISOString(), entries: [] };
   const memory = await Promise.all(members.map(characterMemory));
   throwIfAborted(signal);
   const createdAt = new Date().toISOString();

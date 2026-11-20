@@ -358,6 +358,7 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
           "ai_phone_facing_assets_v1",
           "ai_phone_facing_map_settings_v1",
           "ai_phone_facing_map_plans_v1",
+          "ai_phone_facing_residents_v1",
           "ai_phone_facing_map_view_v1",
           "ai_phone_vn_scenes_v1",
           "ai_phone_vn_sprites_v1",

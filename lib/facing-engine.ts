@@ -92,7 +92,7 @@ function toPromptHistory(meeting: FacingMeeting): ChatMessage[] {
   }));
 }
 
-export type FacingReply = { speakerId: string; speakerName: string; dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup; visualContinues?: boolean };
+export type FacingReply = { speakerId: string; speakerName: string; dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup; visualContinues?: boolean; visualDescription?: string; visualRating?: string };
 
 export function chooseFacingSpeakers(ids: string[]): string[] {
   const order = [...new Set(ids)];
@@ -110,6 +110,7 @@ export async function generateFacingReply(options: {
   retryInstruction?: string;
   speakerId?: string;
   visualActivity?: string;
+  illustrate?: boolean;
   deferVisual?: boolean;
 }): Promise<{ replies: FacingReply[] }> {
   const { character, meeting, settings, scene, scenes, signal } = options;
@@ -179,6 +180,7 @@ export async function generateFacingReply(options: {
   const mode: LLMMessage = {
     role: "system",
     content: [FACING_MODE_PROMPT, mapContextPrompt,
+      options.illustrate && "本轮需要生成一张新的完整补图，不复用素材。请在JSON对象最外层附加 image_description（详细描述本轮结束时当前场所、最后发言角色的外貌、衣着、情绪、姿态、用户视点和光线，供生图使用），以及 image_rating（safe/nsfw/uncertain，仅判断要画的当前画面）。这两个字段不要写进角色台词。背景和人物取自参考图，保持剧情连续，不把计划当已发生。",
       multi && `这是多人当面互动，像群聊一样自然接话，每人保持独立人设。只有指定的角色本轮发言，其余人可以安静在场。不要替用户说话。一次请求返回完整 JSON 对象 {"scene_id":null,"replies":[{"speaker_id":"角色ID","dialogue":"只含该角色台词","action":"（可见动作）","reaction_id":null}]}。每位角色各一项，不将多人的台词混写进同一项。严格按这个名单和顺序输出：${JSON.stringify(speakingIds)}。角色资料：${JSON.stringify(roster)}`,
       options.speakerId && `本次只重试 ${options.speakerId} 的回应，保持其他人的原回复。`,
       options.deferVisual && "本轮画面由独立流程处理。scene_id 和 reaction_id 一律填写 null，仍要自然描写剧情中发生的动作与地点。",
@@ -217,7 +219,7 @@ export async function generateFacingReply(options: {
   const output = await sendLLMRequest(api, preset, messages, [], { characterName: character.name, userName: identity?.name }, { appId: "facing", appTags: ["facing"], signal });
   const text = cleanStreamText(output, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] }).trim();
   const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/gi, "");
-  let parsed: { dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown; visual_continues?: unknown; replies?: unknown };
+  let parsed: { dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown; visual_continues?: unknown; replies?: unknown; image_description?: unknown; image_rating?: unknown };
   try { parsed = unfenced.startsWith("{") ? JSON.parse(jsonrepair(unfenced)) : { dialogue: multi ? "" : unfenced }; }
   catch { throw new Error("角色回应格式有误，可以重试。"); }
   const nextScene = destinations.find(group => group.name === parsed.scene_id);
@@ -236,5 +238,9 @@ export async function generateFacingReply(options: {
       dialogue: line.speech, action: action || undefined, reaction, nextScene, visualContinues: item.visual_continues === true && !nextScene });
   }
   if (!replies.length) throw new Error("这一轮没有可显示的回应，可以重试。");
+  if (options.illustrate) {
+    replies[replies.length - 1].visualDescription = typeof parsed.image_description === "string" ? parsed.image_description.trim().slice(0, 6000) : undefined;
+    replies[replies.length - 1].visualRating = typeof parsed.image_rating === "string" ? parsed.image_rating : undefined;
+  }
   return { replies };
 }

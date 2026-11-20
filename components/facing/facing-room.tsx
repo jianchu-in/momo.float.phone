@@ -49,7 +49,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const speaker = cast.find(item => item.id === activeTurn?.speakerId) ?? character;
   const speakerVisualId = activeTurn && meeting.visual && activeTurn.id === meeting.turns.at(-1)?.id && meeting.visual.sceneName === activeTurn.sceneName
     && meeting.visual.activityId !== expiredVisual && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? meeting.visual.assetId : undefined;
-  const speakerVisual = useFacingSpeaker(speaker, activeTurn?.sceneName ?? position.sceneName, multi, speakerVisualId);
+  const speakerVisual = useFacingSpeaker(speaker, activeTurn?.sceneName ?? position.sceneName, multi, speakerVisualId ?? activeTurn?.reactionId);
+  const storedReaction = scenes.find(group => group.name === position.sceneName)?.reactions.find(asset => asset.id === activeTurn?.reactionId);
   const [draft, setDraft] = useState("");
   const [hidden, setHidden] = useState(false);
   const [photo, setPhoto] = useState<File>();
@@ -87,7 +88,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const displayedVisual = settings.autoVisual?.enabled && meeting.visual?.sceneName === position.sceneName && meeting.visual.activityId !== expiredVisual
     && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? autoAsset : undefined;
   const pendingActivity = autoProgress?.activity?.sceneName === position.sceneName ? autoProgress.activity : undefined;
-  const existingActivity = displayedVisual && meeting.visual && meeting.visual.expiresAt === undefined
+  const existingActivity = displayedVisual && meeting.visual && !meeting.visual.replacement && meeting.visual.expiresAt === undefined
     ? { id: meeting.visual.activityId, label: displayedVisual.name } : undefined;
 
   useEffect(() => {
@@ -100,7 +101,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   }, []);
 
   useEffect(() => {
-    if (!reaction) return;
+    if (!reaction || reaction.composition !== "full") return;
     const timer = window.setTimeout(() => setReaction(undefined), reaction.durationMs);
     return () => window.clearTimeout(timer);
   }, [reaction]);
@@ -158,17 +159,18 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (end < 0) throw new Error("找不到要重试的原消息。");
       const context = { ...current, turns: current.turns.slice(0, end + 1) };
       const activity = options?.retry || !settings.autoVisual?.enabled ? undefined : pendingActivity ?? existingActivity;
-      const deferVisual = !options?.previous && end === current.turns.length - 1 && settings.autoVisual?.skipNsfw === true
-        && shouldCheckFacingVisual(facingCompletedRounds(current) + 1, settings.autoVisual);
+      const illustrate = !options?.previous && end === current.turns.length - 1 && shouldCheckFacingVisual(facingCompletedRounds(current) + 1, settings.autoVisual);
+      const deferVisual = false;
       setGenerating(true);
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
-        signal: run.signal, retryInstruction: options?.instruction, speakerId: options?.previous?.speakerId, visualActivity: activity?.label, deferVisual });
+        signal: run.signal, retryInstruction: options?.instruction, speakerId: options?.previous?.speakerId, visualActivity: activity?.label, deferVisual, illustrate });
       if (run.signal.aborted) return;
       const responses: FacingTurn[] = result.replies.map(reply => ({
         ...(reply.nextScene ? facingScenePosition(reply.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
         id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action,
         speakerId: reply.speakerId, speakerName: reply.speakerName,
         at: new Date().toISOString(), replyTo: user.id, reactionId: reply.reaction?.id, reactionName: reply.reaction?.name,
+        visualDescription: reply.visualDescription, visualRating: reply.visualRating,
         visualContinuityId: deferVisual && existingActivity ? existingActivity.id : reply.visualContinues ? activity?.id : undefined,
       }));
       const previous = options?.previous;
@@ -354,9 +356,9 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     closeMenu();
   }
   return <section ref={roomRef} className="facing-room" style={roomStyle} aria-label={`与${character.name}见面`}>
-    <FacingStage portrait={multi ? speakerVisual.portrait : portrait} scene={multi ? speakerVisual.backdrop ?? (!speakerVisual.portrait && !speakerVisual.reference ? scene ?? portrait : undefined) : scene}
-      reaction={multi ? reaction ?? speakerVisual.reaction ?? (speaker.id === character.id ? displayedVisual : undefined) : reaction ?? displayedVisual}
-      fallback={multi ? speakerVisual.portrait ? undefined : speakerVisual.reference : character.avatar} hideBlank={multi} fullFallback={multi}
+    <FacingStage portrait={multi ? speakerVisual.portrait : portrait} scene={scene ?? (multi ? speakerVisual.backdrop : undefined)}
+      reaction={multi ? speakerVisual.reaction?.generated ? speakerVisual.reaction : displayedVisual ?? reaction ?? speakerVisual.reaction : displayedVisual ?? reaction ?? storedReaction}
+      fallback={multi ? speakerVisual.portrait || scene ? undefined : speakerVisual.reference : scene ? undefined : character.avatar} hideBlank={multi || !!scene}
       name={speaker.name} points={busy || listening ? [] : points} onPoint={handleTouch}
       retainPoints={!reaction && !!displayedVisual} onReactionEnd={stopReaction} />
     {touchEffect && <div key={touchEffect.id} className="facing-touch-feedback" style={{ left: touchEffect.x, top: touchEffect.y }} role="status">

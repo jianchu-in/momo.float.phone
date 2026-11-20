@@ -264,7 +264,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       </Header>
       {character ? <>
         <div className="facing-home-stage">
-          <FacingStage portrait={homeScene.portrait} scene={homeScene.backdrop} name={character.name} fallback={character.avatar}>
+          <FacingStage portrait={homeScene.portrait} scene={homeScene.backdrop} name={character.name} fallback={homeScene.backdrop ? undefined : character.avatar} hideBlank={!!homeScene.backdrop}>
             <div className="facing-home-label"><small>{homeScene.position.sceneName}{participantIds.length > 1 ? ` · ${participantIds.length}人见面` : ""}</small><strong>{castNames}</strong></div>
           </FacingStage>
         </div>
@@ -300,11 +300,11 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         <section className="facing-form" key={character.id} aria-label="随剧情换场">
           <h2 className="facing-record-title">随剧情换场</h2>
           <div className="facing-list facing-settings-list facing-auto-settings">
-            <label>自动检查并补图<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
+            <label>每 N 轮生成新画面<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
               onChange={event => commitSetting({ autoVisual: { enabled: event.target.checked } })} /></label>
             <label>生图前跳过 NSFW 场景<input type="checkbox" role="switch" checked={current.autoVisual?.skipNsfw === true}
               onChange={event => commitSetting({ autoVisual: { skipNsfw: event.target.checked } })} /></label>
-            <label>画面检查间隔（轮）<input type="number" min={1} step={1} inputMode="numeric" defaultValue={current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL}
+            <label>补图间隔（轮）<input type="number" min={1} step={1} inputMode="numeric" defaultValue={current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL}
               onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
               onBlur={event => {
                 const previous = current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL;
@@ -331,7 +331,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
                 }} /></label>
             </div>}
           </div>
-          <p className="facing-auto-help">先匹配现成素材。需要补图时，会将场景基础图和人物参考图一起交给生图模型。</p>
+          <p className="facing-auto-help">普通情绪只切换所选立绘。达到轮次后直接生成一张新的完整画面，使用当前场景背景、人物参考图和本轮描述；不复用旧图。新画面显示到换场或下一次补图，原背景与立绘保留。</p>
         </section>
         <div className="facing-list facing-settings-list">
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>

@@ -34,6 +34,9 @@ export type FacingAsset = {
   motionMediaType?: string;
   layout?: VnAssetLayout;
   composition?: "full";
+  folder?: string;
+  portraitIds?: string[];
+  generated?: boolean;
   location?: string;
 };
 
@@ -55,25 +58,30 @@ export function facingAssetMood(asset: FacingAsset) {
 }
 
 export function groupFacingScenes(assets: FacingAsset[], legacyPortraitId?: string): FacingSceneGroup[] {
-  const locations = new Map<string, FacingAsset[]>();
-  for (const asset of assets) {
+  const library = assets.filter(asset => asset.category === "portrait" && asset.composition !== "full" && !asset.generated);
+  const places = new Map<string, FacingAsset[]>();
+  for (const asset of assets.filter(item => !item.generated && (item.category === "scene" || item.composition === "full" || item.location))) {
     const name = facingAssetLocation(asset);
-    if (!locations.has(name)) locations.set(name, []);
-    locations.get(name)!.push(asset);
+    if (!places.has(name)) places.set(name, []);
+    places.get(name)!.push(asset);
   }
-  const legacyPortrait = assets.find(asset => asset.id === legacyPortraitId && asset.use === "idle" && asset.composition !== "full")
-    ?? assets.find(asset => asset.use === "idle" && asset.composition !== "full");
-  const legacyReactions = assets.filter(asset => asset.use === "reaction" && asset.composition !== "full" && !asset.location);
-  return Array.from(locations, ([name, groupAssets]) => {
-    const full = groupAssets.filter(asset => asset.composition === "full");
-    const fullPortrait = full.find(asset => asset.use === "idle");
-    const backdrop = fullPortrait ? undefined : groupAssets.find(asset => asset.category === "scene");
-    const portrait = fullPortrait
-      ?? (backdrop ? legacyPortrait : groupAssets.find(asset => asset.id === legacyPortraitId && asset.use === "idle")
-      ?? groupAssets.find(asset => asset.use === "idle"));
-    const reactions = fullPortrait ? full.filter(asset => asset.use === "reaction")
-      : backdrop ? [...full.filter(asset => asset.use === "reaction"), ...legacyReactions] : groupAssets.filter(asset => asset.use === "reaction");
+  if (!places.size && library.length) places.set(FACING_DEFAULT_SCENE, []);
+  return Array.from(places, ([name, groupAssets]) => {
+    const backdrop = groupAssets.find(asset => asset.category === "scene");
+    const legacy = !backdrop ? groupAssets.find(asset => asset.composition === "full" && asset.use === "idle") : undefined;
+    const eligible = backdrop?.portraitIds !== undefined ? library.filter(asset => backdrop.portraitIds!.includes(asset.id))
+      : library.filter(asset => !asset.location || facingAssetLocation(asset) === name || facingAssetLocation(asset) === FACING_DEFAULT_SCENE);
+    const portrait = legacy ?? eligible.find(asset => asset.id === legacyPortraitId) ?? eligible.find(asset => asset.use === "idle") ?? eligible[0];
+    const reactions = legacy ? groupAssets.filter(asset => asset.composition === "full" && asset.use === "reaction") : eligible.filter(asset => asset.use === "reaction");
     return { name, assets: groupAssets, portrait, backdrop, reactions };
+  });
+}
+
+export async function setFacingScenePortraits(characterId: string, location: string, ids: string[]) {
+  await kvUpdatePersisted(FACING_ASSETS_KEY, raw => {
+    const assets = readJson<FacingAsset[]>(raw, []);
+    const valid = [...new Set(ids)].filter(id => assets.some(asset => asset.id === id && asset.characterId === characterId && asset.category === "portrait" && asset.composition !== "full" && !asset.generated));
+    return JSON.stringify(assets.map(asset => asset.characterId === characterId && asset.category === "scene" && facingAssetLocation(asset) === location ? { ...asset, portraitIds: valid } : asset));
   });
 }
 
@@ -89,7 +97,8 @@ export function resolveFacingScene(position: FacingScenePosition, groups: Facing
   const group = groups.find(item => item.name === position.sceneName);
   const recordedPortrait = assets.find(asset => asset.id === position.portraitId);
   const recordedBackdrop = assets.find(asset => asset.id === position.sceneId && asset.category === "scene");
-  const portrait = recordedPortrait && (recordedPortrait.composition !== "full" || !recordedPortrait.location || facingAssetLocation(recordedPortrait) === position.sceneName)
+  const allowed = !group?.backdrop?.portraitIds || group.backdrop.portraitIds.includes(recordedPortrait?.id ?? "");
+  const portrait = recordedPortrait && allowed && (!group?.backdrop || recordedPortrait.composition !== "full") && (recordedPortrait.composition !== "full" || !recordedPortrait.location || facingAssetLocation(recordedPortrait) === position.sceneName)
     ? recordedPortrait : group?.portrait;
   const backdrop = portrait?.composition === "full" ? undefined : recordedBackdrop ?? group?.backdrop;
   return { portrait, backdrop, position: { sceneName: position.sceneName, portraitId: portrait?.id, sceneId: backdrop?.id } };
@@ -157,16 +166,18 @@ export type FacingTurn = {
   reactionId?: string;
   reactionName?: string;
   visualContinuityId?: string;
+  visualDescription?: string;
+  visualRating?: string;
   replyTo?: string;
   versions?: FacingReplyVersion[];
   versionIndex?: number;
 };
 
-export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName" | "visualContinuityId" | "speakerId" | "speakerName" | "audioRef">;
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "speakerId" | "speakerName" | "audioRef">;
 
 export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
-  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, speakerId, speakerName, audioRef } = turn;
-  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, speakerId, speakerName, audioRef };
+  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef } = turn;
+  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef };
 }
 
 export function facingTurnText(turn: FacingTurn): string {
@@ -190,7 +201,7 @@ export type FacingMeeting = {
   completedRounds?: number;
   pausedAt?: string;
   mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string };
-  visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number };
+  visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number; replacement?: boolean; round?: number };
 };
 
 export function facingCompletedRounds(meeting: FacingMeeting) {
@@ -320,7 +331,7 @@ export async function deleteFacingAssets(characterId: string, assetIds: readonly
         unusedMediaIds.delete(asset.mediaId);
         if (asset.motionMediaId) unusedMediaIds.delete(asset.motionMediaId);
       }
-      return JSON.stringify(remaining);
+      return JSON.stringify(remaining.map(asset => asset.portraitIds ? { ...asset, portraitIds: asset.portraitIds.filter(id => !removedIds.has(id)) } : asset));
     },
     [FACING_SETTINGS_KEY]: raw => {
       const settings = readJson<FacingSettings>(raw, { characters: {} });
@@ -359,7 +370,7 @@ export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, 
 }
 
 export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, activityId: string, location: string,
-  asset: FacingAsset, mode: "scene" | "hold" | "brief"): Promise<FacingMeeting | undefined> {
+  asset: FacingAsset, mode: "scene" | "hold" | "brief" | "replacement"): Promise<FacingMeeting | undefined> {
   let saved: FacingMeeting | undefined;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
     const meeting = readJson<FacingMeeting | null>(raw, null);
@@ -375,7 +386,7 @@ export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, a
       saved = { ...meeting, turns, scene, visual: undefined };
     } else if (location === anchor.sceneName) {
       saved = { ...meeting, visual: { assetId: asset.id, activityId, sceneName: location,
-        expiresAt: mode === "brief" ? Date.now() + asset.durationMs : undefined } };
+        replacement: mode === "replacement", round: facingCompletedRounds(meeting), expiresAt: mode === "brief" ? Date.now() + asset.durationMs : undefined } };
     }
     return saved ? JSON.stringify(saved) : raw!;
   });
@@ -448,7 +459,7 @@ export async function appendFacingTurns(meeting: FacingMeeting, incoming: Facing
     const turn = incoming.at(-1);
     if (!last || !turn) { saved = current; return JSON.stringify(saved); }
     const visual = current.visual && last.id === turn.id && turn.role === "assistant" && (current.visual.sceneName !== last.sceneName
-      || (current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
+      || (!current.visual.replacement && current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
     saved = { ...current, title: current.title || incoming[0]?.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
       visual, completedRounds: facingCompletedRounds(current) + addedRounds,
       scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };

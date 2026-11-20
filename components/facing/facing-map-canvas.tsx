@@ -182,8 +182,6 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
     if (place && character) occupants.set(place.id, [...(occupants.get(place.id) ?? []), character]);
   }
   const userPlace = userPlaceId ? placeOnMapPage(atlas, userPlaceId, page.id) : undefined;
-  const pendingCharacters = characters.filter(member => atlas.characterIds.includes(member.id)
-    && !(snapshot?.entries ?? []).some(entry => entry.characterId === member.id && placeOnMapPage(atlas, entry.placeId, page.id)));
   return <div className="fmap-canvas" ref={frame} data-view-mode={cover ? "cover" : "fit"}>
     {!!page.tiles.length && <svg className="fmap-backdrop" aria-hidden="true" viewBox={`${imageBounds.x} ${imageBounds.y} ${imageBounds.width} ${imageBounds.height}`} preserveAspectRatio="xMidYMid slice">
       {[...page.tiles].reverse().map(tile => images[tile.mediaId] && <image key={tile.id} href={images[tile.mediaId]} x={tile.x} y={tile.y} width={tile.width} height={tile.height} preserveAspectRatio="none" />)}
@@ -220,16 +218,6 @@ export function FacingMapCanvas({ atlas, page, characters, snapshot, selectedId,
       </g>
     </svg>
     {!page.tiles.length && <div className="fmap-empty">添加地图图片，或生成这片区域的地图</div>}
-    {!travel && (!userPlace || !!pendingCharacters.length) && <div className="fmap-unlocated" aria-label="地图人物位置">
-      {!userPlace && <div className="fmap-person"><span className="fmap-person-avatar">{userName.slice(0, 1)}{userAvatar && <img src={userAvatar} alt="" onError={event => { event.currentTarget.style.display = "none"; }} />}</span>
-        <span>{userName}<small>{userPlaceId ? "位于其他地图" : "位置待设置"}</small></span></div>}
-      {pendingCharacters.map(member => {
-        const activity = snapshot?.entries.find(entry => entry.characterId === member.id);
-        return <div key={member.id} className="fmap-person"><span className="fmap-person-avatar">{member.name.slice(0, 1)}{member.avatar && <img src={member.avatar} alt="" onError={event => { event.currentTarget.style.display = "none"; }} />}</span>
-          <span>{member.name}<small>{activity ? "位于其他地图" : "动向待更新"}</small></span></div>;
-      })}
-      <small>编辑地点可设置我的位置；刷新动向可更新角色位置。</small>
-    </div>}
     {viewError && <div className="fmap-view-error" role="alert">{viewError}</div>}
     <div className="fmap-zoom"><button type="button" aria-label="放大地图" onClick={() => zoom(1.3)}>＋</button>
       <button type="button" aria-label="缩小地图" onClick={() => zoom(1 / 1.3)}>－</button>
