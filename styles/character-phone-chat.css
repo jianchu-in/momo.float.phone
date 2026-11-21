@@ -15,3 +15,5 @@
   text-align: left;
   text-transform: none;
 }
+
+.character-phone-chat .phone-chat-pinned{flex:none;border-radius:4px;background:var(--c-input,#eee);color:var(--c-text-title,#555);padding:2px 5px;font-size:10px;opacity:.75}.character-phone-chat .minimal-item-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.character-phone-chat .minimal-item-row time{margin-left:auto;flex:none}
