@@ -5,7 +5,7 @@ import {createOrGetSession,hydrateChatStorage,loadChatMessages,loadChatSessions,
 import {chatDb} from "./chat-db";
 import {loadApiConfigs,loadBindingConfig,resolveBinding,resolveUserIdentity} from "./settings-storage";
 import {sendLLMStreamRequest} from "./chat-engine";
-import {loadPhoneSnapshot,savePhoneSnapshot,updatePhoneSnapshot,updatePhoneSnapshotPair} from "./checkphone-storage";
+import {loadPhoneSnapshot,savePhoneSnapshot,updatePhoneSnapshot,updatePhoneSnapshotPair,recordCharacterPhoneChatMemory} from "./checkphone-storage";
 import {cleanStreamText} from "./stream-preview";
 import {splitReverseReply} from "./reverse-phone-replies";
 import {throwIfAborted} from "./abort-utils";
@@ -22,13 +22,50 @@ export function characterPhoneContacts(owner:Character,payload?:CheckPhoneChatPa
  const userKey=JSON.stringify([account??null,user?.id??null]);
  const userOld=old.find(item=>item.peerType==="user"&&item.peerUserKey===userKey||!!direct&&item.id===`real_conv_${direct.id}`);
  const real=direct?loadChatMessages(direct.id).filter(m=>m.role!=="system"&&!m.isRetracted).slice(-80).map(m=>({id:m.id,text:getChatMessagePreview(m)||m.content,timeLabel:m.createdAt,direction:m.role==="user"?"incoming" as const:"outgoing" as const})):[];
- const userRow:CheckPhoneChatConversation={...userOld,id:userOld?.id??(direct?`real_conv_${direct.id}`:`phone_user_${user?.id??"default"}_${account??"main"}`),peerType:"user",peerUserKey:userKey,name:user?.name||"用户",preview:real.at(-1)?.text||userOld?.preview||"与用户的对话",timeLabel:real.at(-1)?.timeLabel||userOld?.timeLabel||"",tagLabel:"真实会话",messages:real.length?real:userOld?.messages??[]};
+ const userRow:CheckPhoneChatConversation={...userOld,id:userOld?.id??(direct?`real_conv_${direct.id}`:`phone_user_${user?.id??"default"}_${account??"main"}`),peerType:"user",peerUserKey:userKey,name:user?.name||"用户",remark:direct?.characterRemarkForUser?.trim()||userOld?.remark?.trim()||payload?.userRemark?.trim()||undefined,pinned:true,preview:real.at(-1)?.text||userOld?.preview||"与用户的对话",timeLabel:real.at(-1)?.timeLabel||userOld?.timeLabel||"",tagLabel:"真实会话",messages:real.length?real:userOld?.messages??[]};
  const known=chars.filter(char=>char.id!==owner.id&&world?.memberIds.includes(char.id));
  const rows=known.map(char=>{const prior=old.find(item=>item.peerCharacterId===char.id||norm(item.name)===norm(char.name));return {...prior,id:prior?.id??`phone_char_${char.id}`,peerCharacterId:char.id,peerType:"character" as const,name:char.name,preview:prior?.preview||"同世界角色",timeLabel:prior?.timeLabel||"",tagLabel:prior?.tagLabel||"同世界",messages:prior?.messages??[]};});
  const reserved=new Set([norm(userRow.name),...chars.map(char=>norm(char.name))]);
  const npcs=old.filter(item=>item.peerType!=="user"&&!item.id.startsWith("real_conv_")&&!reserved.has(norm(item.name))).map(item=>({...item,peerType:"npc" as const,peerCharacterId:undefined}));
- return [userRow,...rows,...npcs];
+ return [userRow,...rows,...npcs].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned));
 }
+/** 刷新时保留已产生的聊天历史与待接收状态，模型新生成的对话作为增量添加。 */
+export function mergeCharacterPhoneRefresh(
+ owner:Character, current:CheckPhoneSnapshot<CheckPhoneChatPayload>,
+ fresh:CheckPhoneChatPayload, refreshId:string,
+):CheckPhoneSnapshot<CheckPhoneChatPayload> {
+ const now=new Date().toISOString();
+ const incoming=characterPhoneContacts(owner,fresh).map(item=>{
+  const previous=current.payload.conversations.find(old=>(
+   item.peerType==="user"?old.peerType==="user"&&old.peerUserKey===item.peerUserKey:
+   item.peerCharacterId?old.peerCharacterId===item.peerCharacterId:
+   old.peerType==="npc"&&norm(old.name)===norm(item.name)
+  ));
+  if(item.peerType==="user"){
+   return {...item,id:previous?.id??item.id,remark:previous?.remark||item.remark,
+    messages:item.messages.length?item.messages:previous?.messages??[]};
+  }
+  const existing=previous?.messages??[];
+  const generated=item.messages.filter(message=>!!message.text.trim());
+  const seen=new Set(existing.slice(-12).map(message=>`${message.direction}:${message.text.trim()}`));
+  const additional=generated.filter(message=>{
+   const key=`${message.direction}:${message.text.trim()}`;
+   if(seen.has(key))return false;
+   seen.add(key);return true;
+  }).map((message,index)=>({...message,id:`phone_generated_${refreshId}_${item.peerCharacterId??item.id}_${index}`}));
+  const messages=[...existing,...additional].slice(-100);
+  return {...item,id:previous?.id??item.id,
+   pinned:previous?.pinned??item.pinned,
+   messages,pendingReply:previous?.pendingReply,
+   preview:messages.at(-1)?.text||item.preview,
+   timeLabel:messages.at(-1)?.timeLabel||item.timeLabel};
+ });
+ return {...current,updatedAt:now,payload:{...fresh,
+  userRemark:current.payload.userRemark||fresh.userRemark,
+  conversations:incoming,
+ }};
+}
+
 export async function ensureCharacterPhoneChat(owner:Character){
  await hydrateChatStorage();
  const existing=await loadPhoneSnapshot<CheckPhoneChatPayload>(owner.id,"chat");
@@ -60,6 +97,8 @@ export async function appendCharacterPhoneMessage(owner:Character,conversationId
  }; const peer=loadCharacters().find(char=>char.id===conversation.peerCharacterId);
  if(peer){const other=await ensureCharacterPhoneChat(peer);snapshot=await updatePhoneSnapshotPair(snapshot,other,updateOwner,value=>mirrorPhoneConversation(value,peer,owner,[{id:messageId,text:text.trim(),timeLabel:at,direction:"incoming"}]));notify(peer.id);}
  else snapshot=await updatePhoneSnapshot<CheckPhoneChatPayload>(owner.id,"chat",updateOwner);
+ recordCharacterPhoneChatMemory(owner.id,messageId,`{{user}}代{{char}}在查手机中向${conversation.name}发送消息：${text.trim()}`,at);
+ if(peer)recordCharacterPhoneChatMemory(peer.id,messageId,`${owner.name}发来消息（由用户代其发送）：${text.trim()}`,at);
  notify(owner.id);return snapshot;
 }
 export async function replyToCharacterPhone(owner:Character,conversationId:string,signal:AbortSignal,onDelta:(text:string)=>void){
@@ -82,6 +121,11 @@ export async function replyToCharacterPhone(owner:Character,conversationId:strin
  })}}); let updated:CheckPhoneSnapshot<CheckPhoneChatPayload>;
  if(peer){const other=await ensureCharacterPhoneChat(peer);updated=await updatePhoneSnapshotPair(snapshot,other,updateOwner,value=>mirrorPhoneConversation(value,peer,owner,parts.map((text,index)=>({id:`phone_${pending.operationId}:in:${index}`,text,timeLabel:at,direction:"outgoing" as const}))));notify(peer.id);}
  else updated=await updatePhoneSnapshot<CheckPhoneChatPayload>(owner.id,"chat",updateOwner);
+ for(let index=0;index<parts.length;index++){
+  const messageId=`phone_${pending.operationId}:in:${index}`;
+  recordCharacterPhoneChatMemory(owner.id,messageId,`${conversation.name}回复{{char}}：${parts[index]}`,at);
+  if(peer)recordCharacterPhoneChatMemory(peer.id,messageId,`{{char}}在与${owner.name}的聊天中回复：${parts[index]}`,at);
+ }
  notify(owner.id);return updated;
 }
 
