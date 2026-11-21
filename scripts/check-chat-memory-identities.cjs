@@ -64,6 +64,7 @@ async function main() {
         "./prompt-sanitizer": { stripStateAndInnerForPrompt: text => text },
         "./prompt-time": { resolvePromptTimeAware: () => false, formatPromptEventLabel: label => `[${label}]` },
         "./kv-db": { kvGet: key => kv.get(key), registerDynamicPrefix() {} },
+        "./facing-storage": { loadFacingSettings: () => ({ characters: {} }), loadFacingMeetings: () => [] },
         "./memory-storage": { loadMemoryConfig: () => ({ shortTermTokenBudget: 10000 }) },
         "./token-counter": { estimateTokens: text => text.length },
     }, { dispatchEvent() {} });

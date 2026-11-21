@@ -86,6 +86,33 @@ async function main() {
   assert.equal(host.live.state.messages[0].role, "user");
   assert.equal(host.live.state.messages[0].kind, "question");
 
+  const groupGuests = Array.from({ length: 7 }, (_, index) => ({ id: String(index + 1), name: `嘉宾${index + 1}` }));
+  const groupRequests = [], audienceRequests = [], individualRequests = [];
+  const grouped = new InterviewLiveController(groupGuests, options.normalizeInterviewOptions({ participation: "backstage", flow: "all",
+    guestGroups: { 3: 2, 4: 2, 5: 3, 6: 3, 7: 3 }, audience: { enabled: true } }), {
+    groupAnswers: async input => { groupRequests.push(input); return Object.fromEntries(input.groupIds.map(id => [id, `回答 ${id}`])); },
+    audience: async input => { audienceRequests.push(input); return [{ name: "观众", content: "原来如此" }]; },
+    answer: async input => { individualRequests.push(input); return "单独重试后的回答"; },
+  }, () => {});
+  await grouped.manualQuestion("原始问题", "主持人");
+  assert.deepEqual(groupRequests.map(call => call.groupIds.join()).join("|"), "1,2|3,4|5,6,7");
+  assert.equal(audienceRequests.length, 1);
+  assert.equal(audienceRequests[0].transcript.filter(message => message.role === "character").length, 7);
+  assert.equal(grouped.state.audienceRounds[0].comments[0].content, "原来如此");
+  assert.ok(!grouped.state.messages.some(message => message.content === "原来如此"));
+  const questionToEdit = grouped.state.messages.find(message => message.kind === "question");
+  const answerToRetry = grouped.state.messages.find(message => message.speakerCharacterId === "4");
+  grouped.editQuestion(questionToEdit.id, "改过的问题");
+  await grouped.retryAnswer(answerToRetry.id);
+  assert.equal(individualRequests.length, 1);
+  assert.equal(individualRequests[0].question, "改过的问题");
+  assert.equal(grouped.state.messages.find(message => message.id === answerToRetry.id).content, "单独重试后的回答");
+  assert.equal(groupRequests.length, 3);
+  assert.equal(audienceRequests.length, 1);
+  grouped.deleteMessage(questionToEdit.id);
+  assert.equal(grouped.state.messages.length, 7);
+  assert.equal(grouped.state.audienceRounds.length, 0);
+
   const flexible = scenario({ participation: "flexible", flow: "all", questionAsHost: false });
   await flexible.live.start(); await flexible.live.manualQuestion("先幕后代问", "简初");
   flexible.live.updateOptions({ ...flexible.live.options, questionAsHost: true });

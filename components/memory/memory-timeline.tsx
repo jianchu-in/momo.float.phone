@@ -11,8 +11,8 @@ import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
    标签筛选：顶部胶囊按来源收纳过滤
    ================================================================ */
 
-/** 固定展示顺序：私聊 / 群聊 / 查手机 / 朋友圈 / 剧情 / 其他APP */
-export const MEMORY_SOURCE_TAG_ORDER: readonly string[] = ["私聊", "群聊", "查手机", "朋友圈", "剧情", "其他APP"];
+/** 固定展示常用来源，其余来源归入其他 APP。 */
+export const MEMORY_SOURCE_TAG_ORDER: readonly string[] = ["私聊", "群聊", "查手机", "朋友圈", "剧情", "面对面", "其他APP"];
 
 /** 事件来源 → 筛选标签（其余来源一律归入「其他APP」收纳） */
 export function getMemoryEventSourceTag(evt: NativeTimelineEntry): string {
@@ -21,6 +21,7 @@ export function getMemoryEventSourceTag(evt: NativeTimelineEntry): string {
     if (app === "checkphone") return "查手机";
     if (app === "moments") return "朋友圈";
     if (app === "story") return "剧情";
+    if (app === "facing") return "面对面";
     return "其他APP";
 }
 
@@ -81,7 +82,7 @@ type ParsedProjection = {
     type: "projection";
     id: string;
     timestamp: string;
-    source: "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app" | "chat_offline";
+    source: "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone" | "custom_app" | "chat_offline" | "facing";
     label: string;
     message: string;
 };
@@ -164,6 +165,11 @@ function parseEntry(evt: NativeTimelineEntry, userName: string): ParsedEntry | n
         }
     }
 
+    if (evt.sourceApp === "facing") {
+        return { type: "projection", id: evt.id, timestamp: evt.timestamp, source: "facing",
+            label: "面对面", message: content.replace(/^\[[^\]]+\]\s*/, "") };
+    }
+
     // Custom app timeline events.
     if (evt.sourceApp === "custom_app") {
         const stripped = content.replace(/^\[[^\]]+\]\s*/, "");
@@ -190,10 +196,10 @@ function parseEntry(evt: NativeTimelineEntry, userName: string): ParsedEntry | n
         };
     }
 
-    if (evt.sourceApp === "story" || evt.sourceApp === "vn" || evt.sourceApp === "map" || evt.sourceApp === "game" || evt.sourceApp === "xiaohongshu" || evt.sourceApp === "checkphone" || evt.sourceApp === "interview_magazine" || evt.sourceApp === "cocreate" || (evt.sourceApp === "diary" && (evt.sourceDetail === "diary_entry" || evt.sourceDetail === "notewall"))) {
+    if (evt.sourceApp === "story" || evt.sourceApp === "vn" || evt.sourceApp === "map" || evt.sourceApp === "game" || evt.sourceApp === "xiaohongshu" || evt.sourceApp === "checkphone" || evt.sourceApp === "interview_magazine" || evt.sourceApp === "cocreate" || (evt.sourceApp === "diary" && (evt.sourceDetail === "diary_entry" || evt.sourceDetail === "notewall" || evt.sourceDetail === "personal_note_reaction"))) {
         const source = evt.sourceApp as "story" | "vn" | "map" | "game" | "diary" | "xiaohongshu" | "interview_magazine" | "cocreate" | "checkphone";
-        const label = source === "story" ? "剧情" : source === "vn" ? "漫卷" : source === "map" ? "冒险" : source === "game" ? "小游戏" : source === "xiaohongshu" ? "小红书" : source === "checkphone" ? "查手机" : source === "interview_magazine" ? "访谈" : source === "cocreate" ? "共创" : evt.sourceDetail === "diary_entry" ? "日记" : "便签墙";
-        const stripped = content.replace(/^\[(?:事件|剧情|漫卷|梦境|跑团游戏|小游戏|日记|便签墙|小红书|查手机|访谈|共创)(?: [^\]]+)?\]\s*/, "");
+        const label = source === "story" ? "剧情" : source === "vn" ? "漫卷" : source === "map" ? "冒险" : source === "game" ? "小游戏" : source === "xiaohongshu" ? "小红书" : source === "checkphone" ? "查手机" : source === "interview_magazine" ? "访谈" : source === "cocreate" ? "共创" : evt.sourceDetail === "personal_note_reaction" ? "手记偷看" : evt.sourceDetail === "diary_entry" ? "日记" : "便签墙";
+        const stripped = content.replace(/^\[(?:事件|剧情|漫卷|梦境|跑团游戏|小游戏|日记|手记|便签墙|小红书|查手机|访谈|共创)(?: [^\]]+)?\]\s*/, "");
         return {
             type: "projection",
             id: evt.id,

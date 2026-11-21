@@ -22,9 +22,10 @@ import { splitBilingualText } from "@/lib/bilingual-text";
 import { retryMomentGeneratedPhoto } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage, hasUserReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
-import { Bookmark, Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil } from "lucide-react";
+import { Bookmark, Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil, Share2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui";
 import { addMomentFavorite } from "@/lib/favorites-storage";
+import { MomentShareDialog } from "./moment-share-dialog";
 
 type Props = {
     post: MomentPost;
@@ -68,6 +69,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const [commentDraft, setCommentDraft] = useState("");
     const [deleteCommentTarget, setDeleteCommentTarget] = useState<MomentComment | null>(null);
     const [favoriteNotice, setFavoriteNotice] = useState("");
+    const [showShareDialog, setShowShareDialog] = useState(false);
 
     // Resolve asset:// photo URLs from IndexedDB
     const [resolvedPhotoUrl, setResolvedPhotoUrl] = useState<string | null>(null);
@@ -646,6 +648,11 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                     <button onClick={handleToggleComment} className="feed-post-comment-btn bg-none border-none p-0 cursor-pointer flex items-center transition-transform hover:scale-105 active:scale-95">
                         <MessageCircle size={16} strokeWidth={1.75} className="text-[var(--c-icon)]" />
                     </button>
+                    <button type="button" aria-label="分享朋友圈" title="分享到私聊"
+                        onClick={() => setShowShareDialog(true)}
+                        className="feed-post-share-btn bg-none border-none p-0 cursor-pointer flex items-center transition-transform hover:scale-105 active:scale-95">
+                        <Share2 size={16} strokeWidth={1.75} className="text-[var(--c-icon)]" />
+                    </button>
                     <button onClick={handleDelete} className="feed-post-delete-btn bg-none border-none p-0 cursor-pointer flex items-center transition-transform hover:scale-105 active:scale-95">
                         <Trash2 size={16} strokeWidth={1.75} className="text-[var(--c-icon)]" />
                     </button>
@@ -850,6 +857,12 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                     )}
                 </div>
             )}
+            {showShareDialog && <MomentShareDialog postId={post.id}
+                onClose={() => setShowShareDialog(false)} onShared={name => {
+                    setShowShareDialog(false);
+                    setFavoriteNotice(`已分享给 ${name}`);
+                    window.setTimeout(() => setFavoriteNotice(""), 1600);
+                }} />}
             {favoriteNotice && <div className="feed-favorite-notice" role="status">{favoriteNotice}</div>}
         </div>
     );

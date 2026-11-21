@@ -1,0 +1,82 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { loadCharacters } from "@/lib/character-storage";
+import { generateUserBrowserEntries } from "@/lib/reverse-phone-engine";
+import { loadUserBrowser, reverseId, saveUserBrowserEntry } from "@/lib/reverse-phone-storage";
+import type { BrowserEntry, ReverseScope } from "@/lib/reverse-phone-types";
+
+export function UserBrowser({ scope, initialCharacterId, onClose, onSettings }: { scope: ReverseScope; initialCharacterId?: string; onClose: () => void; onSettings: () => void }) {
+  const [entries, setEntries] = useState(() => loadUserBrowser(scope));
+  const [tab, setTab] = useState<BrowserEntry["kind"]>("history");
+  const [drafts, setDrafts] = useState<Partial<Record<BrowserEntry["kind"], BrowserEntry>>>({});
+  const draft = drafts[tab];
+  const [menu, setMenu] = useState(false), [ai, setAi] = useState(false), [requirement, setRequirement] = useState("");
+  const [selectedCharacter, setSelectedCharacter] = useState(initialCharacterId ?? loadCharacters()[0]?.id ?? "");
+  const [preview, setPreview] = useState<{ kind: BrowserEntry["kind"]; targetId?: string; entries: BrowserEntry[] }>();
+  const generated = preview?.kind === tab && preview.targetId === draft?.id ? preview.entries : [];
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const controller = useRef<AbortController | null>(null), locked = useRef(false);
+  useEffect(() => () => { controller.current?.abort(); controller.current = null; }, []);
+  function setDraft(value: BrowserEntry | undefined) {
+    setDrafts(current => ({ ...current, [tab]: value }));
+    setPreview(undefined);
+  }
+  function begin() {
+    if (locked.current) return false;
+    locked.current = true; setBusy(true); setError(""); return true;
+  }
+  function finish() { locked.current = false; setBusy(false); }
+  function stop() {
+    if (!controller.current) return;
+    controller.current.abort(); controller.current = null; finish();
+  }
+  async function write(entry: BrowserEntry, remove = false) {
+    if (!begin()) return;
+    try { await saveUserBrowserEntry(scope, entry, remove); setEntries(loadUserBrowser(scope)); setDraft(undefined); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败。"); }
+    finally { finish(); }
+  }
+  async function generate() {
+    const character = loadCharacters().find(item => item.id === selectedCharacter);
+    if (!character || !requirement.trim()) { setError("请选择API绑定角色并填写生成或润色要求。"); return; }
+    if (!begin()) return;
+    setPreview(undefined);
+    const control = new AbortController(); controller.current = control;
+    const kind = draft?.kind ?? tab, targetId = draft?.id;
+    try {
+      const result = await generateUserBrowserEntries(character, scope, kind, requirement, draft ? [draft] : entries.filter(item => item.kind === kind), control.signal);
+      // An aborted provider may still return; never revive its discarded preview.
+      if (!control.signal.aborted && controller.current === control) setPreview({ kind, targetId,
+        entries: result.map((item, index) => ({ ...item, id: targetId && index === 0 ? targetId : reverseId(), kind, updatedAt: new Date().toISOString() })) });
+    }
+    catch (cause) { if (!control.signal.aborted && controller.current === control) setError(cause instanceof Error ? cause.message : "生成失败。"); }
+    finally { if (controller.current === control) { controller.current = null; finish(); } }
+  }
+  async function applyGenerated() {
+    if (!generated.length || !begin()) return;
+    try {
+      // Stable IDs make retrying a partially saved batch an upsert, not a duplicate.
+      for (const item of generated) await saveUserBrowserEntry(scope, item);
+      setPreview(undefined); setAi(false); setDraft(undefined);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "应用失败。"); }
+    finally { setEntries(loadUserBrowser(scope)); finish(); }
+  }
+  return <section className="rp-panel" aria-label="我的浏览器">
+    <header className="rp-header"><button onClick={() => { stop(); onClose(); }}>返回</button><h2>浏览器</h2><button disabled={busy} onClick={() => setMenu(!menu)}>设置</button></header>
+    <main className="rp-scroll">
+      {menu && <div className="rp-actions"><button onClick={() => { setAi(true); setMenu(false); }}>AI辅助生成／润色</button><button onClick={onSettings}>查岗设置</button></div>}
+      <nav className="rp-tabs"><button disabled={busy} aria-pressed={tab === "history"} onClick={() => setTab("history")}>历史记录</button><button disabled={busy} aria-pressed={tab === "bookmarks"} onClick={() => setTab("bookmarks")}>收藏夹</button></nav>
+      <button disabled={busy} onClick={() => setDraft({ id: reverseId(), kind: tab, title: "", url: "", description: "", updatedAt: "" })}>添加{tab === "history" ? "历史记录" : "收藏"}</button>
+      {entries.filter(item => item.kind === tab).map(entry => <article key={entry.id} className="rp-card"><strong>{entry.title}</strong><small>{entry.url}</small><p>{entry.description}</p>
+        <div className="rp-actions"><button disabled={busy} onClick={() => setDraft(entry)}>编辑</button><button disabled={busy} onClick={() => void write(entry, true)}>删除</button></div></article>)}
+      {!entries.some(item => item.kind === tab) && <p className="rp-muted">暂无{tab === "history" ? "历史记录" : "收藏"}，可以手动添加或使用右上角AI辅助。</p>}
+      {draft && <fieldset disabled={busy}><legend>编辑记录</legend><label>标题<input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} /></label><label>网址<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value })} /></label>
+        <label>内容<textarea value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label><div className="rp-actions"><button onClick={() => setDraft(undefined)}>取消</button><button disabled={!draft.title.trim()} onClick={() => void write(draft)}>保存记录</button><button onClick={() => { setAi(true); setRequirement("润色这条记录，保留原意。"); }}>AI润色此记录</button></div></fieldset>}
+      {ai && <fieldset disabled={busy}><legend>AI辅助生成／润色</legend><label>使用角色绑定的文字API<select value={selectedCharacter} onChange={event => setSelectedCharacter(event.target.value)}>{loadCharacters().map(character => <option key={character.id} value={character.id}>{character.name}</option>)}</select></label>
+        <label>你的要求<textarea value={requirement} onChange={event => setRequirement(event.target.value)} placeholder="例如：生成最近搜索的周末旅行攻略。" /></label><button onClick={() => void generate()}>生成预览</button>
+        {generated.map((item, index) => <article className="rp-card" key={index}><strong>{item.title}</strong><small>{item.url}</small><p>{item.description}</p></article>)}
+        {!!generated.length && <button onClick={() => void applyGenerated()}>确认应用</button>}<button onClick={() => { setAi(false); setPreview(undefined); }}>关闭</button></fieldset>}
+      {busy && <div role="status">处理中…{controller.current && <button onClick={stop}>停止生成</button>}</div>}{error && <p role="alert">{error}</p>}
+    </main>
+  </section>;
+}

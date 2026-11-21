@@ -5,6 +5,7 @@ import { ChatSession, ChatMessage, loadChatAppSettings, createResponseBatchId, c
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, RegexConfig } from "./settings-types";
 import { loadCharacters } from "./character-storage";
+import { videoCallActionInstruction } from "./call-action-text";
 import { buildScreenEffectPromptHint } from "./chat-screen-effects";
 import { runChatPluginTransform } from "./chat-plugin-hooks";
 import { buildChatPluginPromptFragments } from "./chat-plugin-storage";
@@ -51,7 +52,7 @@ import {
     loadRegexes,
 } from "./settings-storage";
 import { resolveChatAccountUserIdentity } from "./chat-scope-storage";
-import { buildChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
+import { buildChineseThinkingPrompt, resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "./chinese-thinking-prompt";
 import {
     assembleGroupPromptPayload,
     formatRichMediaForHistory,
@@ -330,7 +331,8 @@ async function buildGroupChatPromptMessages(
         ? [...baseAppTags, "spectator"]
         : baseAppTags;
     const isOfflineMode = activeAppTags.includes("offline");
-    const chineseThinkingEnabled = session.chineseThinkingPromptEnabled === true && !isOfflineMode && !promptProfile
+    const chineseThinking = resolveChineseThinkingPrompt(session, loadChatAppSettings());
+    const chineseThinkingEnabled = chineseThinking.enabled && !isOfflineMode && !promptProfile
         && activeAppTags.includes("group_chat");
     preset = withChineseThinkingPrompt(preset, chineseThinkingEnabled);
 
@@ -512,7 +514,7 @@ async function buildGroupChatPromptMessages(
     if (chineseThinkingEnabled) {
         llmMessages.push({ role: "system", content: buildChineseThinkingPrompt(
             userName, preset?.online_thinking_tag?.trim() || "thinking", memberNames,
-            session.chineseThinkingPromptLength,
+            chineseThinking.length,
         ) });
     }
     if (promptProfile?.output === "plain_text") {
@@ -525,6 +527,9 @@ async function buildGroupChatPromptMessages(
             role: "system",
             content: "本次自定义 APP AI 任务只输出严格 JSON。不要输出 Markdown 代码块、解释文字或聊天富媒体指令。",
         });
+    }
+    if (!isOfflineMode && activeAppTags.includes("video")) {
+        llmMessages.push({ role: "system", content: videoCallActionInstruction(session.videoCallActions === true) });
     }
     appendEmptyGenerateGuardMessage(llmMessages, config, history);
 

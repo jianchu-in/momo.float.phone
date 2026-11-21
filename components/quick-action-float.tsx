@@ -1,5 +1,6 @@
 "use client";
 
+import { OPEN_FLOATING_TOOL } from "@/lib/roleplay-discussion";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
 import { BookOpen, Check, ChevronDown, Code2, FlaskConical, ImageIcon, Loader2, RefreshCw, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
@@ -63,7 +64,7 @@ function getStatusSafeTop(element: HTMLElement): number {
     return Math.max(72, (Number.isFinite(safeAreaTop) ? safeAreaTop : 48) + 18);
 }
 
-export function QuickActionFloat() {
+export function QuickActionFloat({ combined = false }: { combined?: boolean } = {}) {
     const [enabled, setEnabled] = useState(false);
     const [open, setOpen] = useState(false);
     const [scope, setScope] = useState<QuickScope>("global");
@@ -546,6 +547,17 @@ export function QuickActionFloat() {
         setOpen(true);
     }
 
+    useEffect(() => {
+        if (!combined || !enabled) return;
+        const openTool = (event: Event) => {
+            if ((event as CustomEvent).detail !== "quick-action") return;
+            reloadData();
+            setOpen(true);
+        };
+        window.addEventListener(OPEN_FLOATING_TOOL, openTool);
+        return () => window.removeEventListener(OPEN_FLOATING_TOOL, openTool);
+    }, [combined, enabled, reloadData]);
+
     if (!enabled) return null;
 
     const characterDisabled = scope === "character" && characters.length === 0;
@@ -608,6 +620,8 @@ export function QuickActionFloat() {
                 type="button"
                 className={buttonClass}
                 aria-label="打开快捷操作"
+                aria-hidden={combined || undefined}
+                tabIndex={combined ? -1 : undefined}
                 data-positioned={(isDual ? !!anchor : !!floatingPosition) ? "" : undefined}
                 data-dragging={draggingFloatingButton ? "" : undefined}
                 data-dock-side={floatingDockEnabled ? dockSide : undefined}
@@ -616,7 +630,7 @@ export function QuickActionFloat() {
                 onPointerUp={handleFloatingPointerEnd}
                 onPointerCancel={handleFloatingPointerEnd}
                 onClick={handleFloatingButtonClick}
-                style={buttonStyle}
+                style={combined ? { ...buttonStyle, visibility: "hidden", pointerEvents: "none" } : buttonStyle}
             >
                 <SlidersHorizontal size={24} strokeWidth={1.9} />
             </button>

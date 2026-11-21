@@ -8,10 +8,16 @@ import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse, type ParsedMessagePart } from "@/lib/rich-message-parser";
 import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
-import { withChineseThinkingPrompt } from "@/lib/chinese-thinking-prompt";
+import { resolveChineseThinkingPrompt, withChineseThinkingPrompt } from "@/lib/chinese-thinking-prompt";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent } from "./message-bubble";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
+import dynamic from "next/dynamic";
+import { REVERSE_OPEN_EVENT, type ReverseChatControl } from "@/lib/reverse-phone-types";
+import { loadReverseSession } from "@/lib/reverse-phone-storage";
+import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
+const ReversePhoneApp = dynamic(() => import("@/components/checkphone/reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
+const ReversePhoneInvitation = dynamic(() => import("@/components/checkphone/reverse-phone-invitation").then(module => module.ReversePhoneInvitation), { ssr: false });
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
 import { StickerSearchSuggest } from "./sticker-search-suggest";
 import { StateValuesPanel } from "./state-values-panel";
@@ -54,7 +60,7 @@ import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismi
 import { cancelBailoutKey } from "@/lib/push-bailout-client";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AlertCircle, Blocks, Bookmark, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, X } from "lucide-react";
+import { AlertCircle, Blocks, Bookmark, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, PhoneCall, X } from "lucide-react";
 import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
@@ -77,6 +83,9 @@ import {
 } from "@/lib/generated-image-retry";
 import { scrollElementWithinContainer } from "@/lib/dom-scroll";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { MomentsFeed } from "./moments-feed";
+import { applyChatMomentsCover } from "@/lib/chat-moments-cover";
+import type { ChatCompletionResult } from "@/lib/chat-engine";
 import { ChatScreenEffectOverlay, type ActiveScreenEffect } from "./chat-screen-effect";
 import {
     formatChatDiceResultMessage,
@@ -213,6 +222,7 @@ const CHAT_VISUAL_MEDIA_TYPES = new Set([
     "location",
     "music_share",
     "xiaohongshu_note_share",
+    "moment_share",
     "app_card",
     "audio",
     "video",
@@ -261,6 +271,7 @@ const CHAT_MEDIA_BUBBLE_TYPES = new Set([
     "location",
     "music_share",
     "xiaohongshu_note_share",
+    "moment_share",
     "app_card",
     "media_file",
 ]);
@@ -487,6 +498,7 @@ function shouldShowTimestamp(currentMsg: string, prevMsg: string | null): boolea
 }
 
 type ChatRoomProps = {
+    inspection?: ReverseChatControl;
     session: ChatSession;
     onBack: () => void;
     /** 会话在设置页被删除后回调：由外层卸载本聊天室并回到列表 */
@@ -661,6 +673,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onOpenCustomPlusAction: (action: RegisteredCustomAppChatPlusAction) => void;
     onStartVideoCall: () => void;
     onStartVoiceCall: () => void;
+    onReversePhone: () => void;
     onSendText: (text: string, options?: { autoReply?: boolean }) => boolean;
     onStopGeneration: () => void;
     onTriggerAIResponse: () => void;
@@ -693,6 +706,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onOpenCustomPlusAction,
     onStartVideoCall,
     onStartVoiceCall,
+    onReversePhone,
     onSendText,
     onStopGeneration,
     onTriggerAIResponse,
@@ -756,6 +770,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     );
     const suggestEnabled = !inputLocked && !panelOpen && !suggestClosed && inputText.trim().length > 0;
     const plusMenuItems = [
+        ...(!isGroup ? [{ icon: <PhoneCall size={22} />, label: "他来查岗", onClick: onReversePhone }] : []),
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>, label: "照片墙", onClick: () => onOpenRichModal("photo") },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="7" y1="8" x2="17" y2="8" /><line x1="7" y1="12" x2="14" y2="12" /><line x1="7" y1="16" x2="11" y2="16" /></svg>, label: "文字图片", onClick: () => onOpenRichModal("text_photo") },
         { icon: <AlertCircle size={22} strokeWidth={1.5} color="var(--c-text)" />, label: "系统指令", onClick: () => onOpenRichModal("system_instruction") },
@@ -1115,7 +1130,20 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
     );
 }));
 
-export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contactCallRequest, onContactCallHandled }: ChatRoomProps) {
+export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contactCallRequest, onContactCallHandled, inspection }: ChatRoomProps) {
+    const [reversePhone, setReversePhone] = useState<{ resumeId?: string; autoContinue?: boolean } | null>(null);
+    const [reverseInvitation, setReverseInvitation] = useState<{ resumeId?: string } | null>(null);
+    useEffect(() => {
+        if (inspection) return;
+        const open = (event: Event) => { const detail = (event as CustomEvent<{ sessionId: string; resumeId?: string }>).detail;
+            if (detail?.sessionId !== session.id || !detail.resumeId) return;
+            const record = loadReverseSession(detail.resumeId);
+            if (!record || record.inviteSessionId !== session.id) return;
+            if (record.accepted === true) setReversePhone({ resumeId: record.id });
+            else if (record.status !== "stopped" && record.accepted !== false) setReverseInvitation({ resumeId: record.id }); };
+        window.addEventListener(REVERSE_OPEN_EVENT, open);
+        return () => window.removeEventListener(REVERSE_OPEN_EVENT, open);
+    }, [session.id, !!inspection]);
     const [liveCSS, setLiveCSS] = useState(session.customCSS || "");
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [transientMessages, setTransientMessages] = useState<ChatMessage[]>([]);
@@ -1148,6 +1176,12 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [editingOfflineTarget, setEditingOfflineTarget] = useState<OfflineActionTarget | null>(null);
     const [editingOfflineContent, setEditingOfflineContent] = useState("");
     const [regexRevision, setRegexRevision] = useState(0);
+    const [globalThinkingEnabled, setGlobalThinkingEnabled] = useState(() => loadChatAppSettings().globalChineseThinkingPromptEnabled === true);
+    useEffect(() => {
+        const sync = () => setGlobalThinkingEnabled(loadChatAppSettings().globalChineseThinkingPromptEnabled === true);
+        window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
+        return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, sync);
+    }, []);
     // Whether there are unsent user messages waiting for AI generation
     const [pendingGenerate, setPendingGenerate] = useState(false);
     // 生成期间又来了一次回复请求（如拉黑/解除拉黑事件）且被判定为忙碌丢弃：
@@ -1162,6 +1196,11 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [customPlusActions, setCustomPlusActions] = useState<RegisteredCustomAppChatPlusAction[]>(() => loadCustomAppChatPlusActions());
     const [activeCustomChatPlus, setActiveCustomChatPlus] = useState<ActiveCustomChatPlus | null>(null);
     const [showSettings, setShowSettings] = useState(false);
+    const [showCharacterMoments, setShowCharacterMoments] = useState(false);
+    const avatarClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+    }, []);
     const [showVoiceCall, setShowVoiceCall] = useState(false);
     const [showVideoCall, setShowVideoCall] = useState(false);
     const [callMinimized, setCallMinimized] = useState(false);
@@ -1429,6 +1468,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     );
 
     const selectStoredMessageWindow = useCallback((allMsgs: ChatMessage[]) => {
+        if (inspection) return { nextMessages: allMsgs.filter(message => ["user", "assistant"].includes(message.role) && !message.isRetracted && !["tool_call", "tool_result", "memory_write_request"].includes(message.mediaType ?? "")).slice(-20), nextHasMore: false };
         if (allMsgs.length <= INITIAL_LOAD) {
             return { nextMessages: allMsgs, nextHasMore: false };
         }
@@ -1452,7 +1492,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             nextMessages: allMsgs.slice(startIndex),
             nextHasMore: startIndex > 0,
         };
-    }, []);
+    }, [!!inspection]);
 
     const applyStoredMessageWindow = useCallback((allMsgs: ChatMessage[]) => {
         const { nextMessages, nextHasMore } = selectStoredMessageWindow(allMsgs);
@@ -1677,7 +1717,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         const presets = loadPresets();
         const preset = withChineseThinkingPrompt(
             presets.find(item => item.id === slot.presetId) || presets.find(item => item.builtIn) || null,
-            session.chineseThinkingPromptEnabled === true,
+            resolveChineseThinkingPrompt(session, { globalChineseThinkingPromptEnabled: globalThinkingEnabled }).enabled,
         );
         const withThoughtCompat = (tag: string): string[] => (tag === "thinking" ? ["thinking", "thought", "think"] : [tag]);
         return {
@@ -1691,7 +1731,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             // 预设「剔除文本」：引擎最终会删，预览阶段同步删，避免闪现（字面量删除，成本极低）
             stripTexts: (preset?.strip_texts || []).filter(Boolean),
         };
-    }, [regexRevision, session.contactId, session.isGroup, session.chineseThinkingPromptEnabled]);
+    }, [regexRevision, session.contactId, session.isGroup, session.chineseThinkingPromptEnabled, globalThinkingEnabled]);
 
     const displayRegexMacroEngine = useMemo(() => {
         const charName = session.isGroup
@@ -1824,7 +1864,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     useEffect(() => {
         setUserIdentity(resolveChatAccountUserIdentity(session.chatAccountId, session.contactId, "chat"));
         setTransientMessages([]);
-        setOfflineMode(kvGet(CHAT_OFFLINE_MODE_PREFIX + session.id) === "1");
+        setOfflineMode(!inspection && kvGet(CHAT_OFFLINE_MODE_PREFIX + session.id) === "1");
         setOfflineVisibleCount(OFFLINE_INITIAL_LOAD);
         offlineTextInputRef.current?.clear();
         setPendingOfflineUserText("");
@@ -1840,8 +1880,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
 
         // Prewarm sticker cache for all relevant characters, then load messages
         const allMsgs = loadChatMessages(session.id);
-        const msgs = allMsgs.length > INITIAL_LOAD ? allMsgs.slice(-INITIAL_LOAD) : allMsgs;
-        const nextHasMore = allMsgs.length > INITIAL_LOAD;
+        const inspectionMessages = inspection ? allMsgs.filter(message => ["user", "assistant"].includes(message.role) && !message.isRetracted && !["tool_call", "tool_result", "memory_write_request"].includes(message.mediaType ?? "")).slice(-20) : allMsgs;
+        const msgs = inspection ? inspectionMessages : allMsgs.length > INITIAL_LOAD ? allMsgs.slice(-INITIAL_LOAD) : allMsgs;
+        const nextHasMore = !inspection && allMsgs.length > INITIAL_LOAD;
         hasMoreRef.current = nextHasMore;
         setHasMore(nextHasMore);
         const charIds = session.isGroup && session.participantIds
@@ -1866,6 +1907,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         }
 
         // Auto-reply logic for newly added friends with a greeting
+        if (inspection) return;
         const freshSession = loadChatSessions().find(s => s.id === session.id);
         const alreadyReplied = freshSession?.autoReplied;
 
@@ -3238,6 +3280,20 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         setMessages(prev => [...prev, msg]);
     };
 
+    const finishMomentsCoverChange = async (change: ChatCompletionResult["coverChange"], guard: GenerationRunGuard) => {
+        if (!change) return;
+        try {
+            throwIfGenerationStopped(guard);
+            if (change.action.kind === "generate") showChatToast("正在生成朋友圈封面…");
+            const applied = await applyChatMomentsCover(session, change.request, change.action, guard.signal);
+            if (applied) persistToolNotice("已更换朋友圈封面");
+        } catch (error) {
+            if (!guard.signal?.aborted && !isAbortLikeError(error)) {
+                persistToolNotice(`朋友圈封面更新失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+            }
+        }
+    };
+
     const appendTransientMessage = (
         role: ChatMessage["role"],
         content: string,
@@ -3390,6 +3446,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         onDecline,
         retryInstruction,
     }: ManagedGenerationOptions) => {
+        if (inspection || reversePhone || reverseInvitation) return;
         if (isGeneratingRef.current) {
             if (activeGenerationRuns.has(session.id)) return;
             // 上一轮被外部取消/顶替后收尾提前返回过，标记已是陈旧状态：复位后继续本次请求
@@ -3484,6 +3541,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     generationHistory,
                     {
                         appTags: theaterMode ? ["chat"] : ["chat", "text"],
+                        allowMomentsCoverChange: true,
                         signal: generationRun.controller.signal,
                     },
                     {
@@ -3511,6 +3569,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 );
                 if (!isCurrentGeneration()) return;
                 const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                await finishMomentsCoverChange(cr.coverChange, generationGuard);
                 if (!isCurrentGeneration()) return;
                 scheduleFollowUp(session.id, 0, result.stateValues);
                 handleCallTrigger(result.triggerCall);
@@ -3763,6 +3822,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     };
 
     const triggerAIResponse = async () => {
+        if (inspection || reversePhone || reverseInvitation) return;
         if (isGeneratingRef.current) {
             if (activeGenerationRuns.has(session.id)) return;
             // 上一轮被外部取消/顶替后收尾提前返回过，标记已是陈旧状态：复位后继续本次请求
@@ -3973,6 +4033,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
 
                 const result = await generateChatCompletion(session, latestMessages, {
                     appTags: theaterMode ? ["chat"] : ["chat", "text"],
+                    allowMomentsCoverChange: true,
                     signal: generationRun.controller.signal,
                 }, {
                     onReasoning: (t) => { pendingReasoning = t; },
@@ -4059,6 +4120,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 });
                 if (!isCurrentGeneration()) return;
 
+                await finishMomentsCoverChange(result.coverChange, generationGuard);
+                if (!isCurrentGeneration()) return;
+
                 if (lastSendResult) {
                     scheduleFollowUp(session.id, 0, lastSendResult.stateValues);
                     const isHidden = !mountedRef.current || !isChatRoomElementVisible(wrapperRef.current);
@@ -4116,7 +4180,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     // 收起键盘（或关掉表情/加号面板）并安静 N 秒后自动触发回复，
     // 等价于替用户点一次「触发回复」。判定全在 hook 内部，配置关掉后与手动模式一致。
     useKeyboardDismissAutoSend(wrapperRef, {
-        active: !offlineMode && !isMultiSelectMode,
+        active: !inspection && !reversePhone && !reverseInvitation && !offlineMode && !isMultiSelectMode,
         pending: pendingGenerate,
         generating: isGenerating,
         panelOpen: showEmojiPanel || showStickerPanel || showPlusMenu,
@@ -5773,6 +5837,29 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const editingMessage = editingMessageId ? messages.find(m => m.id === editingMessageId) : null;
     const editingSystemInstruction = editingMessage ? isSystemInstructionMessage(editingMessage) : false;
 
+    const renderCharacterAvatar = (className: string) => (
+        <button type="button" className={className} aria-label={`查看${character?.name || "角色"}的朋友圈`}
+            onClick={event => {
+                if (isMultiSelectMode || !character) return;
+                if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+                const open = () => {
+                    avatarClickTimer.current = null;
+                    closeContextMenu();
+                    setShowCharacterMoments(true);
+                };
+                if (event.detail === 0 || offlineMode) open();
+                else avatarClickTimer.current = setTimeout(open, 300);
+            }}
+            onDoubleClick={() => {
+                if (avatarClickTimer.current !== null) clearTimeout(avatarClickTimer.current);
+                avatarClickTimer.current = null;
+                if (character && !offlineMode && !isMultiSelectMode) sendRichMessage("poke", { pokeTarget: character.name });
+            }}
+        >
+            {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+        </button>
+    );
+
     // 群聊通话没有缩小悬浮窗，维持原有的整屏早退渲染
     if (showVoiceCall && session.isGroup && groupCharacters.length > 0) {
         return (
@@ -5826,7 +5913,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             <header className="page-header chat-room-main-pane" data-ui="header">
                 <div className="page-header-safe-area" />
                 <div className="page-header-content">
-                    <button className="page-back-btn" type="button" onClick={onBack} aria-label="返回">
+                    <button data-reverse-target="back" className="page-back-btn" type="button" onClick={onBack} aria-label="返回">
                         <ChevronLeft size={24} strokeWidth={1.5} />
                     </button>
                     <span className="page-title" style={{ position: 'relative' }}>
@@ -5856,6 +5943,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             {/* Message List */}
             <div
                 ref={scrollRef}
+                data-reverse-chat-scroll=""
                 className="page-body chat-room-main-pane flex flex-col gap-4 chat-scroll-anchored"
                 onScroll={(e) => {
                     if (activeMessageId || activeOfflineTarget) closeContextMenu();
@@ -5928,9 +6016,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                 </div>
                                 <div className="chat-offline-entry" data-role="assistant">
                                     {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
-                                    <div className="chat-offline-avatar" aria-hidden="true">
+                                    {character && !session.isGroup ? renderCharacterAvatar("chat-offline-avatar") : <div className="chat-offline-avatar" aria-hidden="true">
                                         {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} alt="" /> : <ChatFallbackAvatar />}
-                                    </div>
+                                    </div>}
                                     <div className="chat-offline-label-row">
                                         <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
                                         {assistantHasHtmlPreview ? (
@@ -6029,9 +6117,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                     /* 流式预览原地长出：与正式剧情正文同结构（头像/角色名/正文区），
                                        正文用轻量 pre-wrap 渲染（避免每帧 markdown/双语解析），落库时原地换成正式排版 */
                                     <div className="chat-offline-entry" data-role="assistant">
-                                        <div className="chat-offline-avatar" aria-hidden="true">
+                                        {character && !session.isGroup ? renderCharacterAvatar("chat-offline-avatar") : <div className="chat-offline-avatar" aria-hidden="true">
                                             {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} alt="" /> : <ChatFallbackAvatar />}
-                                        </div>
+                                        </div>}
                                         <div className="chat-offline-label-row">
                                             <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
                                         </div>
@@ -6398,28 +6486,17 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                                 </div>
                                             ) : (
                                                 <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                                    {(() => {
-                                                        const senderChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        const senderAvatar = session.isGroup ? senderChar?.avatar : effectiveCharacterAvatar;
-                                                        return (
-                                                            <>
-                                                    <div onDoubleClick={() => {
-                                                        const targetChar = session.isGroup && msg.senderCharacterId
-                                                            ? groupCharMap.get(msg.senderCharacterId) || character
-                                                            : character;
-                                                        if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
-                                                    }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
-                                                        {resolveChatCharacterAvatar(senderChar) ? (
-                                                            <img src={resolveChatCharacterAvatar(senderChar)} className="w-full h-full object-cover" alt="" />
-                                                        ) : (
-                                                            <ChatFallbackAvatar />
-                                                        )}
-                                                    </div>
-                                                            </>
-                                                        );
-                                                    })()}
+                                                    {character && !session.isGroup
+                                                        ? renderCharacterAvatar("chat-avatar-moments-btn w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden")
+                                                        : (() => {
+                                                            const sender = (msg.senderCharacterId && groupCharMap.get(msg.senderCharacterId)) || character;
+                                                            const avatar = resolveChatCharacterAvatar(sender);
+                                                            return <div onDoubleClick={() => {
+                                                                if (sender) sendRichMessage("poke", { pokeTarget: sender.name });
+                                                            }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
+                                                                {avatar ? <img src={avatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+                                                            </div>;
+                                                        })()}
                                                 </div>
                                             )
                                         )}
@@ -6617,9 +6694,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                                 return (
                                     <div key={`stream-seg-${j}`} className="chat-msg-wrapper" data-role="assistant">
                                         <div className="chat-msg-avatar flex flex-col items-center gap-1 shrink-0">
-                                            <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
+                                            {character && !session.isGroup ? renderCharacterAvatar("chat-avatar-moments-btn w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden") : <div className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden">
                                                 {effectiveCharacterAvatar ? <img src={effectiveCharacterAvatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
-                                            </div>
+                                            </div>}
                                         </div>
                                         <div className="chat-msg-content-wrap flex flex-col min-w-0 max-w-[70%]">
                                             <div className="chat-bubble-role-assistant chat-stream-bubble break-words rounded-md px-3 py-2">
@@ -6681,7 +6758,13 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     </button>
                 </div>
             )}
-            {!isMultiSelectMode && (offlineMode ? (
+            {reverseInvitation && !inspection && <ReversePhoneInvitation key={reverseInvitation.resumeId ?? "new-invitation"} characterId={session.contactId} chatSessionId={session.id} resumeSessionId={reverseInvitation.resumeId}
+                onAccepted={resumeId => { setReverseInvitation(null); setReversePhone({ resumeId, autoContinue: true }); }} onClose={() => setReverseInvitation(null)} />}
+            {inspection ? <div className="chat-input-bar rp-chat-draft" data-reverse-target="draft">
+                <span>{inspection.typing ? "他正在打字中" : "手机正在被他控制～"}</span>
+                <textarea aria-label="角色代回复内容" value={inspection.draft ?? ""} readOnly />
+                <button type="button" data-reverse-target="send" className={inspection.sending ? "rp-send-active" : ""}>发送</button>
+            </div> : !isMultiSelectMode && (offlineMode ? (
                 <OfflineTextInputBar
                     key={session.id}
                     ref={offlineTextInputRef}
@@ -6725,6 +6808,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 onOpenCustomPlusAction={handleOpenCustomPlusAction}
                 onStartVideoCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVideoCall(true); }}
                 onStartVoiceCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVoiceCall(true); }}
+                onReversePhone={() => { cancelFollowUp(session.id); clearStuckGeneration(); setShowPlusMenu(false); if (!reverseInvitation) setReverseInvitation({}); }}
                 onSendText={handleSendText}
                 onStopGeneration={clearStuckGeneration}
                 onTriggerAIResponse={triggerAIResponse}
@@ -6747,6 +6831,13 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                     onConfirm={handleMultiDeleteConfirmed}
                     onCancel={() => setShowConfirmMultiDelete(false)}
                 />
+            )}
+
+            {showCharacterMoments && character && wrapperRef.current?.parentElement && createPortal(
+                <div className="chat-settings-layer absolute inset-0 z-50 bg-[var(--c-page-body-bg)]">
+                    <MomentsFeed profileCharacterId={character.id} profileChatAccountId={session.chatAccountId ?? null} onCloseApp={() => setShowCharacterMoments(false)} />
+                </div>,
+                wrapperRef.current.parentElement
             )}
 
             {/* Settings Panel — portaled outside session-scoped CSS, preserves chat room mount */}
@@ -6786,6 +6877,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 wrapperRef.current.parentElement
             )}
 
+            {reversePhone && !inspection && <ReversePhoneLayer><ReversePhoneApp initialCharacterId={session.contactId} resumeSessionId={reversePhone.resumeId} autoContinue={reversePhone.autoContinue} onClose={() => setReversePhone(null)} /></ReversePhoneLayer>}
             {activeCustomChatPlus && activeCustomChatPlus.presentation === "none" && (
                 <div className="chat-custom-app-headless" aria-hidden="true">
                     <CustomAppRunner

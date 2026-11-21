@@ -19,6 +19,8 @@ function load(file, deps, suffix = "", globals = {}) {
 async function main() {
   const characters = [{ id: "a", name: "角色甲", persona: "安静温和" }, { id: "b", name: "角色乙", persona: "开朗" }];
   const requests = [];
+  const timelineReads = [];
+  let onTimelineRead;
   const reply = "*他期待着见面。*\n\n**他记住了约定。**";
   const engine = load("lib/story-engine.ts", {
     "./character-storage": { loadCharacters: () => characters },
@@ -26,6 +28,19 @@ async function main() {
       loadApiConfigs: () => [{ id: "api", defaultModel: "test" }], loadPresets: () => [], loadRegexes: () => [], loadWorldBooks: () => [], resolveUserIdentity: () => ({ name: "简初" }) },
     "./story-storage": { resolveActiveStorySchemes: () => ({}) },
     "./memory-storage": { loadMemoryConfig: () => ({}) },
+    "./abort-utils": { throwIfAborted: signal => { if (signal?.aborted) throw new DOMException("Aborted", "AbortError"); } },
+    "./memory-service": { retrieveMemoriesForPrompt: async () => [], retrieveCoreMemoriesForPrompt: async () => [] },
+    "./short-term-assembler": {
+      loadNativeTimelineAsync: async (id, options) => {
+        timelineReads.push({ id, ...options });
+        await onTimelineRead?.();
+        return [{ content: `角色${id}的近期事件` }];
+      },
+      prepareShortTermContext: (_id, _app, { history, timeline }) => ({
+        recentBlocks: [{ tag: "recent_chat", content: timeline[0].content }],
+        truncatedHistory: history, wbActivationContext: "", unifiedRecentItems: [],
+      }),
+    },
     "./llm-prompt-assembler": { assemblePromptPayload: () => [{ role: "system", content: "原有角色与预设" }] },
     "./macro-engine": { MacroEngine: class {} },
     "./story-parser": { STORY_PARSER_VERSION: 1, parseStoryResponse: raw => ({ rawText: raw, renderedText: raw, summaryText: "" }) },
@@ -55,6 +70,16 @@ async function main() {
   let delta = "";
   await engine.generateStoryCompletion("a", [], { ...options, settings: enabled, participantIds: ["b"], globalSettings: { timeAware: false, streamingEnabled: true }, onDelta: text => { delta += text; } });
   assert.match(requests.at(-1).at(-1).content, /\*\*重点内容\*\*/); assert.equal(delta, reply);
+  assert.equal(timelineReads.length, 0, "Independent stories skip the timeline");
+  const startedAt = "2026-11-01T00:00:00Z";
+  await engine.generateStoryCompletion("a", [], { participantIds: ["a", "b"], storyMemory: { inheritRecentMemory: false, startedAt } });
+  assert.deepEqual(timelineReads.map(({ id, afterTimestamp }) => [id, afterTimestamp]), [["a", startedAt], ["b", startedAt]]);
+  assert.ok(requests.at(-1).some(message => message.content.includes("角色b的近期事件")));
+  const abort = new AbortController();
+  onTimelineRead = () => abort.abort();
+  const beforeAbort = requests.length;
+  await assert.rejects(engine.generateStoryCompletion("a", [], { signal: abort.signal }), { name: "AbortError" });
+  assert.equal(requests.length, beforeAbort, "Stopping during timeline preparation skips the model request");
 
   const { window } = require("linkedom").parseHTML('<html><body><div id="root"></div></body></html>');
   global.window = window; global.document = window.document; global.HTMLElement = window.HTMLElement; global.Node = window.Node;

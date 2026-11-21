@@ -1,5 +1,7 @@
 "use client";
 
+export { CharacterPhoneChatPage as CheckPhoneChatPage } from "./character-phone-chat-page";
+
 import { useEffect, useMemo, useState } from "react";
 import { useCheckPhoneRefresh } from "@/lib/checkphone-refresh-tracker";
 import {
@@ -696,7 +698,7 @@ function CheckPhoneChatComposer() {
   );
 }
 
-export function CheckPhoneChatPage({
+function LegacyCheckPhoneChatPage({
   character,
   onBack,
 }: CheckPhoneChatPageProps) {

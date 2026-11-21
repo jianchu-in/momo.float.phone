@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues, resolveChatCharacterAvatar, resolveChatUserAvatar } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, findChatSessionById, loadChatMessages, pushChatMessage, getLatestCharacterStateValues, resolveChatCharacterAvatar, resolveChatUserAvatar } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -16,6 +16,8 @@ import { useHoldToTalk } from "./use-hold-to-talk";
 import { suspendKeepAliveForCall, resumeKeepAliveAfterCall } from "@/lib/use-weixin-bridge";
 import { BilingualTextBlock } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
+import { formatVideoCallText, splitVisibleCallActions } from "@/lib/call-action-text";
+import { VideoCallActionToggle } from "./video-call-action-toggle";
 import type { Character } from "@/lib/character-types";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
@@ -375,7 +377,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── AI response processing ──
 
-    const processAIResponse = useCallback((aiResponseText: string): { cleanParts: string[]; stateValues: StateValue[] } => {
+    const processAIResponse = useCallback((aiResponseText: string, showActions: boolean): { cleanParts: string[]; stateValues: StateValue[] } => {
         const previousState = getLatestCharacterStateValues(session.contactId);
 
         const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(aiResponseText, previousState);
@@ -388,7 +390,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         // Filter out non-chat action types
         const chatParts = parts.filter(p =>
             !p.mediaType || !["voice_call", "video_call", "poke", "accept_red_packet", "decline_red_packet", "accept_transfer", "decline_transfer", "accept_payment_request", "decline_payment_request"].includes(p.mediaType)
-        );
+        ).map(part => part.mediaType ? part : { ...part, content: formatVideoCallText(part.content, showActions) })
+            .filter(part => part.mediaType || part.content.trim());
 
         if (chatParts.length === 0 && (statusPanel || innerMonologue)) {
             const aiMsg = pushChatMessage({
@@ -434,6 +437,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         setInterimText("");
 
         try {
+            const showActions = (findChatSessionById(session.id) ?? session).videoCallActions === true;
             const frame = captureCameraFrame();
             const aiResponseText = flattenCompletionResult(await generateChatCompletion(session, messagesRef.current, {
                 appTags: ["chat", "video"],
@@ -441,9 +445,9 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             }));
             if (stateRef.current === "ENDED") return;
 
-            const { cleanParts } = processAIResponse(aiResponseText);
+            const { cleanParts } = processAIResponse(aiResponseText, showActions);
             const displayText = cleanParts.join("\n");
-            const speechText = stripBilingualForSpeech(displayText);
+            const speechText = splitVisibleCallActions(stripBilingualForSpeech(displayText)).speech;
 
             if (!displayText) { setCallState("IDLE"); return; }
 
@@ -458,7 +462,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             setCallState("AI_SPEAKING");
 
             const voiceConfig = resolveVoiceConfig(session.contactId);
-            if (voiceConfig && !isSpeakerMutedRef.current) {
+            if (speechText && voiceConfig && !isSpeakerMutedRef.current) {
                 try {
                     const audioBlob = await synthesizeSpeech(speechText, voiceConfig);
                     if (stateRef.current === "ENDED") return;
@@ -758,6 +762,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                     {callState !== "CONNECTING" && callState !== "ENDED" ? `${formatTime(callDuration)} · ` : ""}
                     {stateLabel()}
                 </div>
+                {callState !== "ENDED" && <VideoCallActionToggle session={session} />}
             </div>
 
             {/* Subtitle log — scrollable */}

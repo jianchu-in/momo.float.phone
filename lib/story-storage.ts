@@ -46,7 +46,29 @@ export type StoryGlobalSettings = {
   streamingEnabled: boolean;
   /** 每轮明确注入当前日期时间，并让历史消息按时间语义参与判断。 */
   timeAware: boolean;
+  illustration?: StoryIllustrationSettings;
 };
+
+export type StoryIllustrationSettings = {
+  enabled?: boolean;
+  interval?: number;
+  placement?: "tail" | "middle";
+  descriptionPrompt?: string;
+  extraPrompt?: string;
+  includeUserReference?: boolean;
+  skipNsfw?: boolean;
+};
+export const STORY_ILLUSTRATION_INTERVAL = 5;
+
+function normalizeStoryIllustration(value?: StoryIllustrationSettings): StoryIllustrationSettings | undefined {
+  if (!value) return;
+  const interval = value.interval;
+  return { enabled: value.enabled === true, interval: interval && Number.isSafeInteger(interval) && interval > 0 ? interval : STORY_ILLUSTRATION_INTERVAL,
+    placement: value.placement === "middle" ? "middle" : "tail",
+    descriptionPrompt: typeof value.descriptionPrompt === "string" ? value.descriptionPrompt.slice(0, 3000) : "",
+    extraPrompt: typeof value.extraPrompt === "string" ? value.extraPrompt.slice(0, 3000) : "",
+    includeUserReference: value.includeUserReference === true, skipNsfw: value.skipNsfw === true };
+}
 
 export const STORY_GLOBAL_SETTINGS_EVENT = "story-global-settings-updated";
 const STORY_GLOBAL_SETTINGS_KEY = "ai_phone_story_global_settings_v1";
@@ -65,6 +87,7 @@ export function loadStoryGlobalSettings(): StoryGlobalSettings {
       interruptProactiveDuringStory: parsed.interruptProactiveDuringStory === true,
       streamingEnabled: parsed.streamingEnabled === true,
       timeAware: parsed.timeAware !== false,
+      illustration: normalizeStoryIllustration(parsed.illustration),
     };
   } catch {
     return { ...DEFAULT_STORY_GLOBAL_SETTINGS };
@@ -76,6 +99,7 @@ export function saveStoryGlobalSettings(settings: StoryGlobalSettings): void {
     interruptProactiveDuringStory: settings.interruptProactiveDuringStory === true,
     streamingEnabled: settings.streamingEnabled === true,
     timeAware: settings.timeAware !== false,
+    illustration: normalizeStoryIllustration(settings.illustration),
   };
   kvSet(STORY_GLOBAL_SETTINGS_KEY, JSON.stringify(normalized));
   if (typeof window !== "undefined") {
@@ -434,6 +458,9 @@ export type StoryGroup = {
 };
 
 export type StorySession = {
+  facingSourceKey?: string;
+  sourceFacingMeetingId?: string;
+  facingIdentity?: import("@/components/settings/user-identity").UserIdentity | null;
   id: string;
   characterId: string;
   title?: string;
@@ -484,6 +511,7 @@ export type StorySession = {
   lastMessageId?: string;
   lastMessagePreview?: string;
   lastMessageAt?: string;
+  completedRounds?: number;
 };
 
 export type StoryMessageRole = "user" | "assistant" | "system";
@@ -496,11 +524,35 @@ export type StoryMessage = {
   contextRole?: StoryMessageRole;
   rawContent: string;
   renderedContent?: string;
+  imageRef?: string;
+  illustration?: StoryIllustration;
+  round?: number;
+  activeReplyVersionId?: string;
+  replyVersions?: StoryReplyVersion[];
   storySummary?: string;
   regexSignature?: string;
   parserVersion?: number;
   createdAt: string;
 };
+
+export type StoryIllustrationDetails = {
+  referenceMode?: "text";
+  description: string;
+  characterId: string;
+  useCharacterReference: boolean;
+  useUserReference: boolean;
+};
+
+export type StoryIllustration = ({ state: "ready"; mediaRef: string } | { state: "failed" }) & {
+  details?: StoryIllustrationDetails;
+};
+export type StoryReplyContent = Pick<StoryMessage, "rawContent" | "renderedContent" | "storySummary" | "regexSignature" | "parserVersion" | "illustration">;
+export type StoryReplyVersion = StoryReplyContent & { id: string };
+
+export function storyReplyVersion(message: StoryMessage): StoryReplyVersion {
+  const { rawContent, renderedContent, storySummary, regexSignature, parserVersion, illustration } = message;
+  return { id: message.activeReplyVersionId ?? message.id, rawContent, renderedContent, storySummary, regexSignature, parserVersion, illustration };
+}
 
 export type StoryProjectionEntry = {
   id: string;
@@ -1002,11 +1054,19 @@ export function updateStorySession(sessionId: string, updates: Partial<StorySess
   return next;
 }
 
+export function nextStoryRound(sessionId: string) {
+  const session = _sessionsCache.find(item => item.id === sessionId);
+  return session ? (session.completedRounds ?? 0) + 1 : undefined;
+}
+
 export function pushStoryMessage(
-  input: Omit<StoryMessage, "id" | "createdAt">
+  input: Omit<StoryMessage, "id" | "createdAt">,
+  countRound = false,
 ): StoryMessage {
+  const rounds = countRound ? nextStoryRound(input.sessionId) : undefined;
   const message: StoryMessage = {
     ...input,
+    round: rounds ?? input.round,
     id: generateId("story_msg"),
     createdAt: new Date().toISOString(),
   };
@@ -1020,9 +1080,54 @@ export function pushStoryMessage(
     lastMessagePreview: preview,
     lastMessageAt: message.createdAt,
     updatedAt: message.createdAt,
+    ...(rounds === undefined ? {} : { completedRounds: rounds }),
   });
 
   return message;
+}
+
+export function saveStoryReplyVersion(messageId: string, content: StoryReplyContent): StoryMessage | undefined {
+  const current = _messagesCache.find(message => message.id === messageId && message.role === "assistant");
+  if (!current) return;
+  const { id, ...initial } = storyReplyVersion(current);
+  const versionId = generateId("story_reply");
+  const next = { ...current, ...content, illustration: content.illustration, activeReplyVersionId: versionId,
+    replyVersions: [...(current.replyVersions ?? [{ id, ...initial }]), { id: versionId, ...content }] };
+  const messages = loadStoryMessages(current.sessionId);
+  const tail = new Set(messages.slice(messages.findIndex(message => message.id === current.id) + 1).map(message => message.id));
+  _messagesCache = _messagesCache.filter(message => !tail.has(message.id)).map(message => message.id === current.id ? next : message);
+  void storyDb.transaction("rw", storyDb.messages, async () => {
+    await storyDb.messages.bulkDelete([...tail]);
+    await storyDb.messages.put(next);
+  }).catch(() => undefined);
+  updateStorySession(next.sessionId, { lastMessageId: next.id, lastMessagePreview: next.rawContent.replace(/\s+/g, " ").trim().slice(0, 64), lastMessageAt: next.createdAt });
+  return next;
+}
+
+export function selectStoryReplyVersion(messageId: string, versionId: string) {
+  const index = _messagesCache.findIndex(message => message.id === messageId);
+  const current = _messagesCache[index];
+  const version = current?.replyVersions?.find(item => item.id === versionId);
+  if (!current || !version) return;
+  const { id, ...content } = version;
+  const next = { ...current, ...content, activeReplyVersionId: id };
+  _messagesCache[index] = next;
+  storyDb.messages.put(next).catch(() => undefined);
+  return next;
+}
+
+export function saveStoryIllustration(messageId: string, versionId: string, rawContent: string, illustration?: StoryIllustration) {
+  const index = _messagesCache.findIndex(message => message.id === messageId);
+  const current = _messagesCache[index];
+  if (!current) return false;
+  const active = storyReplyVersion(current);
+  const target = active.id === versionId ? active : current.replyVersions?.find(item => item.id === versionId);
+  if (!target || target.rawContent !== rawContent) return false;
+  const next = { ...current, illustration: active.id === versionId ? illustration : current.illustration,
+    replyVersions: current.replyVersions?.map(item => item.id === versionId ? { ...item, illustration } : item) };
+  _messagesCache[index] = next;
+  storyDb.messages.put(next).catch(() => undefined);
+  return true;
 }
 
 /** 把指定分页设为剧情 APP 下次打开的目标页，可由聊天邀请等跨 APP 流程调用。 */
@@ -1050,10 +1155,14 @@ export function deleteStoryMessage(messageId: string): void {
 export function deleteStoryMessagesFrom(sessionId: string, messageId: string): void {
     const msg = _messagesCache.find(m => m.id === messageId);
     if (!msg) return;
-    const idsToDelete = _messagesCache
-        .filter(m => m.sessionId === sessionId && m.createdAt >= msg.createdAt)
-        .map(m => m.id);
-    _messagesCache = _messagesCache.filter(m => !idsToDelete.includes(m.id));
+    const idsToDelete: string[] = [];
+    _messagesCache = _messagesCache.filter(m => {
+        if (m.sessionId === sessionId && m.createdAt >= msg.createdAt) {
+            idsToDelete.push(m.id);
+            return false;
+        }
+        return true;
+    });
     storyDb.messages.bulkDelete(idsToDelete).catch(() => undefined);
 }
 
@@ -1061,14 +1170,18 @@ export function deleteStoryMessagesFrom(sessionId: string, messageId: string): v
 export function editStoryMessage(messageId: string, newRawContent: string): void {
     const idx = _messagesCache.findIndex(m => m.id === messageId);
     if (idx === -1) return;
-    _messagesCache[idx] = {
-        ..._messagesCache[idx],
+    const previous = _messagesCache[idx];
+    const changed = {
+        ...previous,
         rawContent: newRawContent,
         renderedContent: undefined,
         regexSignature: undefined,
         parserVersion: undefined,
     };
-    storyDb.messages.put(_messagesCache[idx]).catch(() => undefined);
+    const version = storyReplyVersion(changed);
+    changed.replyVersions = changed.replyVersions?.map(item => item.id === version.id ? version : item);
+    _messagesCache[idx] = changed;
+    storyDb.messages.put(changed).catch(() => undefined);
 }
 
 export function replaceStoryMessages(sessionId: string, messages: StoryMessage[]): void {
@@ -1114,8 +1227,9 @@ export function loadStoryProjectionEntries(
   if (!sessions.length) return [];
   const sessionLabels = new Map(sessions.map(session => [session.id, session.title || session.branchName || ((session.branchId || "main") === "main" ? "主线" : "分线")]));
   const sessionById = new Map(sessions.map(session => [session.id, session]));
-  const messages = sessions.flatMap((session) => loadStoryMessages(session.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const sessionOrder = new Map(sessions.map((session, index) => [session.id, index]));
+  const messages = _messagesCache.filter(message => sessionOrder.has(message.sessionId))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || sessionOrder.get(a.sessionId)! - sessionOrder.get(b.sessionId)!);
   const projections: StoryProjectionEntry[] = [];
 
   for (let i = 0; i < messages.length; i++) {
@@ -1138,4 +1252,43 @@ export function loadStoryProjectionEntries(
   }
 
   return projections;
+}
+
+/** Commit a facing continuation and all its messages together before navigating. */
+export async function continueFacingInStory(meeting: import("./facing-storage").FacingMeeting,
+  identity: import("@/components/settings/user-identity").UserIdentity | null,
+): Promise<StorySession> {
+  await hydrateStoryStorage();
+  const participants = [...new Set(meeting.participantIds ?? [meeting.characterId])];
+  const snapshotKey = JSON.stringify([meeting.id, meeting.turns.at(-1)?.id ?? "", meeting.updatedAt, meeting.scene]);
+  const matchingGroup=participants.length>1?loadStoryGroups().find(group=>[...group.characterIds].sort().join("|")===[...participants].sort().join("|")):undefined;
+  const groupId = participants.length > 1 ? matchingGroup?.id??`facing_group_${meeting.id}` : meeting.characterId;
+  const ownerType = participants.length > 1 ? "group" as const : "single" as const;
+  if (ownerType === "group" && !loadStoryGroups().some(group=>group.id===groupId)) {
+    const now=new Date().toISOString();saveStoryGroups([{id:groupId,name:meeting.title||"面对面续写",characterIds:participants,createdAt:now,updatedAt:now},...loadStoryGroups()]);
+  }
+  const main=createOrGetStorySession(meeting.characterId,{ownerType,ownerId:groupId,participantIds:participants});
+  let saved!: StorySession; let copied: StoryMessage[]=[];
+  await storyDb.transaction("rw",storyDb.sessions,storyDb.messages,async()=>{
+    const existing=(await storyDb.sessions.toArray()).find(item=>item.facingSourceKey===snapshotKey);
+    if(existing){saved=existing;copied=await storyDb.messages.where("sessionId").equals(existing.id).toArray();return;}
+    const now=new Date().toISOString(),id=generateId("story_sess");
+    saved={...main,id,branchId:`facing_${generateId("branch")}`,branchName:`面对面续写 · ${meeting.scene?.sceneName||meeting.title||"当前对话"}`,
+      branchOrder:Math.max(0,..._sessionsCache.filter(s=>s.ownerId===groupId).map(s=>s.branchOrder??0))+1,createdAt:now,updatedAt:now,
+      inheritRecentMemory:false,inheritRecentMemoryLocked:false,independentStory:meeting.type==="independent",autoStartPrompt:undefined,
+      facingSourceKey:snapshotKey,facingIdentity:identity,sourceFacingMeetingId:meeting.id};
+    const description=`【从面对面继续】当前场景：${meeting.scene?.sceneName??"默认场景"}。继续这段已经发生的对话，不重新开场。用户：${identity?.name??"用户"}。`;
+    copied=[{id:`${id}:scene`,sessionId:id,role:"system",rawContent:description,createdAt:new Date(Math.max(Date.now(),Date.parse(meeting.turns.at(-1)?.at??meeting.createdAt)||0)+1).toISOString()},...meeting.turns.map(turn=>({
+      id:`${id}:facing:${turn.id}`,sessionId:id,role:turn.role,rawContent:`【${turn.sceneName}】${turn.role==="assistant"?turn.speakerName||"角色":identity?.name||"用户"}：${[turn.text,turn.action].filter(Boolean).join("\n")}`,
+      imageRef:turn.imageRef,createdAt:turn.at,
+    }))];
+    const last=copied.at(-1);saved={...saved,lastMessageId:last?.id,lastMessagePreview:last?.rawContent.slice(0,200),lastMessageAt:last?.createdAt,completedRounds:meeting.completedRounds??0};
+    await storyDb.sessions.put(saved);await storyDb.messages.bulkPut(copied);
+  });
+  _sessionsCache=[saved,..._sessionsCache.filter(s=>s.id!==saved.id)];
+  _messagesCache=[..._messagesCache.filter(m=>m.sessionId!==saved.id),...copied];
+  const key=`${ownerType}:${groupId}`;let pages:Record<string,string>={};try{pages=JSON.parse(kvGet("story-active-page-map-v1")??"{}");}catch{}
+  kvSet("story-active-page-map-v1",JSON.stringify({...pages,[key]:saved.id}));
+  kvSet("story-last-active-character-id",meeting.characterId);kvSet("story-last-active-target-v1",JSON.stringify({ownerType,ownerId:groupId}));
+  return saved;
 }

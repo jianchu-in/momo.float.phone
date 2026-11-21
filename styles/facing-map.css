@@ -1,0 +1,94 @@
+.fmap-app { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: #f2f4ef; color: var(--facing-ink,#2f3833); }
+.fmap-heading { flex: 1; min-width: 0; }
+.fmap-heading h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fmap-heading small { color: #7b857e; font-size: 11px; }
+.fmap-toolbar { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 12px 8px; }
+.fmap-toolbar select { flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 8px; background: #ffffffc9; font: inherit; font-size: 12px; }
+.fmap-stage { flex: 1; min-height: 60px; position: relative; transition: filter .4s; }
+.fmap-stage[data-blurred=true] { filter: blur(7px); }
+.fmap-canvas { position: absolute; inset: 0; overflow: hidden; background: #d6d9dc; isolation: isolate; }
+.fmap-backdrop { position: absolute; inset: -24px; width: calc(100% + 48px); height: calc(100% + 48px); filter: blur(18px) brightness(.85); opacity: .85; pointer-events: none; }
+.fmap-svg { position: relative; display: block; width: 100%; height: 100%; touch-action: none; user-select: none; cursor: grab; }
+.fmap-svg:active { cursor: grabbing; }
+.fmap-svg [role=button] { cursor: pointer; }
+.fmap-zoom { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; padding: 3px; border-radius: 14px; background: #ffffffe8; box-shadow: 0 3px 15px #263d2015; }
+.fmap-zoom button { border: 0; background: none; color: #42584a; min-width: 38px; min-height: 36px; font-size: 15px; }
+.fmap-zoom button:nth-child(n+3) { font-size: 14px; }
+.fmap-zoom button[aria-pressed=true] { border-radius: 10px; background: #e6ebe9; }
+.fmap-unlocated { position: absolute; top: 12px; left: 10px; display: flex; flex-wrap: wrap; gap: 7px; max-width: calc(100% - 82px); max-height: 28%; overflow: auto; padding: 8px; border-radius: 12px; background: #fffffff0; }
+.fmap-person { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.fmap-person small,.fmap-unlocated > small { display: block; font-size: 12px; color: #65726a; }
+.fmap-unlocated > small { flex-basis: 100%; }
+.fmap-person-avatar { position: relative; display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 50%; overflow: hidden; background: #e6ebe9; }
+.fmap-person-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.fmap-view-error { position: absolute; bottom: 10px; left: 10px; padding: 8px; border-radius: 10px; background: white; font-size: 14px; }
+.fmap-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; font-size: 13px; color: #738272; pointer-events: none; }
+.fmap-detail { position: absolute; z-index: 12; bottom: 0; left: 0; right: 0; max-height: 48%; overflow: auto; padding: 10px 14px; background: #fffffff0; border-radius: 20px 20px 0 0; box-shadow: 0 -4px 22px #344c2410; }
+.fmap-detail h2 { font-size: 17px; margin: 0; }
+.fmap-detail p { margin: 4px 0 8px; font-size: 12px; line-height: 1.6; color: #68766d; }
+.fmap-footer { flex: none; display: grid; gap: 5px; padding: 8px 12px max(9px,env(safe-area-inset-bottom)); background: #ffffffde; border-top: 1px solid #e4e9df; }
+.fmap-footer .facing-choices { gap: 5px; }
+.fmap-footer .facing-small { font-size: 11px; min-height: 33px; padding: 5px 8px; }
+.fmap-footer > small { font-size: 10px; color: #7b857e; }
+.fmap-note { margin: 2px 0; font-size: 12px; color: #788276; line-height: 1.6; }
+.fmap-character { display: flex; gap: 9px; align-items: center; width: 100%; border: 0; border-radius: 12px; padding: 7px; margin: 4px 0; background: #edf2eb; color: inherit; text-align: left; }
+.fmap-character > img,.fmap-character > span:first-child { width: 30px; height: 30px; object-fit: cover; border-radius: 50%; display: grid; place-items: center; flex: none; background: #fff; }
+.fmap-character > span:nth-child(2) { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.fmap-character strong { font-size: 12px; }
+.fmap-character small { display: block; font-size: 11px; color: #68766d; }
+.fmap-character > span:last-child { font-size: 11px; color: #55705b; }
+.facing-app .fmap-overlay { z-index: 40; }
+.facing-app .fmap-sheet { display: flex; flex-direction: column; gap: 12px; padding: 15px; max-height: calc(100% - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.fmap-sheet header { flex: none; }
+.fmap-sheet label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.fmap-sheet :is(input:not([type=checkbox]),select,textarea) { width: 100%; min-width: 0; border-radius: 10px; border: 1px solid #dce3d9; background: #fff; color: #344439; font: inherit; padding: 9px 10px; box-sizing: border-box; }
+.fmap-sheet textarea { min-height: 70px; resize: vertical; }
+.fmap-sheet .fmap-description { min-height: 150px; }
+.fmap-sheet fieldset { border: 1px solid #e0e5dc; border-radius: 12px; padding: 9px; margin: 0; display: grid; gap: 6px; max-height: 180px; overflow: auto; flex-shrink: 0; }
+.fmap-sheet legend { padding: 0 5px; font-size: 12px; color: #68776a; }
+.fmap-sheet .fmap-check { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 3px; }
+.fmap-check input { flex: none; accent-color: #6a8265; width: 17px; height: 17px; }
+.fmap-sheet h3 { margin: 4px 0 0; font-size: 14px; }
+.fmap-sheet p { font-size: 13px; line-height: 1.65; margin: 0; }
+.fmap-plan-place { display: grid; gap: 7px; margin: 10px 0; padding: 9px; border-radius: 12px; background: #edf1e9; }
+.fmap-sheet summary { cursor: pointer; padding: 6px 0; font-size: 13px; }
+.fmap-candidate { width: 100%; border-radius: 14px; object-fit: contain; background: #e6ece1; }
+.fmap-invite-result { border-radius: 12px; padding: 10px; background: #edf1e9; display: grid; gap: 7px; }
+.fmap-invite-result strong { font-size: 13px; }
+.fmap-busy { position: absolute; z-index: 60; bottom: 10px; left: 10px; right: 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; background: #3c554af5; color: #fff; border-radius: 12px; font-size: 12px; box-shadow: 0 4px 16px #0002; }
+.fmap-busy button { padding: 4px 8px; border: 0; border-radius: 7px; background: #ffffff2b; color: white; }
+.fmap-error { position: absolute; z-index: 61; bottom: 5px; left: 12px; right: 12px; max-height: 130px; overflow: auto; padding: 9px; border-radius: 10px; background: #fff6f3f7; box-shadow: 0 2px 12px #0001; font-size: 12px; }
+.fmap-travel { position: absolute; z-index: 30; inset: 70px 0 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; padding: 18px; pointer-events: none; }
+.fmap-travel .facing-choices { pointer-events: auto; }
+.fmap-travel-route { justify-content: flex-end; padding-bottom: 20px; }
+.fmap-travel-route > p { padding: 9px 15px; border-radius: 12px; background: #ffffffe8; }
+.fmap-travel-car { background: #ecf0e399; backdrop-filter: blur(3px); }
+.fmap-travel p { font-size: 14px; color: #3f5748; margin: 0; }
+.fmap-travel-party { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; max-width: 100%; }
+.fmap-travel-avatar { width: 42px; height: 42px; flex: none; border-radius: 50%; border: 3px solid #fff; background: #dce6d5; display: grid; place-items: center; box-shadow: 0 3px 12px #283e2219; overflow: hidden; }
+.fmap-travel-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.fmap-car { font-size: 24px; animation: fmap-driving 1.1s ease-in-out infinite; }
+@keyframes fmap-driving { 0%,100% { transform: translateX(0); } 50% { transform: translateX(7px); } }
+@media (prefers-reduced-motion: reduce) { .fmap-car { animation: none; } }
+
+.fmap-template-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; flex: none; }
+.fmap-template-grid button { overflow: hidden; display: grid; gap: 4px; padding: 0 0 8px; text-align: left; border: 1px solid #dce4d8; border-radius: 13px; background: #fff; color: inherit; cursor: pointer; }
+.fmap-template-grid button[aria-pressed=true] { border-color: #65876b; box-shadow: 0 0 0 1px #65876b; }
+.fmap-template-grid img { width: 100%; aspect-ratio: 4/3; object-fit: cover; }
+.fmap-template-grid strong,.fmap-template-grid small { padding: 0 9px; }
+.fmap-template-grid strong { font-size: 13px; }
+.fmap-template-grid small { font-size: 11px; color: #7c897d; }
+.fmap-template-preview { position: relative; flex: none; border-radius: 12px; overflow: hidden; background: #e8eddf; }
+.fmap-template-preview > img { display: block; width: 100%; }
+.fmap-template-preview > svg { display: block; width: 100%; min-height: 80px; }
+.fmap-template-preview > button { position: absolute; transform: translate(-50%,-50%); width: 24px; height: 24px; padding: 0; border: 2px solid white; border-radius: 50%; background: #436e50; color: white; font-size: 11px; cursor: pointer; box-shadow: 0 1px 6px #0003; }
+.fmap-template-preview > button[aria-pressed=true] { background: #a36537; }
+.fmap-template-download { display: inline-flex; align-items: center; justify-content: center; gap: 6px; align-self: flex-start; color: #476c4e; text-decoration: none; }
+.fmap-sheet .fmap-tile-editor { display: grid; gap: 10px; overflow: visible; max-height: none; min-width: 0; }
+.fmap-tile-tools { position: absolute; bottom: 10px; left: 10px; right: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 9px; border-radius: 12px; background: #fffffff2; }
+.fmap-tile-tools > span { flex: 1; font-size: 14px; }
+.fmap-delete-confirm { display: grid; gap: 9px; border-radius: 12px; padding: 10px; background: #fff1eb; }
+
+.fmap-sheet .fmap-operation-fields { display: grid; gap: 12px; border: 0; padding: 0; max-height: none; overflow: visible; min-width: 0; }
+/* Keep the long plan editor in normal sheet flow after save/copy focus changes. */
+.fmap-sheet .fmap-operation-fields{flex:0 0 auto;min-height:min-content;overflow:visible;max-height:none;overflow-anchor:none}

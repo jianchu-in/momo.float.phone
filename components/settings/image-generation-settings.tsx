@@ -11,6 +11,7 @@ import {
     saveImageGenerationSettings,
 } from "@/lib/settings-storage";
 import type { UserIdentity } from "@/components/settings/user-identity";
+import { CHAT_ALT_ACCOUNTS_UPDATED_EVENT, loadChatAltAccounts, resolveChatAltAccountIdentity } from "@/lib/chat-alt-account-storage";
 import { resolveFaceCrop, normalizeFaceCrop, type FaceCrop } from "@/lib/face-crop";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -150,15 +151,25 @@ export function ImageGenerationSettings() {
             setSettings(loaded);
         }
         const loadedCharacters = loadCharacters();
-        setUserIdentities(loadUserIdentities());
         setCharacters(loadedCharacters);
         setSelectedCharacterId(loadedCharacters[0]?.id || null);
     }, []);
 
     useEffect(() => {
-        const syncIdentities = () => setUserIdentities(loadUserIdentities());
+        const syncIdentities = () => setUserIdentities([
+            ...loadUserIdentities(),
+            ...loadChatAltAccounts().flatMap(account => {
+                const identity = account.deletedAt ? null : resolveChatAltAccountIdentity(account.id);
+                return identity ? [{ ...identity, name: `${identity.name}（小号）` }] : [];
+            }),
+        ]);
+        syncIdentities();
         window.addEventListener("user-identities-updated", syncIdentities);
-        return () => window.removeEventListener("user-identities-updated", syncIdentities);
+        window.addEventListener(CHAT_ALT_ACCOUNTS_UPDATED_EVENT, syncIdentities);
+        return () => {
+            window.removeEventListener("user-identities-updated", syncIdentities);
+            window.removeEventListener(CHAT_ALT_ACCOUNTS_UPDATED_EVENT, syncIdentities);
+        };
     }, []);
 
     useEffect(() => {

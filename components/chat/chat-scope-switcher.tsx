@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronRight, Globe2, MessageCircleMore, Plus, RotateCcw, SlidersHorizontal, UserRound } from "lucide-react";
 import { BottomSheet } from "@/components/ui/modal";
 import { loadUserIdentities } from "@/lib/settings-storage";
@@ -24,6 +25,7 @@ import {
 
 export function ChatScopeSwitcher({ onScopeChange }: { onScopeChange?: (scope: ChatScopeState) => void }) {
     const [open, setOpen] = useState(false);
+    const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
     const [expanded, setExpanded] = useState<"account" | "identity" | "world" | null>(null);
     const [scope, setScope] = useState<ChatScopeState>(() => loadChatScope());
     const [creatingAccount, setCreatingAccount] = useState(false);
@@ -69,8 +71,14 @@ export function ChatScopeSwitcher({ onScopeChange }: { onScopeChange?: (scope: C
                 type="button"
                 className="page-back-btn relative"
                 aria-label="切换身份和世界观"
+                aria-expanded={open}
                 title={getChatScopeLabel(scope)}
-                onClick={() => {
+                onClick={(event) => {
+                    // Keep the sheet out of the header's backdrop/stacking context.
+                    // Nested phones must keep their filter inside their own screen.
+                    setPortalTarget(event.currentTarget.closest<HTMLElement>(
+                        '.story-floating-chat-app, .story-mini-phone-modal-layer, [data-ui="phone-screen"]',
+                    ) ?? event.currentTarget.closest<HTMLElement>(".chat-app") ?? document.body);
                     setExpanded(null);
                     setCreatingAccount(false);
                     setOpen(true);
@@ -80,7 +88,8 @@ export function ChatScopeSwitcher({ onScopeChange }: { onScopeChange?: (scope: C
                 {isFiltered && <span className="absolute right-[5px] top-[5px] h-2 w-2 rounded-full bg-[#ff4d6d] ring-2 ring-[var(--c-page-header-bg,#fff)]" />}
             </button>
 
-            {open && (
+            {open && portalTarget && createPortal(
+                <div className={`chat-scope-modal-layer${portalTarget === document.body ? " chat-scope-viewport-layer" : ""}`} role="dialog" aria-modal="true" aria-label="筛选主页内容">
                 <BottomSheet title="筛选主页内容" onClose={() => setOpen(false)}>
                     <div className="flex max-h-[58vh] flex-col overflow-y-auto pb-3">
                         <div className="menu-group overflow-hidden">
@@ -277,6 +286,8 @@ export function ChatScopeSwitcher({ onScopeChange }: { onScopeChange?: (scope: C
                         </div>
                     </div>
                 </BottomSheet>
+                </div>,
+                portalTarget,
             )}
         </>
     );

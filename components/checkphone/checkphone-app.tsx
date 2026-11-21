@@ -1,6 +1,11 @@
 "use client";
 
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { reverseScope } from "@/lib/reverse-phone-storage";
+import { ReversePhoneLayer } from "./reverse-phone-layer";
+const ReversePhoneApp = dynamic(() => import("./reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
 import {
   AtSign,
   BookOpenText,
@@ -73,7 +78,10 @@ import {
   type CheckPhoneAppId,
   type CheckPhoneManifest,
   type CheckPhoneSnapshot,
+  type CheckPhoneChatPayload,
 } from "@/lib/checkphone-config";
+import { mergeCharacterPhoneRefresh } from "@/lib/character-phone-chat";
+import { markCharacterPhoneUpdates } from "@/lib/character-phone-chat-view";
 import { generateCheckPhoneAppBatch, generateCheckPhoneManifest } from "@/lib/checkphone-engine";
 import {
   clearPhoneManifest,
@@ -81,6 +89,7 @@ import {
   loadPhoneSnapshot,
   savePhoneManifest,
   savePhoneSnapshot,
+  updatePhoneSnapshot,
   hydrateCheckPhoneStorage,
   readPhoneManifestCache,
   loadCheckPhoneUnreadAppIds,
@@ -290,6 +299,7 @@ function getAppIconClass(appId: CheckPhoneAppId, isDock = false) {
 }
 
 export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
+  const [ownPhone, setOwnPhone] = useState(false);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeCharId, setActiveCharId] = useState<string | null>(null);
   const [states, setStates] = useState<Record<string, ManifestState>>({});
@@ -584,6 +594,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
     }
     setBatchLoading(true);
     setBatchStatus(null);
+    try {
     const previousSnapshots = await Promise.all(batchAppIds.map((appId) => loadPhoneSnapshot(activeCharId, appId)));
     const result = await generateCheckPhoneAppBatch(activeCharId, batchAppIds);
     const now = new Date().toISOString();
@@ -600,7 +611,13 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
         summary: item.summary,
         payload: item.payload,
       };
-      await savePhoneSnapshot(snapshot);
+      if (item.appId === "chat" && activeCharacter) {
+        const saved = await updatePhoneSnapshot<CheckPhoneChatPayload>(activeCharId, "chat", current => ({
+          ...mergeCharacterPhoneRefresh(activeCharacter, current, item.payload as CheckPhoneChatPayload, crypto.randomUUID()),
+          summary: item.summary,
+        }), snapshot as CheckPhoneSnapshot<CheckPhoneChatPayload>);
+        markCharacterPhoneUpdates(activeCharId, previous?.payload as CheckPhoneChatPayload ?? null, saved.payload);
+      } else await savePhoneSnapshot(snapshot);
       savedCount += 1;
     }
     const generatedAppIds = result.items.filter((item) => item.payload).map((item) => item.appId);
@@ -610,12 +627,18 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
     const failures = result.items.filter((item) => !item.payload).map((item) => CHECKPHONE_APP_SPECS[item.appId].label);
     if (result.error) {
       setBatchStatus({ success: false, message: result.error });
+    } else if (result.items.some(item => item.error && item.payload)) {
+      setBatchStatus({ success: false, message: `已更新 ${savedCount} 个；${result.items.filter(item => item.error).map(item => item.error).join("；")}` });
     } else if (failures.length > 0) {
       setBatchStatus({ success: savedCount > 0, message: `已更新 ${savedCount} 个；${failures.join("、")}返回格式未通过校验，可单独重试。` });
     } else {
       setBatchStatus({ success: true, message: `已用一次 API 调用更新 ${savedCount} 个应用。` });
     }
-    setBatchLoading(false);
+    } catch (cause) {
+      setBatchStatus({ success: false, message: cause instanceof Error ? cause.message : "保存失败，可重试，已保存的记录保留。" });
+    } finally {
+      setBatchLoading(false);
+    }
   }
 
   const handleBack = () => {
@@ -655,7 +678,12 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   const unreadAppIds = activeCharId ? unreadAppIdsByCharacter[activeCharId] || [] : [];
   const selectedAppSpec = selectedAppId && isCheckPhoneAppId(selectedAppId) ? CHECKPHONE_APP_SPECS[selectedAppId] : null;
 
+  useMascotScene("checkphone", activeCharacter ? `查手机 · ${activeCharacter.name}` : "查手机", {
+    characterId: activeCharId || "", phoneAppId: selectedAppId || "",
+  });
+
   // STAGE 2: PURE FULLSCREEN IMMERSIVE SIMULATOR
+  if (ownPhone) return <ReversePhoneLayer><ReversePhoneApp onClose={() => setOwnPhone(false)} /></ReversePhoneLayer>;
   if (activeCharacter) {
     return (
       <div className="cp-fullscreen-simulator">
@@ -1171,6 +1199,10 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
           </div>
 
           <div className="cp-roster-grid">
+            <button className="cp-roster-card" style={{ textAlign: "left", padding: 18, display: "flex", gap: 14, alignItems: "center" }} onClick={() => setOwnPhone(true)}>
+              {reverseScope().userAvatar ? <img src={reverseScope().userAvatar} alt="我的头像" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} /> : <span style={{ width: 48, height: 48, borderRadius: "50%", display: "grid", placeItems: "center", background: "#e4e8ed" }}>{reverseScope().userName.slice(0, 1)}</span>}
+              <span><strong>我的手机</strong><small style={{ display: "block", marginTop: 6, opacity: .6 }}>邀请角色反查岗 · 权限与查看记录</small></span>
+            </button>
             {characters.length === 0 && (
                <div className="cp-roster-empty">No target records found.</div>
             )}

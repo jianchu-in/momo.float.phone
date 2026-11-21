@@ -27,7 +27,7 @@ export function extractCssImports(raw: string): { imports: string[]; css: string
  * - `@keyframes` / `@font-face` blocks are passed through unchanged.
  * - Media queries are handled recursively.
  */
-export function scopeSessionCSS(raw: string, scopeSelector: string, priority = false): string {
+export function scopeSessionCSS(raw: string, scopeSelector: string, priority = false, excludedScope = ""): string {
   if (!raw.trim()) return "";
 
   const result: string[] = [];
@@ -96,7 +96,7 @@ export function scopeSessionCSS(raw: string, scopeSelector: string, priority = f
           const prelude = raw.slice(i, braceStart + 1);
           const body = raw.slice(braceStart + 1, blockEnd);
           result.push(prelude);
-          result.push(scopeSessionCSS(body, scopeSelector, priority));
+          result.push(scopeSessionCSS(body, scopeSelector, priority, excludedScope));
           result.push("}");
           i = blockEnd + 1;
           continue;
@@ -118,7 +118,10 @@ export function scopeSessionCSS(raw: string, scopeSelector: string, priority = f
 
     // Scope each selector in comma-separated list
     const scopedSelector = splitSelectors(selectorText)
-      .map((sel) => scopeSingleSelector(sel.trim(), scopeSelector, priority))
+      .map((sel) => {
+        const scoped = scopeSingleSelector(sel.trim(), scopeSelector, priority);
+        return excludedScope ? excludeSelectorSubtree(scoped, excludedScope) : scoped;
+      })
       .join(", ");
 
     result.push(scopedSelector + " " + body);
@@ -126,6 +129,20 @@ export function scopeSessionCSS(raw: string, scopeSelector: string, priority = f
   }
 
   return result.join("");
+}
+
+/** Guard the selected element itself, including when the scope is an ancestor. */
+function excludeSelectorSubtree(selector: string, excludedScope: string): string {
+  const guard = `:not(:where(${excludedScope}, ${excludedScope} *))`;
+  // Pseudo-elements must remain last; ignore colons in attributes and functions.
+  let index = findSyntaxBoundary(selector, 0, ":");
+  while (index >= 0) {
+    if (selector[index + 1] === ":" || /^:(before|after|first-line|first-letter)(?=[\s:.#[>+~]|$)/i.test(selector.slice(index))) {
+      return selector.slice(0, index) + guard + selector.slice(index);
+    }
+    index = findSyntaxBoundary(selector, index + 1, ":");
+  }
+  return selector + guard;
 }
 
 function scopeSingleSelector(sel: string, scope: string, priority: boolean): string {

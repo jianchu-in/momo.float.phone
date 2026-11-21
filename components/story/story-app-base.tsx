@@ -1,5 +1,8 @@
 "use client";
 
+import { ShownImage } from "@/components/ui/shown-image";
+import { storeShownImage } from "@/lib/shown-image";
+import { stripStoryIllustrationBlock } from "@/lib/story-illustration";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -50,10 +53,13 @@ function MiniPhoneIcon({ size = 18 }: { size?: number }) {
 }
 import { StoryAppearanceEditor } from "./story-appearance-editor";
 import { useStoryInputDraft } from "./use-story-input-draft";
+import { useStoryIllustrations } from "./use-story-illustrations";
+import { StoryIllustrationView } from "./story-illustration-view";
 import { StoryAppearanceVariables } from "./story-appearance-variables";
 import { isStoryReadingPanelVisible, storyStageAppearanceClass, storyChromeAttributes, storyMessageAppearanceAttributes, type StoryAppearancePrefs } from "@/lib/story-appearance";
 import { Avatar } from "@/components/ui/primitives";
 import { StoryHtmlRenderer, type StoryVoiceSegment } from "@/components/ui/story-html-renderer";
+import { StoryPaginationManager } from "@/components/story/story-pagination-manager";
 import { StorySettingsPage, STORY_DEFAULT_STATUS_RENDER, STORY_DEFAULT_THEATER_RENDER } from "@/components/story/story-settings-page";
 import { loadCharacters } from "@/lib/character-storage";
 import { maybeRunSummarization } from "@/lib/memory-summarizer";
@@ -78,6 +84,7 @@ import {
   loadStorySessions,
   loadStorySessionsForOwner,
   loadStorySchemeRepository,
+  nextStoryRound,
   pushStoryMessage,
   resolveActiveQuickInputScheme,
   saveStorySchemeRepository,
@@ -88,6 +95,8 @@ import {
   deleteStoryMessage,
   deleteStoryMessagesFrom,
   editStoryMessage,
+  saveStoryReplyVersion,
+  selectStoryReplyVersion,
   type StoryMessage,
   type StorySchemeRepository,
   type StorySession,
@@ -106,6 +115,7 @@ import { parseAIResponse } from "@/lib/rich-message-parser";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { MomentsFeed } from "@/components/chat/moments-feed";
 import { PhoneChatApp } from "@/components/chat/phone-chat-app";
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { StoryFloatingPhoneWindow } from "./story-floating-phone-window";
 import { GiftPickerModal } from "@/components/chat/gift-picker-modal";
 import { TransferTargetModal } from "@/components/chat/transfer-target-modal";
@@ -224,6 +234,17 @@ function cancelStoryGenerationRun(sessionId: string): boolean {
   return true;
 }
 
+function waitForStoryGenerationPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    // A background tab can suspend animation frames.
+    const fallback = window.setTimeout(() => { window.cancelAnimationFrame(frame); resolve(); }, 80);
+    const frame = window.requestAnimationFrame(() => {
+      window.clearTimeout(fallback);
+      window.setTimeout(resolve, 0);
+    });
+  });
+}
+
 function isAbortLikeError(error: unknown): boolean {
   if (!error) return false;
   if (error instanceof DOMException && error.name === "AbortError") return true;
@@ -306,6 +327,13 @@ function StoryGeneratingIndicator({
   );
 }
 
+function StoryShortcutSwitch({ label, checked, disabled, onToggle }: {
+  label: string; checked: boolean; disabled?: boolean; onToggle: () => void;
+}) {
+  return <button type="button" className="story-shortcut-switch" role="switch" aria-label={label}
+    aria-checked={checked} disabled={disabled} onClick={onToggle}><span>{label}</span><i aria-hidden="true" /></button>;
+}
+
 const StoryComposer = memo(function StoryComposer({
   sessionId,
   isGenerating,
@@ -327,6 +355,7 @@ const StoryComposer = memo(function StoryComposer({
   quickInputEnabled,
   quickInputOptions,
   quickInputCursor,
+  shortcuts,
 }: {
   sessionId: string;
   isGenerating: boolean;
@@ -335,7 +364,7 @@ const StoryComposer = memo(function StoryComposer({
   voiceEnabled: boolean;
   voicePlaying: boolean;
   voiceProgress: { current: number; total: number };
-  onSend: (text: string) => void;
+  onSend: (text: string, photo?: File) => void;
   onContinue: () => void;
   autoReadingEnabled: boolean;
   autoReading: boolean;
@@ -348,9 +377,33 @@ const StoryComposer = memo(function StoryComposer({
   quickInputEnabled: boolean;
   quickInputOptions: string[];
   quickInputCursor: "left" | "middle" | "right";
+  shortcuts: {
+    streaming: boolean; timeAware: boolean;
+    onStreaming: () => void; onTimeAware: () => void; onCatalog: () => void;
+    statusId: string; theaterId: string;
+    toggleStatus: () => void; toggleTheater: () => void;
+    status: StorySchemeRepository["statusSchemes"]; theater: StorySchemeRepository["theaterSchemes"];
+    onStatus: (id: string) => void; onTheater: (id: string) => void;
+    onResize: (height: number) => void;
+  };
 }) {
   const { draft, setDraft, flush } = useStoryInputDraft(sessionId);
   const [quickPanelOpen, setQuickPanelOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [photo, setPhoto] = useState<File>();
+  const photoPicker = useRef<HTMLInputElement>(null);
+
+  const shortcutsRef = useRef<HTMLDivElement>(null);
+  const { onResize } = shortcuts;
+  useLayoutEffect(() => {
+    const node = shortcutsRef.current;
+    if (!shortcutsOpen || !node) return;
+    const measure = () => onResize(node.offsetHeight);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    return () => { observer?.disconnect(); onResize(0); };
+  }, [shortcutsOpen, onResize]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastAppendIdRef = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -406,17 +459,25 @@ const StoryComposer = memo(function StoryComposer({
       return;
     }
     const text = draft.trim();
-    if (!text) return;
+    if (!text && !photo) return;
     setDraft("");
+    setPhoto(undefined);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (textarea) resizeStoryComposerTextarea(textarea);
     });
-    onSend(text);
+    onSend(text, photo);
   };
 
   return (
     <div className="story-composer" data-quick-input={quickInputEnabled ? "true" : undefined}>
+      {photo && <div className="story-composer-photo"><ShownImage file={photo} /><button type="button" aria-label="移除图片"
+        onClick={() => setPhoto(undefined)}><XMarkIcon width={15} height={15} /></button></div>}
+      <input hidden ref={photoPicker} type="file" accept="image/*" onChange={event => {
+        const file = event.currentTarget.files?.[0];
+        event.currentTarget.value = "";
+        if (file) { setPhoto(file); setShortcutsOpen(false); }
+      }} />
       {quickInputEnabled && quickPanelOpen && quickInputOptions.length > 0 ? (
         <div className="story-quick-panel" role="toolbar" aria-label="快捷输入面板">
           {quickInputOptions.map((option, index) => (
@@ -497,6 +558,10 @@ const StoryComposer = memo(function StoryComposer({
           </button>
         </>
       ) : null}
+      <button type="button" className="story-composer-plus" data-story-action="shortcuts" aria-label="剧情快捷操作"
+        aria-expanded={shortcutsOpen} onClick={() => setShortcutsOpen(open => !open)}>
+        <PlusIcon width={18} height={18} aria-hidden="true" />
+      </button>
       <textarea
         ref={textareaRef}
         rows={1}
@@ -524,10 +589,24 @@ const StoryComposer = memo(function StoryComposer({
         onClick={submit}
         aria-label={isGenerating ? "停止剧情生成" : "发送剧情输入"}
         title={isGenerating ? "停止剧情生成" : "发送剧情输入"}
-        disabled={!isGenerating && !draft.trim()}
+        disabled={!isGenerating && !draft.trim() && !photo}
       >
         {isGenerating ? <StopIcon width={17} height={17} /> : <PaperAirplaneIcon width={17} height={17} className="story-send-icon" />}
       </button>
+      {shortcutsOpen && <div className="story-composer-shortcuts" ref={shortcutsRef} role="group" aria-label="剧情快捷操作">
+        <StoryShortcutSwitch label="通用流式输出" checked={shortcuts.streaming} onToggle={shortcuts.onStreaming} />
+        <StoryShortcutSwitch label="时间感知" checked={shortcuts.timeAware} onToggle={shortcuts.onTimeAware} />
+        <StoryShortcutSwitch label="状态栏" checked={!!shortcuts.statusId} disabled={!shortcuts.status.length && !shortcuts.statusId} onToggle={shortcuts.toggleStatus} />
+        <StoryShortcutSwitch label="小剧场" checked={!!shortcuts.theaterId} disabled={!shortcuts.theater.length && !shortcuts.theaterId} onToggle={shortcuts.toggleTheater} />
+        <button type="button" onClick={() => photoPicker.current?.click()}>当面展示图片</button>
+        <button type="button" onClick={() => { setShortcutsOpen(false); shortcuts.onCatalog(); }}>剧情目录</button>
+        {!!shortcuts.statusId && <label>状态栏方案<select value={shortcuts.statusId} onChange={event => shortcuts.onStatus(event.target.value)}>
+          {shortcuts.status.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
+        </select></label>}
+        {!!shortcuts.theaterId && <label>小剧场方案<select value={shortcuts.theaterId} onChange={event => shortcuts.onTheater(event.target.value)}>
+          {shortcuts.theater.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
+        </select></label>}
+      </div>}
     </div>
   );
 });
@@ -539,6 +618,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [schemeRepoVersion, setSchemeRepoVersion] = useState(0);
   const [storyGlobalSettings, setStoryGlobalSettings] = useState<StoryGlobalSettings>({ interruptProactiveDuringStory: false, streamingEnabled: false, timeAware: true });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [composerCatalogOpen, setComposerCatalogOpen] = useState(false);
+  const [composerShortcutHeight, setComposerShortcutHeight] = useState(0);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
   const [floatingPhoneViewportStyle, setFloatingPhoneViewportStyle] = useState<CSSProperties | undefined>(undefined);
   const [floatingPhoneTab, setFloatingPhoneTab] = useState<FloatingPhoneTab>("chat");
@@ -587,8 +668,11 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [currentReadExpanded, setCurrentReadExpanded] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shellInnerRef = useRef<HTMLDivElement | null>(null);
-  const mountedRef = useRef(true);
   const activeSessionIdRef = useRef("");
+  const storyIllustrations = useStoryIllustrations(sessionId => {
+    if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
+  });
+  const mountedRef = useRef(true);
   const cacheRefreshKeyRef = useRef<string | null>(null);
   const composerAppendIdRef = useRef(0);
   const loadMoreRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
@@ -611,8 +695,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
 
   const characters = useMemo(() => loadCharacters(), []);
   const userIdentity = useMemo(
-    () => resolveUserIdentity(activeCharacterId, "story") ?? resolveUserIdentity(activeCharacterId) ?? resolveUserIdentity(),
-    [activeCharacterId]
+    () => {const session=loadStorySessions().find(item=>item.id===activeSessionId);return session?.facingIdentity!==undefined?session.facingIdentity:resolveUserIdentity(activeCharacterId, "story") ?? resolveUserIdentity(activeCharacterId) ?? resolveUserIdentity();},
+    [activeCharacterId, activeSessionId]
   );
   const currentCharacter = useMemo(
     () => characters.find((character) => character.id === activeCharacterId) || null,
@@ -634,6 +718,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
   );
   const independentFloatingShell = currentSession?.independentStory === true;
   const storyDisplayName = activeGroup?.name || currentCharacter?.name || "剧情";
+  useMascotScene("story", currentSession ? `剧情 · ${storyDisplayName}` : "剧情", {
+    sessionId: currentSession?.id || "",
+    characterId: currentCharacter?.id || "",
+  });
   const storyAvatar = ownerMainSession?.storyAvatar || currentCharacter?.avatar || "";
   const uiPrefs = currentSession?.uiPrefs || {};
   // Preview geometry stays inside the editor so canceling cannot shift the reading position.
@@ -723,7 +811,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     if (streamPaintFrameRef.current.has(sessionId)) return;
     const frame = window.requestAnimationFrame(() => {
       streamPaintFrameRef.current.delete(sessionId);
-      const nextText = streamAccumulatorRef.current.get(sessionId) || "";
+      const nextText = stripStoryIllustrationBlock(streamAccumulatorRef.current.get(sessionId) || "");
       setStreamingTextBySession((prev) => ({ ...prev, [sessionId]: nextText }));
     });
     streamPaintFrameRef.current.set(sessionId, frame);
@@ -1632,32 +1720,33 @@ export function StoryApp({ onClose }: StoryAppProps) {
     voiceSequenceIndexRef.current = segments.length;
   }, [collectStoryVoiceSegments, playStoryVoice, playingVoiceSegmentId, showVoiceNotice, uiPrefs.voiceEnabled]);
 
-  async function handleSend(userTextInput: string) {
+  async function handleSend(userTextInput: string, photo?: File) {
     const userText = userTextInput.trim();
-    if (!activeSessionId || !userText || isGenerating) return;
+    if (!activeSessionId || (!userText && !photo) || isGenerating || activeStoryGenerationRuns.has(activeSessionId)) return;
     const sessionId = activeSessionId;
     const characterId = activeCharacterId;
 
-    const userMessage = pushStoryMessage({
-      sessionId,
-      role: "user",
-      rawContent: userText,
-      renderedContent: userText,
-    });
-    setMessages((prev) => [...prev, userMessage]);
-    setStorageVersion((value) => value + 1);
     markGenerating(sessionId, true);
     const generationRun = createStoryGenerationRun(sessionId);
     const generationRunId = generationRun.runId;
     const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
 
     try {
+      const imageRef = photo ? await storeShownImage(photo) : undefined;
+      if (!isCurrentGeneration()) return;
+      const content = imageRef ? ["（当面展示了一张图片）", userText].filter(Boolean).join("\n") : userText;
+      const userMessage = pushStoryMessage({ sessionId, role: "user", rawContent: content, renderedContent: content, imageRef });
+      if (activeSessionIdRef.current === sessionId) setMessages(prev => [...prev, userMessage]);
+      setStorageVersion(value => value + 1);
+      await waitForStoryGenerationPaint();
+      if (!isCurrentGeneration()) return;
       const historyForGeneration = loadStoryMessages(sessionId);
       const result = await generateStoryCompletion(characterId, historyForGeneration, {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
         settings: currentSession?.settings,
         globalSettings: storyGlobalSettings,
+        round: nextStoryRound(sessionId),
         floatingChatContext: currentSession?.independentStory ? "" : floatingChatContext,
         participantIds: currentSession?.participantIds || [characterId],
         storyMemory: {
@@ -1665,7 +1754,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
           inheritRecentMemory: currentSession?.inheritRecentMemory ?? true,
           startedAt: currentSession?.createdAt,
         },
-        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
+        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => { if (isCurrentGeneration()) appendStoryStreamDelta(sessionId, delta); } : undefined,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -1677,11 +1766,13 @@ export function StoryApp({ onClose }: StoryAppProps) {
         storySummary: result.storySummary,
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
-      });
+        illustration: result.illustration,
+      }, true);
       if (activeSessionIdRef.current === sessionId) {
         setMessages(loadStoryMessages(sessionId)); // 按会话从存储重读，杜绝跨会话串消息
       }
       setStorageVersion((value) => value + 1);
+      storyIllustrations.schedule(assistantMessage, storyGlobalSettings.illustration?.extraPrompt);
 
       const memoryCharacterIds = currentSession?.participantIds?.length ? currentSession.participantIds : [characterId];
       const storyCharacters = memoryCharacterIds
@@ -1714,8 +1805,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
       }
       setStorageVersion((value) => value + 1);
     } finally {
-      clearStoryStream(sessionId);
       if (finishStoryGenerationRun(sessionId, generationRunId)) {
+        clearStoryStream(sessionId);
         markGenerating(sessionId, false);
       }
     }
@@ -1725,7 +1816,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
   useEffect(() => {
     const session = currentSession;
     const prompt = session?.autoStartPrompt?.trim();
-    if (!ready || !session || !prompt || !activeCharacterId || isGenerating) return;
+    if (!ready || !session || !prompt || !activeCharacterId || isGenerating || activeStoryGenerationRuns.has(session.id)) return;
     if (autoStartedSessionIdsRef.current.has(session.id)) return;
     autoStartedSessionIdsRef.current.add(session.id);
     updateStorySession(session.id, { autoStartPrompt: undefined, autoStartRequestedAt: undefined });
@@ -1750,6 +1841,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       sessionContextExcludedTags: session.contextExcludedTags,
       settings: session.settings,
       globalSettings: storyGlobalSettings,
+      round: nextStoryRound(sessionId),
       floatingChatContext: session.independentStory ? "" : floatingChatContext,
       participantIds: session.participantIds || [characterId],
       storyMemory: {
@@ -1757,11 +1849,11 @@ export function StoryApp({ onClose }: StoryAppProps) {
         inheritRecentMemory: session.inheritRecentMemory ?? true,
         startedAt: session.createdAt,
       },
-      onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
+      onDelta: storyGlobalSettings.streamingEnabled ? (delta) => { if (isCurrentGeneration()) appendStoryStreamDelta(sessionId, delta); } : undefined,
       signal: generationRun.controller.signal,
     }).then((result) => {
       if (!isCurrentGeneration()) return;
-      pushStoryMessage({
+      const assistantMessage = pushStoryMessage({
         sessionId,
         role: "assistant",
         rawContent: result.rawText,
@@ -1769,9 +1861,11 @@ export function StoryApp({ onClose }: StoryAppProps) {
         storySummary: result.storySummary,
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
-      });
+        illustration: result.illustration,
+      }, true);
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion((value) => value + 1);
+      storyIllustrations.schedule(assistantMessage, storyGlobalSettings.illustration?.extraPrompt);
 
       if (!session.independentStory) {
         for (const id of session.participantIds?.length ? session.participantIds : [characterId]) {
@@ -1788,8 +1882,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion((value) => value + 1);
     }).finally(() => {
-      clearStoryStream(sessionId);
-      if (finishStoryGenerationRun(sessionId, generationRunId)) markGenerating(sessionId, false);
+      if (finishStoryGenerationRun(sessionId, generationRunId)) {
+        clearStoryStream(sessionId);
+        markGenerating(sessionId, false);
+      }
     });
   }, [activeCharacterId, activeSessionId, currentSession?.autoStartPrompt, ready, storyGlobalSettings.streamingEnabled, storyGlobalSettings.timeAware]);
 
@@ -2010,6 +2106,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     if (!activeSessionId) return;
     const cancelled = cancelStoryGenerationRun(activeSessionId);
     if (!cancelled && !isGenerating) return;
+    clearStoryStream(activeSessionId);
     markGenerating(activeSessionId, false);
   }
 
@@ -2152,10 +2249,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       // If regex resolution fails, proceed with unmodified content
     }
     editStoryMessage(editingMessageId, newRawContent);
-    setMessages(prev => prev.map(m => m.id === editingMessageId
-      ? { ...m, rawContent: newRawContent, renderedContent: undefined, regexSignature: undefined, parserVersion: undefined }
-      : m
-    ));
+    setMessages(loadStoryMessages(activeSessionId));
     setEditingMessageId(null);
     setEditingContent("");
     setStorageVersion(v => v + 1);
@@ -2174,6 +2268,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     setActiveMessageId(null);
   }
   async function handleStoryRetry(msgId: string, retryInstruction?: string) {
+    if (!activeSessionId || isGenerating || activeStoryGenerationRuns.has(activeSessionId)) return;
     const msgIndex = messages.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
     const retryMessage = messages[msgIndex];
@@ -2184,9 +2279,6 @@ export function StoryApp({ onClose }: StoryAppProps) {
       ? messages.slice(0, msgIndex + 1)
       : messages.slice(0, msgIndex);
     const firstDiscardedMessage = messages[contextMessages.length];
-    if (firstDiscardedMessage) {
-      deleteStoryMessagesFrom(activeSessionId, firstDiscardedMessage.id);
-    }
     setMessages(contextMessages);
     setActiveMessageId(null);
     setStorageVersion(v => v + 1);
@@ -2199,11 +2291,14 @@ export function StoryApp({ onClose }: StoryAppProps) {
     const generationRunId = generationRun.runId;
     const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
     try {
+      await waitForStoryGenerationPaint();
+      if (!isCurrentGeneration()) return;
       const result = await generateStoryCompletion(characterId, contextMessages, {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
         settings: currentSession?.settings,
         globalSettings: storyGlobalSettings,
+        round: firstDiscardedMessage?.role === "assistant" ? firstDiscardedMessage.round : nextStoryRound(sessionId),
         floatingChatContext: currentSession?.independentStory ? "" : floatingChatContext,
         participantIds: currentSession?.participantIds || [characterId],
         storyMemory: {
@@ -2212,17 +2307,24 @@ export function StoryApp({ onClose }: StoryAppProps) {
           startedAt: currentSession?.createdAt,
         },
         retryInstruction,
-        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => appendStoryStreamDelta(sessionId, delta) : undefined,
+        onDelta: storyGlobalSettings.streamingEnabled ? (delta) => { if (isCurrentGeneration()) appendStoryStreamDelta(sessionId, delta); } : undefined,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
-      const assistantMessage = pushStoryMessage({
-        sessionId, role: "assistant",
+      const content = {
         rawContent: result.rawText, renderedContent: result.renderedText,
-        storySummary: result.storySummary, regexSignature: result.regexSignature, parserVersion: result.parserVersion,
-      });
+        storySummary: result.storySummary, regexSignature: result.regexSignature, parserVersion: result.parserVersion, illustration: result.illustration,
+      };
+      let assistantMessage: StoryMessage | undefined;
+      if (firstDiscardedMessage?.role === "assistant") {
+        assistantMessage = saveStoryReplyVersion(firstDiscardedMessage.id, content);
+      } else {
+        if (firstDiscardedMessage) deleteStoryMessagesFrom(sessionId, firstDiscardedMessage.id);
+        assistantMessage = pushStoryMessage({ sessionId, role: "assistant", ...content }, true);
+      }
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion(v => v + 1);
+      if (assistantMessage) storyIllustrations.schedule(assistantMessage, storyGlobalSettings.illustration?.extraPrompt);
     } catch (error) {
       if (!isCurrentGeneration() || isAbortLikeError(error)) return;
       const errText = error instanceof Error ? error.message : "重试失败，请稍后再试。";
@@ -2230,8 +2332,9 @@ export function StoryApp({ onClose }: StoryAppProps) {
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion(v => v + 1);
     } finally {
-      clearStoryStream(sessionId);
+      if (activeSessionIdRef.current === sessionId && mountedRef.current) setMessages(loadStoryMessages(sessionId));
       if (finishStoryGenerationRun(sessionId, generationRunId)) {
+        clearStoryStream(sessionId);
         markGenerating(sessionId, false);
       }
     }
@@ -2284,19 +2387,29 @@ export function StoryApp({ onClose }: StoryAppProps) {
   if (!currentCharacter || !currentSession) return null;
 
   const sessionScope = `.story-session-${currentSession.id}`;
+  const updateStoryGlobal = (next: StoryGlobalSettings) => {
+    saveStoryGlobalSettings(next);
+    setStoryGlobalSettings(next);
+  };
+  const pagination = {
+    characters, activeCharacterId, activeGroupId, groups: storyGroups, activeSessionId, userName: userIdentity?.name || "用户",
+    onCharacterChange: handleStoryCharacterChange, onGroupSelect: handleStoryGroupSelect, onGroupCreate: handleStoryGroupCreate,
+    onGroupRename: (groupId: string, name: string) => {
+      updateStoryGroup(groupId, { name });
+      setStorageVersion(value => value + 1);
+    },
+    onGroupDelete: handleStoryGroupDelete, onSessionSelect: handleStorySessionSelect, onBranchCreate: handleStoryBranchCreate,
+    onBranchDelete: handleStoryBranchDelete, onSessionUpdate: handleStorySessionUpdate, onExportSession: handleExportStorySession,
+    onExportSessions: handleExportSelectedStories, onExportAll: handleExportAllStories, onMergeBranches: handleMergeStoryBranches,
+  };
 
   if (settingsOpen) {
     return (
       <div className={`story-app-shell story-session-${currentSession.id}`} data-story-theme={uiPrefs.theme || "paper"} style={storyShellStyle}>
         {customFontFace ? <style>{customFontFace}</style> : null}
         <StorySettingsPage
-          characters={characters}
-          activeCharacterId={activeCharacterId}
-          activeGroupId={activeGroupId}
-          groups={storyGroups}
+          {...pagination}
           ownerSessions={ownerSessions}
-          activeSessionId={activeSessionId}
-          userName={userIdentity?.name || "用户"}
           uiPrefs={uiPrefs}
           settings={storySettings}
           globalSettings={storyGlobalSettings}
@@ -2306,28 +2419,9 @@ export function StoryApp({ onClose }: StoryAppProps) {
           contextExcludedTags={contextExcludedTagsDraft}
           customCSS={currentSession.customCSS || ""}
           onClose={() => setSettingsOpen(false)}
-          onCharacterChange={handleStoryCharacterChange}
-          onGroupSelect={handleStoryGroupSelect}
-          onGroupCreate={handleStoryGroupCreate}
-          onGroupRename={(groupId, name) => {
-            updateStoryGroup(groupId, { name });
-            setStorageVersion((value) => value + 1);
-          }}
-          onGroupDelete={handleStoryGroupDelete}
-          onSessionSelect={handleStorySessionSelect}
-          onBranchCreate={handleStoryBranchCreate}
-          onBranchDelete={handleStoryBranchDelete}
-          onSessionUpdate={handleStorySessionUpdate}
-          onExportSession={handleExportStorySession}
-          onExportSessions={handleExportSelectedStories}
-          onExportAll={handleExportAllStories}
-          onMergeBranches={handleMergeStoryBranches}
           onUiPrefsChange={(next) => applySessionUpdates({ uiPrefs: next })}
           onSettingsChange={(next) => applySessionUpdates({ settings: next })}
-          onGlobalSettingsChange={(next) => {
-            saveStoryGlobalSettings(next);
-            setStoryGlobalSettings(next);
-          }}
+          onGlobalSettingsChange={updateStoryGlobal}
           onSchemeRepoChange={saveStorySchemeRepository}
           onTagsChange={(foldTags, contextExcludedTags) => {
             setFoldTagsDraft(foldTags);
@@ -2362,7 +2456,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       data-story-theme={uiPrefs.theme || "paper"}
       data-story-reading-panel={readingPanelVisible ? "shown" : "hidden"}
       {...storyChromeAttributes(uiPrefs)}
-      style={storyShellStyle}
+      style={{ ...storyShellStyle, "--story-composer-shortcut-height": `${composerShortcutHeight}px` } as CSSProperties}
       onTouchStart={(event) => handleTouchStart(event.touches[0]?.clientX || 0)}
       onTouchMove={(event) => handleTouchMove(event.touches[0]?.clientX || 0)}
       onTouchEnd={handleTouchEnd}
@@ -2398,6 +2492,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
             </div>
             <div className="story-header-center" />
             <div className="story-header-right" style={{ gap: 8 }}>
+              {currentSession.sourceFacingMeetingId&&<button type="button" className="story-top-btn" aria-label="返回面对面对话" onClick={()=>window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"facing",facingMeetingId:currentSession.sourceFacingMeetingId}}))}>见面</button>}
               <button className="story-top-btn" data-story-action="new" onClick={() => setQuickStoryOpen(true)} aria-label="快捷进入新剧情">
                 <PlusIcon width={16} height={16} />
               </button>
@@ -2475,6 +2570,13 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 ) : null}
                 {visibleMessages.map((message) => {
                   const storyMessageSelected = selectedStoryMessageIds.has(message.id);
+                  const illustrationPending = message.role === "assistant" && storyIllustrations.pending(message);
+                  const showIllustration = message.role === "assistant" && Boolean(illustrationPending || message.illustration);
+                  const versions = message.replyVersions ?? [];
+                  const versionIndex = versions.findIndex(version => version.id === message.activeReplyVersionId);
+                  const showVersion = (index: number) => {
+                    if (versions[index] && selectStoryReplyVersion(message.id, versions[index].id)) setMessages(loadStoryMessages(message.sessionId));
+                  };
                   const speakerName = message.role === "user"
                     ? (userIdentity?.name?.trim() || "我")
                     : message.role === "assistant"
@@ -2547,6 +2649,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               </div>
                             </div>
                           ) : (
+                            <>
+                            {message.imageRef && <ShownImage mediaRef={message.imageRef} className="story-shown-image" />}
                             <StoryHtmlRenderer
                               colorDialogue={!readingPanelVisible}
                               content={message.renderedContent || message.rawContent}
@@ -2556,8 +2660,19 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               playingVoiceSegmentId={playingVoiceSegmentId}
                               statusRenderHtml={activeStatusRenderHtml}
                               theaterRenderHtml={activeTheaterRenderHtml}
+                              illustrationPosition={showIllustration ? storyGlobalSettings.illustration?.placement ?? "tail" : undefined}
+                              illustration={showIllustration ? <StoryIllustrationView textOnly={currentSession.ownerType === "group"} leadId={currentSession.characterId} illustration={message.illustration}
+                                pending={illustrationPending} onRegenerate={details => storyIllustrations.regenerate(message, details)} selecting={storyMultiSelect} /> : undefined}
+                              summaryTag={boundPreset?.story_summary_tag}
                               serifIframeFallback
                             />
+                            {!storyMultiSelect && versions.length > 1 && <div className="story-reply-versions" role="group" aria-label="剧情回复版本"
+                              onPointerDown={event => event.stopPropagation()}>
+                              <button type="button" aria-label="上一版回复" disabled={isGenerating || versionIndex <= 0} onClick={() => showVersion(versionIndex - 1)}>‹</button>
+                              <span>{versionIndex + 1} / {versions.length}</span>
+                              <button type="button" aria-label="下一版回复" disabled={isGenerating || versionIndex >= versions.length - 1} onClick={() => showVersion(versionIndex + 1)}>›</button>
+                            </div>}
+                            </>
                           )}
                         </div>
                         {activeMessageId === message.id && (() => {
@@ -2646,7 +2761,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
         voiceEnabled={Boolean(uiPrefs.voiceEnabled)}
         voicePlaying={Boolean(playingVoiceSegmentId)}
         voiceProgress={voiceSequenceProgress}
-        onSend={(text) => { void handleSend(text); }}
+        onSend={(text, photo) => { void handleSend(text, photo); }}
         onContinue={() => { void handleSend("继续"); }}
         autoReadingEnabled={Boolean(uiPrefs.autoReadingEnabled)}
         autoReading={autoReading}
@@ -2665,7 +2780,28 @@ export function StoryApp({ onClose }: StoryAppProps) {
         quickInputEnabled={Boolean(uiPrefs.quickInputEnabled)}
         quickInputOptions={quickInputOptions}
         quickInputCursor={quickInputCursor}
+        shortcuts={{
+          streaming: storyGlobalSettings.streamingEnabled,
+          timeAware: storyGlobalSettings.timeAware,
+          onStreaming: () => updateStoryGlobal({ ...storyGlobalSettings, streamingEnabled: !storyGlobalSettings.streamingEnabled }),
+          onTimeAware: () => updateStoryGlobal({ ...storyGlobalSettings, timeAware: !storyGlobalSettings.timeAware }),
+          onCatalog: () => setComposerCatalogOpen(true),
+          statusId: storySettings.statusGenerationEnabled === false ? "" : activeStatusScheme?.id || "",
+          theaterId: storySettings.theaterGenerationEnabled === false ? "" : activeTheaterScheme?.id || "",
+          status: schemeRepo.statusSchemes,
+          theater: schemeRepo.theaterSchemes,
+          onStatus: id => applySessionUpdates({ settings: { ...storySettings, statusGenerationEnabled: Boolean(id), activeStatusSchemeId: id || storySettings.activeStatusSchemeId } }),
+          onTheater: id => applySessionUpdates({ settings: { ...storySettings, theaterGenerationEnabled: Boolean(id), activeTheaterSchemeId: id || storySettings.activeTheaterSchemeId } }),
+          toggleStatus: () => applySessionUpdates({ settings: { ...storySettings,
+            statusGenerationEnabled: storySettings.statusGenerationEnabled === false || !activeStatusScheme,
+            activeStatusSchemeId: activeStatusScheme?.id ?? schemeRepo.statusSchemes[0]?.id } }),
+          toggleTheater: () => applySessionUpdates({ settings: { ...storySettings,
+            theaterGenerationEnabled: storySettings.theaterGenerationEnabled === false || !activeTheaterScheme,
+            activeTheaterSchemeId: activeTheaterScheme?.id ?? schemeRepo.theaterSchemes[0]?.id } }),
+          onResize: setComposerShortcutHeight,
+        }}
       />}
+      {composerCatalogOpen && <StoryPaginationManager {...pagination} sessions={ownerSessions} onCloseCatalog={() => setComposerCatalogOpen(false)} />}
 
       {storySettings.floatingPhoneEnabled ? (
         <button className="story-floating-phone-ball" type="button" onClick={() => { setFloatingChatVersion((value) => value + 1); setFloatingPhoneTab("chat"); setFloatingPlusOpen(false); setFloatingPhoneOpen(true); }} aria-label="打开悬浮小手机"><MiniPhoneIcon size={18} /></button>

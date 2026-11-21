@@ -16,6 +16,8 @@ import {
   STORY_DEFAULT_STATUS_RENDER,
   STORY_DEFAULT_THEATER_RENDER,
   STORY_DEFAULT_QUICK_INPUT_OPTIONS,
+  STORY_ILLUSTRATION_INTERVAL,
+  type StoryIllustrationSettings,
 } from "@/lib/story-storage";
 
 // 兼容旧导入（story-app-base 从这里取渲染画布常量）
@@ -200,6 +202,45 @@ function SettingCard({ title, hint, children }: { title: string; hint?: string; 
       {children}
     </section>
   );
+}
+
+function StoryIllustrationSettingsFields({ settings, onChange }: { settings: StoryIllustrationSettings; onChange: (settings: StoryIllustrationSettings) => void }) {
+  const interval = settings.interval ?? STORY_ILLUSTRATION_INTERVAL;
+  return <>
+    <label className="story-settings-field">
+      <span>画面检查间隔（轮）</span>
+      <input key={interval} type="number" min={1} step={1} inputMode="numeric" defaultValue={interval}
+        onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
+        onBlur={event => {
+          const next = event.currentTarget.valueAsNumber;
+          if (!Number.isSafeInteger(next) || next < 1) event.currentTarget.value = String(interval);
+          else if (next !== interval) onChange({ ...settings, interval: next });
+        }} />
+    </label>
+    <label className="story-settings-field">
+      <span>插图位置</span>
+      <select value={settings.placement ?? "tail"}
+        onChange={event => onChange({ ...settings, placement: event.target.value === "middle" ? "middle" : "tail" })}>
+        <option value="tail">状态栏／摘要上方</option>
+        <option value="middle">正文中间</option>
+      </select>
+    </label>
+    <label className="story-settings-field">
+      <span>画面描述额外提示词（文字模型）</span>
+      <textarea value={settings.descriptionPrompt ?? ""} maxLength={3000} placeholder="例如优先选第一视角能看到的动作"
+        onChange={event => onChange({ ...settings, descriptionPrompt: event.target.value })} />
+    </label>
+    <label className="story-settings-field">
+      <span>生图额外提示词（图片模型）</span>
+      <textarea value={settings.extraPrompt ?? ""} maxLength={3000} placeholder="例如偏冷的自然光，保留胶片质感"
+        onChange={event => onChange({ ...settings, extraPrompt: event.target.value })} />
+    </label>
+    <ToggleRow title="合照时加入用户参考图" checked={settings.includeUserReference === true}
+      onChange={includeUserReference => onChange({ ...settings, includeUserReference })} />
+    <ToggleRow title="生图前跳过 NSFW 场景" checked={settings.skipNsfw === true}
+      onChange={skipNsfw => onChange({ ...settings, skipNsfw })} />
+    <p className="story-settings-note">到设定轮数时，文字模型随正文一起写画面描述和场景判定，符合条件时再调用图片模型。自动配图默认使用 4:3 横向构图和已启用的角色参考图。</p>
+  </>;
 }
 
 function ToggleRow({ title, detail, checked, disabled, onChange }: { title: string; detail?: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
@@ -661,6 +702,13 @@ export function StorySettingsPage(props: StorySettingsPageProps) {
             checked={props.globalSettings.timeAware}
             onChange={(timeAware) => props.onGlobalSettingsChange({ ...props.globalSettings, timeAware })}
           />
+        </SettingCard>
+
+        <SettingCard title="剧情生图">
+          <ToggleRow title="开启剧情生图" checked={props.globalSettings.illustration?.enabled === true}
+            onChange={(enabled) => props.onGlobalSettingsChange({ ...props.globalSettings, illustration: { ...props.globalSettings.illustration, enabled } })} />
+          {props.globalSettings.illustration?.enabled && <StoryIllustrationSettingsFields settings={props.globalSettings.illustration}
+            onChange={illustration => props.onGlobalSettingsChange({ ...props.globalSettings, illustration })} />}
         </SettingCard>
 
         <SettingCard title="剧情额外要求" hint="只影响当前角色或多人组的剧情；会随设置预设一起保存">

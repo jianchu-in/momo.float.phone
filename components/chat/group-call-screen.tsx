@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues, resolveChatCharacterAvatar, resolveChatUserAvatar } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, findChatSessionById, loadChatMessages, pushChatMessage, getLatestCharacterStateValues, resolveChatCharacterAvatar, resolveChatUserAvatar } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
 import { generateGroupChatCompletion } from "@/lib/group-chat-engine";
 import { parseAIResponse } from "@/lib/rich-message-parser";
@@ -14,6 +14,8 @@ import { useHoldToTalk } from "./use-hold-to-talk";
 import { suspendKeepAliveForCall, resumeKeepAliveAfterCall } from "@/lib/use-weixin-bridge";
 import { BilingualTextBlock } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
+import { formatVideoCallText, splitVisibleCallActions } from "@/lib/call-action-text";
+import { VideoCallActionToggle } from "./video-call-action-toggle";
 import type { Character } from "@/lib/character-types";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
@@ -231,6 +233,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
         setInterimText("");
 
         try {
+            const showActions = (findChatSessionById(session.id) ?? session).videoCallActions === true;
             const results = await generateGroupChatCompletion(session, messagesRef.current, undefined, {
                 appTags: ["group_chat", isVideo ? "video" : "voice"],
                 disableTools: true,
@@ -245,8 +248,10 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
                     getLatestCharacterStateValues(r.characterId),
                 );
                 const textParts = parts.filter(p => !p.mediaType && p.content.trim());
-                const displayText = textParts.map(p => p.content).join("\n");
-                const speechText = stripBilingualForSpeech(displayText);
+                const text = textParts.map(p => p.content).join("\n");
+                const displayText = isVideo ? formatVideoCallText(text, showActions) : text;
+                const spoken = stripBilingualForSpeech(displayText);
+                const speechText = isVideo ? splitVisibleCallActions(spoken).speech : spoken;
 
                 if (!displayText && !(statusPanel || innerMonologue)) continue;
 
@@ -721,6 +726,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
                         {callState !== "CONNECTING" && callState !== "ENDED" ? `${formatTime(callDuration)} · ` : ""}
                         {stateLabel()}
                     </div>
+                    {callState !== "ENDED" && <VideoCallActionToggle session={session} />}
                 </div>
 
                 {/* Subtitle overlay at bottom */}

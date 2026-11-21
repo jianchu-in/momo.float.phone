@@ -10,6 +10,7 @@ import { UserProfilePanel } from "./user-profile-panel";
 import { MessageCircle, Users, Aperture, UserRound } from "lucide-react";
 import { ChatSession, type ChatMessage, loadChatSessions, pushChatMessage, hydrateChatStorage, markChatSessionRead, setActiveChatSessionId } from "@/lib/chat-storage";
 import type { MomentPost } from "@/lib/moments-types";
+import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 import { loadCharacters } from "@/lib/character-storage";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
@@ -19,6 +20,8 @@ import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT } from "@/lib/chat
 import { CHAT_SESSIONS_MERGED_EVENT, type ChatSessionsMergedDetail } from "@/lib/chat-session-merge";
 import { getMascotSettingsSnapshot } from "@/lib/mascot-settings";
 import { CHAT_SCOPE_UPDATED_EVENT, loadChatScope, sessionMatchesChatScope, type ChatScopeState } from "@/lib/chat-scope-storage";
+import type { ReverseChatControl } from "@/lib/reverse-phone-types";
+import { WalletPanel } from "./wallet-panel";
 
 type TabKey = "messages" | "contacts" | "feeds" | "me";
 
@@ -54,7 +57,9 @@ function resolveSessionInCurrentScope(sessionId: string): ChatSession | null {
 }
 
 export type PhoneChatAppProps = {
+    inspectionControl?: ReverseChatControl;
     onClose: () => void;
+    sceneVisible?: boolean;
     initialSessionId?: string | null;
     onSessionChange?: (session: ChatSession | null) => void;
     sharePayload?: ChatSharePayload | null;
@@ -65,7 +70,7 @@ export type PhoneChatAppProps = {
     onMomentPublished?: (post: MomentPost) => void;
 };
 
-export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSessionId, onSessionChange, sharePayload, onShareDone, onUserMessageSent, onMomentPublished }: PhoneChatAppProps) {
+export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSessionId, onSessionChange, sharePayload, onShareDone, onUserMessageSent, onMomentPublished, sceneVisible = true, inspectionControl }: PhoneChatAppProps) {
     const [activeTab, setActiveTab] = useState<TabKey>("messages");
     const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
     const [activeMascot, setActiveMascot] = useState(false);
@@ -78,6 +83,26 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     // Cache all visited sessions so their ChatRoom stays mounted (hidden)
     const [visitedSessions, setVisitedSessions] = useState<Map<string, ChatSession>>(new Map());
     const [dbReady, setDbReady] = useState(false);
+    useEffect(() => {
+        const refresh = (event: Event) => {
+            const id = (event as CustomEvent<{ sessionId: string }>).detail?.sessionId;
+            const updated = id ? resolveSessionInCurrentScope(id) : null;
+            if (!updated) return;
+            setActiveSession(current => current?.id === updated.id ? updated : current);
+            setVisitedSessions(current => {
+                if (!current.has(updated.id)) return current;
+                const next = new Map(current); next.set(updated.id, updated); return next;
+            });
+        };
+        window.addEventListener("reverse-phone-contact-updated", refresh);
+        return () => window.removeEventListener("reverse-phone-contact-updated", refresh);
+    }, []);
+    useEffect(() => {
+        if (!inspectionControl || !dbReady) return;
+        const target = inspectionControl.sessionId ? resolveSessionInCurrentScope(inspectionControl.sessionId) : null;
+        setActiveTab(inspectionControl.page === "messages" ? "messages" : "me");
+        setActiveSession(target);
+    }, [inspectionControl?.page, inspectionControl?.sessionId, dbReady]);
     const [hideTabBar, setHideTabBar] = useState(false);
 
     // Hydrate IndexedDB → in-memory caches on mount
@@ -185,7 +210,16 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         return () => window.removeEventListener(CHAT_OPEN_ADD_CONTACT_EVENT, handler);
     }, []);
 
-    // Notify parent of session changes + cache visited session + push mascot context
+    const activeSceneCharacter = activeSession && !activeSession.isGroup
+        ? loadCharacters().find(character => character.id === activeSession.contactId)
+        : undefined;
+    useMascotScene("chat", activeSession
+        ? `${activeSession.isGroup ? "群聊" : "私聊"} · ${activeSession.groupName || activeSession.alias || activeSceneCharacter?.name || "对话"}`
+        : "聊天", activeSession
+        ? { sessionId: activeSession.id, contactId: activeSession.contactId }
+        : {}, sceneVisible && !activeMascot, 0);
+
+    // Notify parent of session changes and cache visited sessions
     useEffect(() => {
         onSessionChange?.(activeSession);
         if (activeSession) {
@@ -195,15 +229,6 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                 const next = new Map(prev);
                 next.set(activeSession.id, activeSession);
                 return next;
-            });
-            // Push session info to mascot context so 小卷 can access sessionId
-            const chars = loadCharacters();
-            const char = chars.find(c => c.id === activeSession.contactId);
-            notifyMascotPageContext({
-                page: "chat",
-                mode: "chatting",
-                label: `聊天 · ${(activeSession as Record<string, unknown>).alias as string || char?.name || "对话"}`,
-                fields: { sessionId: activeSession.id, contactId: activeSession.contactId },
             });
         }
     }, [activeSession]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -227,7 +252,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     }, []);
 
     useEffect(() => {
-        if (!activeMascot) return;
+        if (!activeMascot || !sceneVisible) return;
         onSessionChange?.(null);
         notifyMascotPageContext({
             page: "chat",
@@ -235,7 +260,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             label: `聊天 · ${getMascotSettingsSnapshot().nickname || "AI助手"}`,
             fields: { sessionId: "mascot", contactId: "mascot" },
         });
-    }, [activeMascot]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [activeMascot, sceneVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleSelectContact = (sess: ChatSession | null) => {
         if (sharePayload && sess) {
@@ -342,8 +367,8 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                         }}
                     />
                 )}
-                {activeTab === "feeds" && <MomentsFeed onCloseApp={onClose} onUserPublished={onMomentPublished} />}
-                {activeTab === "me" && <UserProfilePanel onClose={() => setActiveTab("messages")} />}
+                {activeTab === "feeds" && <MomentsFeed sceneVisible={sceneVisible} onCloseApp={onClose} onUserPublished={onMomentPublished} />}
+                {activeTab === "me" && (inspectionControl?.page === "wallet" ? <WalletPanel onBack={() => {}} /> : <UserProfilePanel onClose={() => setActiveTab("messages")} />)}
             </div>
 
             {/* Bottom Navigation Bar — hide when inside a chat room */}
@@ -370,6 +395,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
                     <span style={{ fontSize: "calc(10px*var(--app-text-scale,1))", color: activeTab === "feeds" ? undefined : "var(--c-text)" }}>动态</span>
                 </button>
                 <button
+                    data-reverse-target="profile"
                     className={`chat-tab ${activeTab === "me" ? "chat-tab-active" : ""}`}
                     onClick={() => setActiveTab("me")}
                 >
@@ -379,10 +405,11 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             </nav>
 
             {/* Chat Rooms — all visited sessions stay mounted, only active one is visible */}
-            {[...visitedSessions.values()].map(sess => (
+            {[...visitedSessions.values()].filter(sess => !inspectionControl || sess.id === activeSession?.id).map(sess => (
                 <div key={sess.id} style={{ display: activeSession?.id === sess.id ? undefined : 'none' }} className="chat-room-layer absolute inset-0">
                     <ChatRoom
                         session={sess}
+                        inspection={inspectionControl}
                         contactCallRequest={contactCall?.sessionId === sess.id ? contactCall : undefined}
                         onContactCallHandled={() => setContactCall(null)}
                         onBack={() => setActiveSession(null)}

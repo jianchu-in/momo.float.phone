@@ -15,6 +15,15 @@ export type STTSession = {
     isSupported: boolean;
 };
 
+function getBrowserSpeechRecognition() {
+    if (typeof window === "undefined") return undefined;
+    return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+}
+
+export function isBrowserSpeechRecognitionSupported(): boolean {
+    return Boolean(getBrowserSpeechRecognition());
+}
+
 /**
  * Create an STT session using browser Web Speech API.
  */
@@ -22,8 +31,7 @@ export function createSTTSession(
     callbacks: STTCallbacks,
     lang = "zh-CN",
 ): STTSession {
-    const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = getBrowserSpeechRecognition();
 
     if (!SpeechRecognition) {
         return {

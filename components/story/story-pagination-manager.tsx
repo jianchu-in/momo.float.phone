@@ -43,6 +43,7 @@ type StoryPaginationManagerProps = {
   onExportSessions: (sessionIds: string[]) => void;
   onExportAll: () => void;
   onMergeBranches: (sessionIds: string[], deleteSources: boolean) => void;
+  onCloseCatalog?: () => void;
 };
 
 function AvatarCollage({ characters, large = false, customAvatar }: { characters: Character[]; large?: boolean; customAvatar?: string }) {
@@ -65,6 +66,7 @@ function AvatarCollage({ characters, large = false, customAvatar }: { characters
 
 export function StoryPaginationManager(props: StoryPaginationManagerProps) {
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const closeCatalog = props.onCloseCatalog ?? (() => setCatalogOpen(false));
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [branchModalOpen, setBranchModalOpen] = useState(false);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([]);
@@ -197,8 +199,8 @@ export function StoryPaginationManager(props: StoryPaginationManagerProps) {
             <input type="checkbox" disabled={!selectable} checked={selectable && isSelected} onChange={(event) => setBatchSelection((current) => event.target.checked ? [...current, session.id] : current.filter((id) => id !== session.id))} />
           </label>
         ) : null}
-        <div className="story-directory-open" role="button" tabIndex={0} onClick={() => { props.onSessionSelect(session.id); setCatalogOpen(false); }} onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); props.onSessionSelect(session.id); setCatalogOpen(false); }
+        <div className="story-directory-open" role="button" tabIndex={0} onClick={() => { props.onSessionSelect(session.id); closeCatalog(); }} onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); props.onSessionSelect(session.id); closeCatalog(); }
         }}>
           <span className="story-directory-number">{isMain ? "主线" : `${sectionLabel} ${index + 1}`}</span>
           <span>
@@ -225,6 +227,7 @@ export function StoryPaginationManager(props: StoryPaginationManagerProps) {
 
   return (
     <>
+      {!props.onCloseCatalog && <>
       <section className="story-settings-card">
         <div className="story-settings-card-head">
           <div><h2>选择见面对象</h2><p>点击角色后进入该角色上次停留的剧情分页</p></div>
@@ -312,12 +315,13 @@ export function StoryPaginationManager(props: StoryPaginationManagerProps) {
         </div>
       </section>
 
-      {catalogOpen ? (
+      </>}
+      {catalogOpen || props.onCloseCatalog ? (
         <div className="story-catalog-overlay">
           <header className="story-settings-header">
-            <button type="button" onClick={() => setCatalogOpen(false)} aria-label="返回剧情设置"><ChevronLeftIcon width={19} /></button>
+            <button type="button" onClick={closeCatalog} aria-label={props.onCloseCatalog ? "返回剧情" : "返回剧情设置"}><ChevronLeftIcon width={19} /></button>
             <strong>剧情目录</strong>
-            <button type="button" onClick={() => setCatalogOpen(false)} aria-label="关闭目录"><XMarkIcon width={17} /></button>
+            <button type="button" onClick={closeCatalog} aria-label="关闭目录"><XMarkIcon width={17} /></button>
           </header>
           <main className="story-catalog-scroll">
             <section className="story-book-hero">
