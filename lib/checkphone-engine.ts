@@ -59,6 +59,7 @@ import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memo
 import { getAllPosts, loadMomentComments } from "./moments-storage";
 import {
   canCharacterSeeMomentPost,
+  getCharacterWorldGroup,
   getVisibleMomentCommentsForCharacter,
   getVisibleMomentLikesForCharacter,
 } from "./character-world-storage";
