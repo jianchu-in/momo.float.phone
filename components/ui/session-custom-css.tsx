@@ -19,7 +19,9 @@ export function SessionCustomCSS({ css, scope, priority = false }: { css: string
         const extracted = extractCssImports(css || "");
         return { imports: extracted.imports, body: extracted.css };
     }, [css]);
-    const scoped = useMemo(() => scopeSessionCSS(body, scope, priority), [body, scope, priority]);
+    // Character phone pages always use the original chat appearance, even when
+    // opened inside a user-customized chat session. Keep root and descendants out.
+    const scoped = useMemo(() => scopeSessionCSS(body, scope, priority, ".character-phone-chat"), [body, scope, priority]);
 
     return (
         <>
