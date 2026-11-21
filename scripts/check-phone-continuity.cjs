@@ -33,8 +33,8 @@ function mock(name, exports) { const id = path.join(project, name); require.cach
 const png=value=>'data:image/png;base64,'+Buffer.from(value).toString('base64');
 let streamCalls=0,streamMode='normal',imageCalls=[],textCalls=[],phoneRefreshOutput='',releaseStream;
 mock('lib/chat-engine.ts', {
- sendLLMStreamRequest:async(...args)=>{streamCalls++; if(streamMode==='fail')throw new Error('模拟接收失败');if(streamMode==='hold')await new Promise(resolve=>{releaseStream=resolve;});args[6]?.onDelta?.('收到。');args[6]?.onDelta?.('\n\n晚点见。');if(streamMode==='abort')args[5].signal.dispatchEvent(new window.Event('abort'));return {content:'收到。\n\n晚点见。'};},
- sendLLMRequest:async(...args)=>{textCalls.push(args);return args[5]?.appId==='checkphone_chat'?phoneRefreshOutput:JSON.stringify({description:'润色后的原场景'});},
+ sendLLMStreamRequest:async(...args)=>{streamCalls++; if(streamMode==='fail')throw new Error('模拟接收失败');if(streamMode==='hold')await new Promise((resolve,reject)=>{const abort=()=>reject(new Error('模拟停止'));args[5].signal.addEventListener('abort',abort,{once:true});releaseStream=()=>{args[5].signal.removeEventListener('abort',abort);resolve();};});args[6]?.onDelta?.('收到。');args[6]?.onDelta?.('\n\n晚点见。');if(streamMode==='abort')args[5].signal.dispatchEvent(new window.Event('abort'));return {content:'收到。\n\n晚点见。'};},
+ sendLLMRequest:async(...args)=>{textCalls.push(args);return ['checkphone_chat','checkphone_batch'].includes(args[5]?.appId)?phoneRefreshOutput:JSON.stringify({description:'润色后的原场景'});},
  sendLLMRequestPreferStream:async(...args)=>{textCalls.push(args);return JSON.stringify({description:'润色后的原场景'});},
 });
 mock('lib/image-generation-service.ts',{
@@ -106,6 +106,20 @@ async function main(){
  assert.equal(generatedPhone.payload.conversations.find(c=>c.name==='角色b').remark,'老朋友');
  assert.equal(generatedPhone.payload.conversations.find(c=>c.name==='角色b').messages.length,2);
  const freshContacts=phone.characterPhoneContacts(chars[0],generatedPhone.payload);assert.equal(freshContacts[0].peerType,'user');assert.equal(freshContacts[0].remark,'小太阳');assert.equal(freshContacts[0].pinned,true);
+ const blockOutput=phoneRefreshOutput;
+ await load('lib/checkphone-engine.ts').generateCheckPhoneChat('a',snap.payload,undefined,'b');
+ assert.ok(textCalls.at(-1)[2].some(m=>m.content.includes('必须在补充会话中生成此人')&&m.content.includes('角色b')),'empty-thread generation targets the selected character in the same request');
+ phoneRefreshOutput=JSON.stringify({conversations:[{peerCharacterId:'b',name:'模型使用的昵称',messages:[{text:'旧格式的聊天也要保留',direction:'incoming'},{text:'没问题',direction:'outgoing'}]}]});
+ const legacyPhone=await load('lib/checkphone-engine.ts').generateCheckPhoneChat('a',snap.payload);
+ assert.ok(!legacyPhone.error,legacyPhone.error);assert.equal(legacyPhone.payload.conversations.find(c=>c.peerCharacterId==='b').name,'角色b');assert.equal(legacyPhone.payload.conversations.find(c=>c.peerCharacterId==='b').messages.length,2);
+ phoneRefreshOutput='<<<APP:chat>>>\n'+blockOutput+'\n<<<END_APP>>>';
+ const batchStart=textCalls.length,batch=await load('lib/checkphone-engine.ts').generateCheckPhoneAppBatch('a',['chat','reading']);
+ assert.equal(textCalls.length,batchStart+1,'batch generation still uses one model request');
+ assert.equal(batch.items.find(item=>item.appId==='chat').payload.conversations.find(c=>c.peerCharacterId==='b').messages.length,2);
+ assert.ok(textCalls.at(-1)[2].some(m=>m.content.includes('以下是他在同世界认识的角色')&&m.content.includes('角色b')),'batch uses the same world-aware rules');
+ phoneRefreshOutput='#聊天设置1\n[用户备注]小太阳';
+ assert.match((await load('lib/checkphone-engine.ts').generateCheckPhoneChat('a',snap.payload)).error,/没有生成同世界角色的聊天正文/);
+ phoneRefreshOutput=blockOutput;
  const chatStore=load('lib/chat-storage.ts'),sessions=chatStore.loadChatSessions();
  chatStore.saveChatSessions(sessions.map(s=>s.contactId==='a'?{...s,characterRemarkForUser:'真实备注'}:s));
  const realRemark=phone.mergeCharacterPhoneRefresh(chars[0],{...snap,payload:{...snap.payload,conversations:[{...userContact,remark:'旧备注'}]}},generatedPhone.payload,'remark');
@@ -130,6 +144,9 @@ async function main(){
  });assert.equal(customMatches,2);
  assert.deepEqual(load('lib/reverse-phone-replies.ts').splitReverseReply('一段\n\n二段|||三段'),['一段','二段','三段']);
  const host=document.getElementById('root');let root=createRoot(host);const Library=load('components/facing/facing-assets.tsx').FacingAssets;
+ const viewStore=load('lib/character-phone-chat-view.ts');
+ viewStore.saveCharacterPhoneDraft('a',target.id,'退出后继续写');assert.equal(viewStore.loadCharacterPhoneChatView('a').drafts[target.id],'退出后继续写');assert.equal(viewStore.loadCharacterPhoneChatView('b').drafts[target.id],undefined);
+ const unread=viewStore.markCharacterPhoneUpdates('a',fresh,omitted.payload);assert.ok(unread.view.unread.includes('npc'));assert.ok(!viewStore.markCharacterPhoneRead('a','npc').unread.includes('npc'));
  load('lib/character-moments-profile.ts').saveCharacterMomentsProfile('a',{coverAssetId:kitchen.mediaId,signature:'角色签名'});
  const Phone=load('components/checkphone/character-phone-chat-page.tsx').CharacterPhoneChatPage;
  await act(async()=>{root.render(React.createElement(Phone,{character:chars[0],onBack(){}}));for(let i=0;i<6;i++)await tick();});
@@ -138,14 +155,35 @@ async function main(){
  assert.ok(host.querySelector('.chat-app .minimal-list-item'));assert.ok([...host.querySelectorAll('.minimal-avatar-wrapper img')].some(img=>img.src===chars[1].avatar));
  const row=[...host.querySelectorAll('.minimal-list-item')].find(el=>el.textContent.includes('角色b'));await act(async()=>{row.dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
  assert.ok(host.querySelector('[aria-label="代回复内容"]'));assert.ok(host.querySelector('.chat-bubble-role-user'));assert.match(host.textContent,/晚点见/);
+ const reactProps=el=>el[Object.keys(el).find(k=>k.startsWith('__reactProps$'))];
+ assert.equal(reactProps(host.querySelector('[aria-label="代回复内容"]')).value,'退出后继续写');assert.match(host.textContent,/由你代发/);assert.ok(host.querySelector('.phone-chat-date-divider'));
  await act(async()=>{await phone.appendCharacterPhoneMessage(chars[0],target.id,'再确认一下','switch-chat');await tick();});
  streamMode='hold';
- await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent.includes('重试接收')).dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent.includes('继续接收')).dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
  assert.match(host.textContent,/角色b正在打字中/);
  await act(async()=>{host.querySelector('[aria-label="返回"]').dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
  await act(async()=>{[...host.querySelectorAll('.minimal-list-item')].find(b=>b.textContent.includes('店员')).dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
  assert.ok(!host.textContent.includes('正在打字中'),'switching conversations must not display another contact streaming');
  await act(async()=>{releaseStream();for(let i=0;i<6;i++)await tick();});streamMode='normal';
+ await act(async()=>{await phone.appendCharacterPhoneMessage(chars[0],target.id,'稍后再接收','stop-resume');host.querySelector('[aria-label="返回"]').dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ await act(async()=>{[...host.querySelectorAll('.minimal-list-item')].find(b=>b.textContent.includes('角色b')).dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ streamMode='hold';await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='继续接收').dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='停止接收').dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<6;i++)await tick();});
+ assert.match(host.textContent,/接收已停止/);assert.equal((await phoneStore.loadPhoneSnapshot('a','chat')).payload.conversations.find(c=>c.id===target.id).pendingReply.state,'stopped');
+ streamMode='fail';await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='继续接收').dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<6;i++)await tick();});assert.match(host.textContent,/接收失败，已发消息保留/);
+ streamMode='normal';await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent==='继续接收').dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<6;i++)await tick();});
+ assert.equal((await phoneStore.loadPhoneSnapshot('a','chat')).payload.conversations.find(c=>c.id===target.id).messages.filter(m=>m.id==='phone_stop-resume:out').length,1,'continue only receives, never resends');
+ await act(async()=>root.unmount());root=createRoot(host);
+
+ // Materials across different places are siblings in one rail; portrait folders
+ // each retain their own rail, with the vertical parent permitting both axes.
+ await asset('bathroom','a','scene','浴室');await asset('sprite2','a','portrait','微笑');
+ await act(async()=>{root.render(React.createElement(Library,{character:chars[0],assets:f.loadFacingAssets('a'),groups:f.groupFacingScenes(f.loadFacingAssets('a')),onBack(){},onChange(){},async onDelete(){}}));await tick();});
+ assert.equal(host.querySelectorAll('.facing-scene-rail > .facing-scene-card').length,2);
+ assert.ok([...host.querySelectorAll('.facing-asset-rail')].some(rail=>rail.querySelectorAll('.facing-library-tile').length===2));
+ assert.ok(host.querySelector('.facing-assets-scroll'));
+ const materialCSS=require('postcss').parse(fs.readFileSync(path.join(project,'styles/facing-life.css'),'utf8'));
+ let parentPan=false,noWrap=false;materialCSS.walkRules(rule=>{if(rule.selector==='.facing-app .facing-assets-scroll')rule.walkDecls('touch-action',d=>{parentPan=d.value==='pan-x pan-y';});if(rule.selector.includes(':is(.facing-scene-rail,.facing-asset-rail)'))rule.walkDecls('flex-flow',d=>{noWrap=d.value==='row nowrap';});});assert.ok(parentPan&&noWrap);
  await act(async()=>root.unmount());root=createRoot(host);
 
  await act(async()=>{root.render(React.createElement(Library,{character:chars[0],assets:f.loadFacingAssets('a'),groups:f.groupFacingScenes(f.loadFacingAssets('a')),initialAssetId:sprite.id,onBack(){},onChange(){},async onDelete(){}}));await tick();});
@@ -156,6 +194,6 @@ async function main(){
  await act(async()=>{button('保存素材').dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<6;i++)await tick();});const replaced=f.loadFacingAssets('a').find(a=>a.id===sprite.id);assert.notEqual(replaced.mediaId,sprite.mediaId);assert.equal(replaced.description,'原立绘文案');assert.ok(f.loadFacingAssets('a').find(a=>a.id===kitchen.id).portraitIds.includes(sprite.id));await act(async()=>root.unmount());
  // The clipboard fallback restores the scroll container even if selection scrolls it.
  const scroll=document.createElement('div');document.body.append(scroll);scroll.scrollTop=231;window.HTMLElement.prototype.focus=function(){};window.HTMLTextAreaElement.prototype.select=function(){scroll.scrollTop=999;};await load('lib/clipboard-view.ts').copyTextPreservingView('坐标',scroll);assert.equal(scroll.scrollTop,231);
- console.log('PASS continuity: role/NPC proxy chats and deduplicated memories, refresh/long history/pending reply preservation, real/suggested remarks and account isolation, streaming conversation isolation, default CSS boundary, avatar roster, scene mapping, story handoff, records, portrait regeneration and clipboard scroll.');
+ console.log('PASS continuity: individual/batch and targeted phone generation, legacy JSON and role ID matching, refresh/long history preservation, drafts/unread/proxy labels/timestamps, stop/failure/resume without resending, memory deduplication and account isolation, horizontal scene/portrait rails, CSS boundary, story handoff and existing scene/record workflows.');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e instanceof Error?e.stack:String(e));process.exit(1);});

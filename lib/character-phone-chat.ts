@@ -21,13 +21,13 @@ export function characterPhoneContacts(owner:Character,payload?:CheckPhoneChatPa
  const old=payload?.conversations??[];
  const userKey=JSON.stringify([account??null,user?.id??null]);
  const userOld=old.find(item=>item.peerType==="user"&&item.peerUserKey===userKey||!!direct&&item.id===`real_conv_${direct.id}`);
- const real=direct?loadChatMessages(direct.id).filter(m=>m.role!=="system"&&!m.isRetracted).slice(-80).map(m=>({id:m.id,text:getChatMessagePreview(m)||m.content,timeLabel:m.createdAt,direction:m.role==="user"?"incoming" as const:"outgoing" as const})):[];
+ const real=direct?loadChatMessages(direct.id).filter(m=>m.role!=="system"&&!m.isRetracted).slice(-80).map(m=>({id:m.id,text:getChatMessagePreview(m)||m.content,timeLabel:m.createdAt,direction:m.role==="user"?"incoming" as const:"outgoing" as const,source:m.mediaData?.characterPhoneOperationId?"proxy" as const:undefined})):[];
  const userRow:CheckPhoneChatConversation={...userOld,id:userOld?.id??(direct?`real_conv_${direct.id}`:`phone_user_${user?.id??"default"}_${account??"main"}`),peerType:"user",peerUserKey:userKey,name:user?.name||"用户",remark:direct?.characterRemarkForUser?.trim()||userOld?.remark?.trim()||(payload?.userRemarkKey===userKey?payload.userRemark?.trim():undefined)||undefined,pinned:true,preview:real.at(-1)?.text||userOld?.preview||"与用户的对话",timeLabel:real.at(-1)?.timeLabel||userOld?.timeLabel||"",tagLabel:"真实会话",messages:real.length?real:userOld?.messages??[]};
  const known=chars.filter(char=>char.id!==owner.id&&world?.memberIds.includes(char.id));
  const rows=known.map(char=>{const prior=old.find(item=>item.peerCharacterId===char.id||norm(item.name)===norm(char.name));return {...prior,id:prior?.id??`phone_char_${char.id}`,peerCharacterId:char.id,peerType:"character" as const,name:char.name,preview:prior?.preview||"同世界角色",timeLabel:prior?.timeLabel||"",tagLabel:prior?.tagLabel||"同世界",messages:prior?.messages??[]};});
  const reserved=new Set([norm(userRow.name),...chars.map(char=>norm(char.name))]);
  const npcs=old.filter(item=>item.peerType!=="user"&&!item.id.startsWith("real_conv_")&&!reserved.has(norm(item.name))).map(item=>({...item,peerType:"npc" as const,peerCharacterId:undefined}));
- return [userRow,...rows,...npcs].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned));
+ return [userRow,...rows,...npcs].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)||(Date.parse(b.lastActivityAt||b.timeLabel)||0)-(Date.parse(a.lastActivityAt||a.timeLabel)||0));
 }
 /** 刷新时保留已产生的聊天历史与待接收状态，模型新生成的对话作为增量添加。 */
 export function mergeCharacterPhoneRefresh(
@@ -58,7 +58,7 @@ export function mergeCharacterPhoneRefresh(
   const messages=[...existing,...additional];
   return {...item,id:previous?.id??item.id,
    pinned:previous?.pinned??item.pinned,remark:item.remark||previous?.remark,
-   messages,pendingReply:previous?.pendingReply,
+   messages,pendingReply:previous?.pendingReply,lastActivityAt:additional.length?now:previous?.lastActivityAt,
    preview:messages.at(-1)?.text||item.preview,
    timeLabel:messages.at(-1)?.timeLabel||item.timeLabel};
  });
@@ -97,9 +97,9 @@ export async function appendCharacterPhoneMessage(owner:Character,conversationId
   window.dispatchEvent(new CustomEvent("chat-messages-updated",{detail:{sessionId:session.id}}));
  }
  const updateOwner=(current:CheckPhoneSnapshot<CheckPhoneChatPayload>)=>{
-  const contacts=characterPhoneContacts(owner,current.payload);return {...current,updatedAt:at,payload:{...current.payload,conversations:contacts.map(item=>item.id===conversationId?{...item,preview:text.trim(),timeLabel:at,
+  const contacts=characterPhoneContacts(owner,current.payload);return {...current,updatedAt:at,payload:{...current.payload,conversations:contacts.map(item=>item.id===conversationId?{...item,preview:text.trim(),timeLabel:at,lastActivityAt:at,
    pendingReply:item.peerType!=="user"?{operationId,sentMessageId:messageId}:undefined,
-   messages:item.messages.some(m=>m.id===messageId)?item.messages:[...item.messages,{id:messageId,text:text.trim(),timeLabel:at,direction:"outgoing" as const}]}:item)}};
+   messages:item.messages.some(m=>m.id===messageId)?item.messages:[...item.messages,{id:messageId,text:text.trim(),timeLabel:at,direction:"outgoing" as const,source:"proxy" as const}]}:item)}};
  }; const peer=loadCharacters().find(char=>char.id===conversation.peerCharacterId);
  if(peer){const other=await ensureCharacterPhoneChat(peer);snapshot=await updatePhoneSnapshotPair(snapshot,other,updateOwner,value=>mirrorPhoneConversation(value,peer,owner,[{id:messageId,text:text.trim(),timeLabel:at,direction:"incoming"}]));notify(peer.id);}
  else snapshot=await updatePhoneSnapshot<CheckPhoneChatPayload>(owner.id,"chat",updateOwner);
@@ -123,7 +123,7 @@ export async function replyToCharacterPhone(owner:Character,conversationId:strin
   throwIfAborted(signal);
   if(item.id!==conversationId||item.pendingReply?.operationId!==pending.operationId)return item;
   const messages=parts.map((text,index)=>({id:`phone_${pending.operationId}:in:${index}`,text,timeLabel:at,direction:"incoming" as const}));
-  return {...item,pendingReply:undefined,preview:content,timeLabel:at,messages:[...item.messages,...messages.filter(message=>!item.messages.some(m=>m.id===message.id))]};
+  return {...item,pendingReply:undefined,preview:content,timeLabel:at,lastActivityAt:at,messages:[...item.messages,...messages.filter(message=>!item.messages.some(m=>m.id===message.id))]};
  })}}); let updated:CheckPhoneSnapshot<CheckPhoneChatPayload>;
  if(peer){const other=await ensureCharacterPhoneChat(peer);updated=await updatePhoneSnapshotPair(snapshot,other,updateOwner,value=>mirrorPhoneConversation(value,peer,owner,parts.map((text,index)=>({id:`phone_${pending.operationId}:in:${index}`,text,timeLabel:at,direction:"outgoing" as const}))));notify(peer.id);}
  else updated=await updatePhoneSnapshot<CheckPhoneChatPayload>(owner.id,"chat",updateOwner);
@@ -138,4 +138,8 @@ export async function replyToCharacterPhone(owner:Character,conversationId:strin
 function mirrorPhoneConversation(snapshot:CheckPhoneSnapshot<CheckPhoneChatPayload>,peer:Character,owner:Character,messages:CheckPhoneChatConversation["messages"]):CheckPhoneSnapshot<CheckPhoneChatPayload>{
  const rows=characterPhoneContacts(peer,snapshot.payload);
  return {...snapshot,updatedAt:new Date().toISOString(),payload:{...snapshot.payload,conversations:rows.map(row=>row.peerCharacterId===owner.id?{...row,preview:messages.at(-1)?.text??row.preview,timeLabel:messages.at(-1)?.timeLabel??row.timeLabel,messages:[...row.messages,...messages.filter(m=>!row.messages.some(previous=>previous.id===m.id))]}:row)}};
+}
+
+export async function setCharacterPhoneReplyState(characterId:string,conversationId:string,operationId:string,state:"waiting"|"stopped"|"failed") {
+ return updatePhoneSnapshot<CheckPhoneChatPayload>(characterId,"chat",current=>({...current,payload:{...current.payload,conversations:current.payload.conversations.map(row=>row.id===conversationId&&row.pendingReply?.operationId===operationId?{...row,pendingReply:{...row.pendingReply,state}}:row)}}));
 }

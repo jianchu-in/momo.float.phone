@@ -144,6 +144,7 @@ export type CheckPhonePhotosPayload = {
 };
 
 export type CheckPhoneChatBubble = {
+  source?: "proxy";
   id: string;
   text: string;
   timeLabel: string;
@@ -155,7 +156,8 @@ export type CheckPhoneChatConversation = {
   peerType?: "user" | "character" | "npc";
   peerUserKey?:string;
   peerCharacterId?: string;
-  pendingReply?: { operationId:string; sentMessageId:string };
+  pendingReply?: { operationId:string; sentMessageId:string; state?:"waiting"|"stopped"|"failed" };
+  lastActivityAt?: string;
   id: string;
   name: string;
   preview: string;

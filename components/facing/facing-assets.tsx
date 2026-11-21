@@ -27,7 +27,7 @@ function Tile({ asset, onOpen, selected, onSelect }: { asset: FacingAsset; onOpe
 function PortraitFolders({ assets, open, selection, select, prefix = "" }: { assets: FacingAsset[]; open: (asset: FacingAsset) => void; selection: Set<string>; select: (id: string) => void; prefix?: string }) {
   const own = assets.filter(asset => (asset.folder?.trim() || "未分类") === (prefix || "未分类"));
   const folders = [...new Set(assets.map(asset => asset.folder?.trim() || "未分类").filter(path => prefix ? path.startsWith(prefix + "/") : path !== "未分类").map(path => prefix ? path.slice(prefix.length + 1).split("/")[0] : path.split("/")[0]))];
-  return <>{!!own.length && <div className="facing-grid">{own.map(asset => <Tile key={asset.id} asset={asset} onOpen={() => open(asset)} selected={selection.has(asset.id)} onSelect={() => select(asset.id)} />)}</div>}
+  return <>{!!own.length && <div className="facing-grid facing-asset-rail" aria-label={`${prefix || "未分类"}立绘，左右滑动`}>{own.map(asset => <Tile key={asset.id} asset={asset} onOpen={() => open(asset)} selected={selection.has(asset.id)} onSelect={() => select(asset.id)} />)}</div>}
     {folders.map(folder => { const path = prefix ? prefix + "/" + folder : folder; return <details className="facing-portrait-folder" key={path} open><summary>{folder}</summary><PortraitFolders assets={assets} open={open} selection={selection} select={select} prefix={path} /></details>; })}</>;
 }
 export function FacingAssets({ character, assets, groups, onBack, onChange, onDelete, initialAssetId }: { initialAssetId?:string; character: Character; assets: FacingAsset[]; groups: FacingSceneGroup[]; onBack: () => void; onChange: () => void; onDelete: (ids: readonly string[]) => Promise<void> }) {
@@ -103,11 +103,11 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
   const url = draft?.candidate?.url ?? editedUrl, type = draft?.candidate?.mediaType ?? draft?.asset?.motionMediaType ?? draft?.asset?.mediaType ?? "image/png";
   return <>
     <header className="facing-header"><button className="facing-back" aria-label="返回" disabled={busy} onClick={() => draft ? (setDraft(undefined), setImporting(undefined), setError("")) : onBack()}>‹</button><h1>{draft ? draft.category === "scene" ? "场景背景" : "立绘素材" : "素材库"}</h1></header>
-    <main className="facing-scroll">
+    <main className="facing-scroll facing-assets-scroll">
       {!draft ? <>
         <section className="facing-material-group"><div className="facing-row"><h2>场景素材</h2><button className="facing-small" onClick={() => open(undefined, "scene")}><Plus size={15} />添加场景背景</button></div>
           <p className="facing-auto-help">背景只在切换场所时改变；为每个场所选择可复用的立绘。</p>
-          {groups.filter(group => group.backdrop).map(group => <section key={group.name} className="facing-material-group"><div className="facing-row"><h3>{group.name}</h3><button className="facing-small" onClick={() => setBinding({ location: group.name, ids: group.backdrop!.portraitIds ?? sprites.map(item => item.id) })}>可用立绘 · {group.backdrop!.portraitIds?.length ?? sprites.length}</button></div><div className="facing-grid">{group.assets.filter(item => item.category === "scene").map(asset => <Tile key={asset.id} asset={asset} onOpen={() => open(asset)} selected={selected.has(asset.id)} onSelect={() => select(asset.id)} />)}</div></section>)}
+          <div className="facing-scene-rail" aria-label="场景素材，左右滑动">{groups.filter(group => group.backdrop).map(group => <section key={group.name} className="facing-material-group facing-scene-card"><div className="facing-row"><h3>{group.name}</h3><button className="facing-small" onClick={() => setBinding({ location: group.name, ids: group.backdrop!.portraitIds ?? sprites.map(item => item.id) })}>可用立绘 · {group.backdrop!.portraitIds?.length ?? sprites.length}</button></div><div className="facing-grid facing-asset-rail">{group.assets.filter(item => item.category === "scene").map(asset => <Tile key={asset.id} asset={asset} onOpen={() => open(asset)} selected={selected.has(asset.id)} onSelect={() => select(asset.id)} />)}</div></section>)}</div>
           {!assets.some(item => item.category === "scene") && <p className="facing-empty">上传一张背景，再选择这个场所可使用的立绘。</p>}
         </section>
         <section className="facing-material-group"><div className="facing-row"><h2>立绘素材</h2><button className="facing-small" onClick={() => open()}><Plus size={15} />上传立绘／GIF／动图</button></div>

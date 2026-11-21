@@ -78,7 +78,10 @@ import {
   type CheckPhoneAppId,
   type CheckPhoneManifest,
   type CheckPhoneSnapshot,
+  type CheckPhoneChatPayload,
 } from "@/lib/checkphone-config";
+import { mergeCharacterPhoneRefresh } from "@/lib/character-phone-chat";
+import { markCharacterPhoneUpdates } from "@/lib/character-phone-chat-view";
 import { generateCheckPhoneAppBatch, generateCheckPhoneManifest } from "@/lib/checkphone-engine";
 import {
   clearPhoneManifest,
@@ -86,6 +89,7 @@ import {
   loadPhoneSnapshot,
   savePhoneManifest,
   savePhoneSnapshot,
+  updatePhoneSnapshot,
   hydrateCheckPhoneStorage,
   readPhoneManifestCache,
   loadCheckPhoneUnreadAppIds,
@@ -590,6 +594,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
     }
     setBatchLoading(true);
     setBatchStatus(null);
+    try {
     const previousSnapshots = await Promise.all(batchAppIds.map((appId) => loadPhoneSnapshot(activeCharId, appId)));
     const result = await generateCheckPhoneAppBatch(activeCharId, batchAppIds);
     const now = new Date().toISOString();
@@ -606,7 +611,13 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
         summary: item.summary,
         payload: item.payload,
       };
-      await savePhoneSnapshot(snapshot);
+      if (item.appId === "chat" && activeCharacter) {
+        const saved = await updatePhoneSnapshot<CheckPhoneChatPayload>(activeCharId, "chat", current => ({
+          ...mergeCharacterPhoneRefresh(activeCharacter, current, item.payload as CheckPhoneChatPayload, crypto.randomUUID()),
+          summary: item.summary,
+        }), snapshot as CheckPhoneSnapshot<CheckPhoneChatPayload>);
+        markCharacterPhoneUpdates(activeCharId, previous?.payload as CheckPhoneChatPayload ?? null, saved.payload);
+      } else await savePhoneSnapshot(snapshot);
       savedCount += 1;
     }
     const generatedAppIds = result.items.filter((item) => item.payload).map((item) => item.appId);
@@ -616,12 +627,18 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
     const failures = result.items.filter((item) => !item.payload).map((item) => CHECKPHONE_APP_SPECS[item.appId].label);
     if (result.error) {
       setBatchStatus({ success: false, message: result.error });
+    } else if (result.items.some(item => item.error && item.payload)) {
+      setBatchStatus({ success: false, message: `已更新 ${savedCount} 个；${result.items.filter(item => item.error).map(item => item.error).join("；")}` });
     } else if (failures.length > 0) {
       setBatchStatus({ success: savedCount > 0, message: `已更新 ${savedCount} 个；${failures.join("、")}返回格式未通过校验，可单独重试。` });
     } else {
       setBatchStatus({ success: true, message: `已用一次 API 调用更新 ${savedCount} 个应用。` });
     }
-    setBatchLoading(false);
+    } catch (cause) {
+      setBatchStatus({ success: false, message: cause instanceof Error ? cause.message : "保存失败，可重试，已保存的记录保留。" });
+    } finally {
+      setBatchLoading(false);
+    }
   }
 
   const handleBack = () => {

@@ -1,3 +1,17 @@
 .facing-life-panel{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--c-page-body-bg,#f8f6fa);z-index:3}.facing-life-card{flex:0 0 220px;border:1px solid #d9d4df;border-radius:14px;padding:14px;background:#fff;color:#40374a;overflow:hidden}.facing-life-card img,.facing-life-card video{width:100%;max-height:280px;object-fit:contain}.facing-life-card p{white-space:pre-wrap;line-height:1.6}.facing-horizontal-assets,.facing-material-group .facing-grid,.facing-portrait-folder .facing-grid{display:flex!important;gap:12px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding:5px 2px 14px}.facing-material-group .facing-grid>*,.facing-portrait-folder .facing-grid>*{flex:0 0 145px;scroll-snap-align:start}.facing-scene-picker{position:absolute;top:calc(var(--page-header-safe-top,48px) + 62px);right:12px;left:12px;max-height:55%;overflow:auto;z-index:35;padding:15px;border-radius:16px;background:#fff;color:#40374a;box-shadow:0 8px 40px #0003}.facing-record-manage{display:flex;gap:8px;align-items:center}.facing-record-manage input{width:auto}.facing-room-top>div:last-child{max-width:57%;flex-wrap:wrap;justify-content:flex-end}.facing-figure[data-movable=true]{touch-action:none;cursor:grab}.facing-figure[data-movable=true]:active{cursor:grabbing}
 
 .facing-product-preview{width:100%;border:0;background:transparent;padding:0;cursor:zoom-in}.facing-life-panel .facing-sheet>img,.facing-life-panel .facing-sheet>video{max-height:70vh;object-fit:contain;width:100%}
+
+/* The vertical page must also permit horizontal gestures in material rails. */
+.facing-app .facing-assets-scroll { touch-action: pan-x pan-y; }
+.facing-assets-scroll :is(.facing-material-group,.facing-portrait-folder) { min-width: 0; max-width: 100%; }
+.facing-assets-scroll :is(.facing-scene-rail,.facing-asset-rail) {
+  display: flex; flex-flow: row nowrap; gap: 12px;
+  width: 100%; max-width: 100%; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain; scroll-snap-type: x proximity;
+  padding: 5px 2px 14px; -webkit-overflow-scrolling: touch;
+}
+.facing-scene-rail > .facing-scene-card { flex: 0 0 180px; margin: 0; scroll-snap-align: start; }
+.facing-assets-scroll .facing-asset-rail > .facing-library-tile { flex: 0 0 145px; width: 145px; scroll-snap-align: start; }
+.facing-library-tile > .facing-asset-tile { width: 100%; }
