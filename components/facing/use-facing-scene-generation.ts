@@ -3,7 +3,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { planFacingVisual, renderFacingVisual } from "@/lib/facing-scene-generation";
 import { applyFacingVisual, facingCompletedRounds, facingId, facingMediaType, facingVisualMatches,
-  findFacingVisualAsset, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingSettings, saveFacingAsset, shouldCheckFacingVisual,
+  findFacingVisualAsset, groupFacingScenes, loadFacingUsableAssets, loadFacingMeeting, loadFacingSettings, saveFacingAsset, shouldCheckFacingVisual,
   type FacingAsset, type FacingMeeting } from "@/lib/facing-storage";
 
 type Check = { meeting: FacingMeeting; character: Character };
@@ -41,7 +41,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
     try {
       const screenedMeeting = loadFacingMeeting(meeting.id);
       if (signal.aborted || !screenedMeeting || !facingVisualMatches(screenedMeeting, anchor, "")) return;
-      const assets = loadFacingAssets(character.id);
+      const assets = loadFacingUsableAssets(character.id);
       const groups = groupFacingScenes(assets, settings.portraitId);
       const plan = await planFacingVisual(character, meeting, groups, signal);
       const latest = loadFacingMeeting(meeting.id);
@@ -50,10 +50,10 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
         enabled: loadFacingSettings().characters[meeting.characterId]?.autoVisual?.enabled };
       if (!options?.enabled) return;
       const activityId = facingId();
-      const currentAssets = loadFacingAssets(character.id);
+      const currentAssets = loadFacingUsableAssets(character.id);
       const group = groups.find(item => item.name === anchor.sceneName);
-      const sharedGroup = groupFacingScenes(loadFacingAssets(meeting.characterId)).find(item => item.name === anchor.sceneName);
-      const recorded = [...currentAssets, ...loadFacingAssets(meeting.characterId)].find(item => item.id === anchor.sceneId && item.category === "scene");
+      const sharedGroup = groupFacingScenes(loadFacingUsableAssets(meeting.characterId)).find(item => item.name === anchor.sceneName);
+      const recorded = [...currentAssets, ...loadFacingUsableAssets(meeting.characterId)].find(item => item.id === anchor.sceneId && item.category === "scene");
       const base = recorded ?? group?.backdrop ?? sharedGroup?.backdrop
         ?? (group?.portrait?.composition === "full" ? group.portrait : sharedGroup?.portrait?.composition === "full" ? sharedGroup.portrait : undefined);
       update(meeting.id, { message: "正在生成本轮新画面…" });
@@ -61,10 +61,10 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
       if (signal.aborted) return;
       if (!result) throw new Error("请检查面对面的生图配置。");
       const asset = await saveFacingAsset({ id: facingId(), characterId: character.id, category: "portrait", name: plan.name,
-        use: "reaction", composition: "full", location: plan.location, durationMs: 3500, generated: true,
+        use: "reaction", composition: "full", location: plan.location, durationMs: 3500, generated: true, description: plan.description,
       }, result.blob, facingMediaType(result.blob));
       if (signal.aborted) return;
-      onAssets(character.id, loadFacingAssets(character.id));
+      onAssets(character.id, loadFacingUsableAssets(character.id));
       if (!loadFacingSettings().characters[meeting.characterId]?.autoVisual?.enabled) return;
       const saved = await applyFacingVisual(meeting.id, anchor, activityId, plan.location, asset, plan.mode);
       if (saved && !signal.aborted) onMeeting(saved);

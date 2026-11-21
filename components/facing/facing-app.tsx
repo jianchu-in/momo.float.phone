@@ -1,17 +1,21 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, ScanLine, Settings2, UserRound, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, Settings2, UserRound, X } from "lucide-react";
 import { FacingMapApp } from "./facing-map-app";
 import { FacingMapSettings } from "./facing-map-panels";
 import { mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
-import { createFacingMeeting, deleteFacingAssets, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_PARTS, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
-  type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting } from "@/lib/facing-storage";
+import { createFacingMeeting, deleteFacingAssets, loadFacingUsableAssets, changeFacingScene, manageFacingMeetings, mergeFacingMeetings, FACING_SHARED_CHARACTER_ID, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
+  type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
+import { sceneForMapPlace } from "@/lib/facing-map-scenes";
+import { continueFacingInStory } from "@/lib/story-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { saveFacingParticipants } from "@/lib/facing-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
+import "@/styles/facing-life.css";
+import { FacingProducts } from "./facing-life-panels";
 import { FacingAssets } from "./facing-assets";
 import { FacingRoom } from "./facing-room";
 import { FacingStage } from "./facing-stage";
@@ -20,7 +24,7 @@ import { storeShownImage } from "@/lib/shown-image";
 import { useFacingSceneGeneration } from "./use-facing-scene-generation";
 import { useFacingViewportInset } from "./use-facing-viewport-inset";
 
-type Page = "home" | "room" | "settings" | "assets" | "hotspots" | "records" | "record" | "map" | "map-settings";
+type Page = "home" | "room" | "settings" | "assets" | "records" | "record" | "map" | "map-settings" | "products" | "shared-assets";
 type Sheet = "characters" | "new" | null;
 
 function Header({ title, onBack, children }: { title: string; onBack: () => void; children?: ReactNode }) {
@@ -37,69 +41,6 @@ function FacingSheet({ title, children, close, center }: { title: string; childr
       {children}
     </section>
   </div>;
-}
-
-const PART_POSITION: Record<string, [number, number]> = {
-  脸颊: [56, 27], 眼睛: [49, 22], 嘴巴: [50, 30], 耳朵: [63, 26], 胸口: [51, 49], 小腹: [51, 67], 手: [69, 72],
-};
-
-function HotspotEditor({ character, portrait, scene, points: initialPoints, onBack, onSave }: {
-  character: Character; portrait?: FacingAsset; scene?: FacingAsset; points: FacingHotspot[];
-  onBack: () => void; onSave: (points: FacingHotspot[]) => Promise<void>;
-}) {
-  const [points, setPoints] = useState(initialPoints);
-  const [id, setId] = useState(initialPoints[0]?.id);
-  const [test, setTest] = useState(false);
-  const [hit, setHit] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const point = points.find(item => item.id === id);
-  function update(id: string, patch: Partial<FacingHotspot>) {
-    setPoints(current => current.map(item => item.id === id ? { ...item, ...patch } : item));
-  }
-  function add(label: string) {
-    const [x, y] = PART_POSITION[label] ?? [50, 42];
-    const point = { id: facingId(), label, x, y, width: 21, height: 13 };
-    setPoints(current => [...current, point]);
-    setId(point.id);
-  }
-  async function save() {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try { await onSave(points.filter(item => item.label.trim()).map(item => ({ ...item, label: item.label.trim() }))); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "点位保存失败。"); }
-    finally { setBusy(false); }
-  }
-  return <>
-    <Header title="虚拟体感" onBack={onBack} />
-    <main className="facing-scroll facing-form">
-      <div className="facing-hotspot-preview">
-        <FacingStage portrait={portrait} scene={scene} fallback={character.avatar} name={character.name} points={points}
-          editing={!test} activePoint={id} onPoint={item => test ? setHit(item.label) : setId(item.id)}
-          onPointMove={(target, x, y) => update(target, { x, y })} />
-      </div>
-      <div className="facing-row"><span>{test ? hit ? `已触碰${hit}` : "轻点人物检查位置" : "拖动区域调整位置"}</span>
-        <button className="facing-small" type="button" aria-pressed={test} onClick={() => { setTest(!test); setHit(""); }}>{test ? "返回编辑" : "试触碰"}</button></div>
-      {!test && <>
-        <div className="facing-choices">{FACING_PARTS.map(label => <button type="button" key={label} className="facing-small" onClick={() => add(label)}>{label}</button>)}
-          <button type="button" className="facing-small" onClick={() => add("自定义")}><Plus size={15} />自定义</button></div>
-        {!!points.length && <label>触碰区域<select value={id ?? ""} onChange={event => setId(event.target.value)}>
-          {points.map(item => <option key={item.id} value={item.id}>{item.label || "未命名区域"}</option>)}
-        </select></label>}
-        {point && <div className="facing-point-controls">
-          <label>部位名称<input value={point.label} maxLength={20} onChange={event => update(point.id, { label: event.target.value })} /></label>
-          <div className="facing-pair">
-            <label>横向大小<input type="range" min={8} max={45} value={point.width} onChange={event => update(point.id, { width: +event.target.value })} /></label>
-            <label>纵向大小<input type="range" min={5} max={35} value={point.height} onChange={event => update(point.id, { height: +event.target.value })} /></label>
-          </div>
-          <button type="button" className="facing-soft" onClick={() => { const left = points.filter(item => item.id !== point.id); setPoints(left); setId(left[0]?.id); }}>移除此区域</button>
-        </div>}
-      </>}
-      {error && <p className="facing-error" role="alert">{error}</p>}
-      <button type="button" className="facing-primary" disabled={busy} onClick={() => void save()}>保存点位</button>
-    </main>
-  </>;
 }
 
 const RECORD_TABS = { main: "主线", branch: "分线", independent: "独立" } as const;
@@ -130,7 +71,7 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
   </>;
 }
 
-export function FacingApp({ onClose }: { onClose: () => void }) {
+export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onClose: () => void; initialMeetingId?:string|null; onLaunchConsumed?:()=>void }) {
   const [characters] = useState(loadCharacters);
   const [preferences, setPreferences] = useState(loadFacingSettings);
   const character = characters.find(item => item.id === preferences.characterId);
@@ -144,7 +85,11 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const pageInset = useFacingViewportInset(appRef, page !== "room" && page !== "home");
   const [sheet, setSheet] = useState<Sheet>(() => !character && characters.length ? "characters" : null);
   const [settingOrigin, setSettingOrigin] = useState<"home" | "room">("home");
-  const [assetOrigin, setAssetOrigin] = useState<"settings" | "home">("settings");
+  const [assetOrigin, setAssetOrigin] = useState<"settings" | "home" | "room">("settings");
+  const [assetEditId,setAssetEditId]=useState<string>();
+  const [assetOwnerId,setAssetOwnerId]=useState<string>();
+  const [recordRevision,setRecordRevision]=useState(0), [recordSelection,setRecordSelection]=useState<string[]>([]),[recordName,setRecordName]=useState("");
+  const [confirmRecordDelete,setConfirmRecordDelete]=useState(false),[removeMergedSources,setRemoveMergedSources]=useState(false),[recordBusy,setRecordBusy]=useState(false);
   const [meeting, setMeeting] = useState<FacingMeeting>();
   const [draftMeeting, setDraftMeeting] = useState<FacingMeeting>();
   const [openingScene, setOpeningScene] = useState(FACING_DEFAULT_SCENE);
@@ -153,7 +98,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const [recordType, setRecordType] = useState<FacingMeeting["type"]>("main");
   const [error, setError] = useState("");
   const [savingReference, setSavingReference] = useState(false);
-  const [assets, setAssets] = useState(() => character ? loadFacingAssets(character.id) : []);
+  const [assets, setAssets] = useState(() => character ? loadFacingUsableAssets(character.id) : []);
   const autoVisual = useFacingSceneGeneration(
     updated => setMeeting(current => current?.id === updated.id ? updated : current),
     (characterId, updated) => { if (loadFacingSettings().characterId === characterId) setAssets(updated); },
@@ -163,25 +108,24 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
   const groups = groupFacingScenes(assets, current.portraitId);
   const castKey = [...participantIds].sort().join("|");
   const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId, true)
-    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey) : [], [character, identityId, meeting, castKey]);
+    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey) : [], [character, identityId, meeting, castKey, recordRevision]);
   const latest = meetings[0];
   const initialAsset = assets.find(item => item.id === (current.useScene === false ? current.fullPortraitId ?? current.portraitId : current.sceneId ?? current.portraitId));
   const initialGroup = groups.find(group => group.name === (initialAsset ? facingAssetLocation(initialAsset) : undefined)) ?? groups[0];
   const homeScene = resolveFacingScene(latest ? facingMeetingPosition(latest) : facingScenePosition(initialGroup), groups, assets);
   const room = meeting ? resolveFacingScene(facingMeetingPosition(meeting), groups, assets) : homeScene;
-  const hotspotScene = settingOrigin === "room" ? room : homeScene;
   const records = page === "records" ? meetings.filter(item => item.type === recordType) : [];
 
   async function selectCharacters() {
     setError("");
-    try { setPreferences(await saveFacingParticipants(castDraft)); setAssets(loadFacingAssets(castDraft[0])); setSheet(null); }
+    try { setPreferences(await saveFacingParticipants(castDraft)); setAssets(loadFacingUsableAssets(castDraft[0])); setSheet(null); }
     catch { setError("角色选择保存失败。"); }
   }
 
   function openCharacters() { setCastDraft(participantIds); setSheet("characters"); }
 
   async function changeSetting(patch: Partial<FacingCharacterSettings>) {
-    if (character) setPreferences(await saveFacingSettings(character.id, patch));
+    if (character) {setPreferences(await saveFacingSettings(character.id, patch));setAssets(loadFacingUsableAssets(character.id));}
   }
 
   function commitSetting(patch: Partial<FacingCharacterSettings>) {
@@ -189,7 +133,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     void changeSetting(patch).catch(() => setError("设置保存失败。"));
   }
 
-  function openAssets(from: "settings" | "home") {
+  function openAssets(from: "settings" | "home" | "room") {
+    setAssetEditId(undefined);setAssetOwnerId(character?.id);
     setAssetOrigin(from);
     setPage("assets");
   }
@@ -198,7 +143,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     unlockAudioPlayback();
     setMeeting(loadFacingMeeting(item.id) ?? item);
     if (item.characterId !== character?.id) {
-      setAssets(loadFacingAssets(item.characterId));
+      setAssets(loadFacingUsableAssets(item.characterId));
       setPreferences(current => ({ ...current, characterId: item.characterId,
         participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)] }));
       void saveFacingParticipants([item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)])
@@ -245,10 +190,10 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     if (!primaryId) throw new Error("请先选择一位角色。");
     const target = characters.find(item => item.id === primaryId);
     if (!target) throw new Error("这位角色已被移除。");
-    const targetAssets = loadFacingAssets(primaryId);
+    const targetAssets = loadFacingUsableAssets(primaryId);
     const destination = mapPlacePath(atlas, trip.placeId);
-    const group = groupFacingScenes(targetAssets).find(item => item.name === destination || item.name === destination.split(" · ").at(-1));
-    const scene = { ...facingScenePosition(group), sceneName: destination };
+    const matched=sceneForMapPlace(atlas,trip.placeId,primaryId);
+    const scene = { ...matched, sceneName: destination };
     const identity = resolveUserIdentity(character?.id, "facing")?.id ?? null;
     const started = await saveMapArrival(atlas.id, trip, visitId, primaryId, identity, participants, scene, meeting);
     setPreferences(await saveFacingParticipants([primaryId, ...participants.filter(id => id !== primaryId)]));
@@ -256,6 +201,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
     openRoom(started);
   }
 
+  useEffect(()=>{if(!initialMeetingId)return;const saved=loadFacingMeeting(initialMeetingId);if(saved)openRoom(saved);else setError("原面对面记录已移除，可以从见面记录选择其他对话。");onLaunchConsumed?.();},[initialMeetingId]);
   return <div ref={appRef} className="facing-app" style={{ paddingBottom: pageInset }}>
     {page === "home" && <>
       <Header title="面对面" onBack={onClose}>
@@ -286,6 +232,10 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
       autoAsset={assets.find(asset => asset.id === meeting.visual?.assetId)} autoProgress={autoVisual.progress[meeting.id]}
       onCompleted={completed => autoVisual.check(completed, character)}
       onMap={() => { setMapOrigin("room"); setPage("map"); }}
+      onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
+      onScene={async name=>{const group=groups.find(item=>item.name===name);if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
+      onEditPortrait={(id,owner)=>{setAssetEditId(id??"new");setAssetOwnerId(owner??character.id);setAssetOrigin("room");setPage(loadFacingAssets(FACING_SHARED_CHARACTER_ID).some(a=>a.id===id)?"shared-assets":"assets");}}
+      onPortraitLayout={async (owner,id,layout)=>{const previous=loadFacingSettings().characters[owner];setPreferences(await saveFacingSettings(owner,{portraitLayouts:{...previous?.portraitLayouts,[id]:layout}}));}}
       onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
       onVoice={value => commitSetting({ voice: value })} onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
@@ -295,7 +245,8 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
         <div className="facing-list">
           <button type="button" onClick={() => { setMapSettingsOrigin("settings"); setPage("map-settings"); }}><MapIcon size={18} /><span>地图设置</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
-          <button type="button" onClick={() => setPage("hotspots")}><ScanLine size={18} /><span>虚拟体感</span><ChevronRight size={17} /></button>
+          <button type="button" onClick={()=>{setAssetOrigin("settings");setAssetEditId(undefined);setPage("shared-assets");}}><Images size={18}/><span>通用场景素材</span><ChevronRight size={17}/></button>
+          <button type="button" onClick={()=>setPage("products")}><Images size={18}/><span>生图成品 · 按场景分类</span><ChevronRight size={17}/></button>
         </div>
         <section className="facing-form" key={character.id} aria-label="随剧情换场">
           <h2 className="facing-record-title">随剧情换场</h2>
@@ -338,10 +289,7 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}
           </select></label>
           <label>角色语音<input type="checkbox" role="switch" checked={current.voice !== false} onChange={event => commitSetting({ voice: event.target.checked })} /></label>
-          <label>启用触碰区域<input type="checkbox" role="switch" checked={current.touch !== false} onChange={event => commitSetting({ touch: event.target.checked })} /></label>
-          <label>触碰方式<select value={current.touchMode ?? "instant"} onChange={event => commitSetting({ touchMode: event.target.value as FacingCharacterSettings["touchMode"] })}>
-            <option value="instant">点击后立即回应</option><option value="collect">随消息发送</option><option value="double">单击记录，双击回应</option>
-          </select></label>
+          <label>未配置立绘时的通用NPC<select value={current.fallbackNpcGender??"male"} onChange={event=>commitSetting({fallbackNpcGender:event.target.value as "male"|"female"})}><option value="male">男性立绘</option><option value="female">女性立绘</option></select></label>
           <label>读写角色记忆<input type="checkbox" role="switch" checked={current.memory !== false} onChange={event => commitSetting({ memory: event.target.checked })} /></label>
         </div>
         <section className="facing-form" aria-label="对话外观">
@@ -368,32 +316,35 @@ export function FacingApp({ onClose }: { onClose: () => void }) {
           onBack={() => setPage(mapOrigin)} onSettings={() => { setMapSettingsOrigin("map"); setPage("map-settings"); }} onArrive={arriveFromMap} />
       </div>}
     {page === "map-settings" && <FacingMapSettings onBack={() => setPage(mapSettingsOrigin)} />}
-    {page === "assets" && character && <FacingAssets key={character.id} character={character} assets={assets} groups={groups}
-      onBack={() => setPage(assetOrigin)} onChange={() => setAssets(loadFacingAssets(character.id))}
+    {page === "assets" && character && <FacingAssets key={assetOwnerId??character.id} character={characters.find(item=>item.id===assetOwnerId)??character} assets={loadFacingAssets(assetOwnerId??character.id)} groups={groupFacingScenes(loadFacingAssets(assetOwnerId??character.id))} initialAssetId={assetEditId}
+      onBack={() => setPage(assetOrigin)} onChange={() => setAssets(loadFacingUsableAssets(character.id))}
       onDelete={async assetIds => {
-        await deleteFacingAssets(character.id, assetIds);
-        setAssets(loadFacingAssets(character.id));
+        await deleteFacingAssets(assetOwnerId??character.id, assetIds);
+        setAssets(loadFacingUsableAssets(character.id));
         setPreferences(loadFacingSettings());
       }} />}
-    {page === "hotspots" && character && <HotspotEditor character={character} portrait={hotspotScene.portrait} scene={hotspotScene.backdrop}
-      points={current.hotspots?.[hotspotScene.portrait?.id ?? "avatar"] ?? []} onBack={() => setPage("settings")} onSave={async points => {
-        await changeSetting({ hotspots: { ...current.hotspots, [hotspotScene.portrait?.id ?? "avatar"]: points } });
-        setPage("settings");
-      }} />}
+    {page === "shared-assets" && <FacingAssets character={{id:FACING_SHARED_CHARACTER_ID,name:"通用场景",avatar:"",createdAt:"",updatedAt:""} as Character} assets={loadFacingAssets(FACING_SHARED_CHARACTER_ID)} groups={groupFacingScenes(loadFacingAssets(FACING_SHARED_CHARACTER_ID))} initialAssetId={assetEditId} onBack={()=>setPage(assetOrigin)} onChange={()=>{if(character)setAssets(loadFacingUsableAssets(character.id));setRecordRevision(v=>v+1);}} onDelete={async ids=>{await deleteFacingAssets(FACING_SHARED_CHARACTER_ID,ids);if(character)setAssets(loadFacingUsableAssets(character.id));}}/>}
+    {page === "products" && <FacingProducts assets={assets} onBack={()=>setPage("settings")}/>}
     {page === "records" && character && <>
       <Header title="见面记录" onBack={() => setPage("home")} />
       <main className="facing-scroll facing-form">
         <div className="facing-segments" role="group" aria-label="记录分类">
           {Object.entries(RECORD_TABS).map(([key, label]) => <button type="button" key={key} aria-pressed={recordType === key}
-            onClick={() => setRecordType(key as FacingMeeting["type"])}>{label}</button>)}
+            onClick={() => {setRecordType(key as FacingMeeting["type"]);setRecordSelection([]);setConfirmRecordDelete(false);}}>{label}</button>)}
         </div>
         <div className="facing-row"><span>{character.name}</span><button type="button" className="facing-small" onClick={() => prepareMeeting("independent")}><Plus size={16} />新开独立见面</button></div>
+        <section className="facing-form" aria-label="管理见面记录"><button type="button" className="facing-small" disabled={recordBusy||!records.length} onClick={()=>setRecordSelection(recordSelection.length===records.length?[]:records.map(item=>item.id))}>{recordSelection.length===records.length&&records.length?"取消全选":"全选当前分类"}</button><p>已选择 {recordSelection.length} 条；合并保留原始消息与时间，重复消息只保留一次。</p><input aria-label="见面记录名称" value={recordName} onChange={e=>setRecordName(e.target.value)} placeholder="记录名称"/><label><input type="checkbox" checked={removeMergedSources} onChange={e=>setRemoveMergedSources(e.target.checked)}/>合并成功后移除来源记录</label>
+          <div className="facing-choices"><button disabled={recordBusy||recordSelection.length!==1||!recordName.trim()} onClick={()=>void (async()=>{setRecordBusy(true);try{await manageFacingMeetings(recordSelection,"rename",recordName);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>改名</button>
+          <button disabled={recordBusy||recordSelection.length<2} onClick={()=>void(async()=>{setRecordBusy(true);try{const saved=await mergeFacingMeetings(recordSelection[0],recordSelection,removeMergedSources);setRecordSelection([saved.id]);setMeeting(current=>current?.id===saved.id?saved:current);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>合并到首条所选记录</button>
+          <button disabled={recordBusy||!recordSelection.length} onClick={()=>setConfirmRecordDelete(true)}>删除所选</button></div>
+          {confirmRecordDelete&&<div role="alert"><p>移除这 {recordSelection.length} 条见面记录？</p><button disabled={recordBusy} onClick={()=>void(async()=>{setRecordBusy(true);try{await manageFacingMeetings(recordSelection,"delete");setMeeting(current=>current&&recordSelection.includes(current.id)?undefined:current);setRecordSelection([]);setConfirmRecordDelete(false);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>确认移除</button><button onClick={()=>setConfirmRecordDelete(false)}>取消</button></div>}
+        </section>
         <div className="facing-list">
-          {records.map(item =>
-            <button type="button" key={item.id} onClick={() => { setRecord(item); setPage("record"); }}>
+          {records.map(item => <div className="facing-record-manage" key={item.id}><input type="checkbox" aria-label={`选择记录${item.title||item.id}`} checked={recordSelection.includes(item.id)} onChange={e=>setRecordSelection(old=>e.target.checked?[...old,item.id]:old.filter(id=>id!==item.id))}/>
+            <button type="button" onClick={() => { setRecord(item); setPage("record"); }}>
               <span className="facing-record-row"><strong>{item.title || facingMeetingPosition(item).sceneName}</strong>
                 <small>{facingMeetingPosition(item).sceneName} · {new Date(item.updatedAt).toLocaleDateString("zh-CN")}</small></span><ChevronRight size={17} />
-            </button>)}
+            </button></div>)}
           {!records.length &&
             <p className="facing-empty">暂无{RECORD_TABS[recordType]}见面记录</p>}
         </div>

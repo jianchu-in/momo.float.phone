@@ -10,7 +10,7 @@ registerDynamicPrefix(MAP_PREFIX);
 registerKvMigration(FACING_MAP_SETTINGS_KEY);
 
 export type MapPoint = { x: number; y: number };
-export type MapPlace = MapPoint & { id: string; name: string; description: string; tileId?: string };
+export type MapPlace = MapPoint & { id: string; name: string; description: string; tileId?: string; sceneBinding?: import("./facing-map-scenes").MapSceneBinding };
 export type MapTile = MapPoint & { id: string; mediaId: string; width: number; height: number; pixelWidth: number; pixelHeight: number; name?: string; description?: string };
 export type MapRoad = { id: string; from: string; to: string; points: MapPoint[] };
 export type FacingMapPage = {

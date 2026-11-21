@@ -10,7 +10,7 @@ import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSetting
 import { loadMemoryConfig } from "./memory-storage";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
-import { loadApiConfigs, loadBindingConfig, loadUserIdentities, loadWorldBooks, resolveBinding } from "./settings-storage";
+import { loadApiConfigs, loadBindingConfig, loadUserIdentities, loadWorldBooks, resolveUserIdentity, resolveBinding } from "./settings-storage";
 import { loadNativeTimelineAsync, prepareShortTermContext } from "./short-term-assembler";
 import { cleanStreamText } from "./stream-preview";
 import { isNovelAiResolution } from "./novelai-image-config";
@@ -22,11 +22,13 @@ import type { LLMMessage } from "./llm-prompt-assembler";
 
 export type MapPlan = { description: string; places: MapPlace[] };
 export type MapExtension = { tile?: MapTile; direction: "right" | "left" | "top" | "bottom" };
-export type MapGenerationSources = { atlas: FacingAtlas; characters: Character[]; worldBookIds?: string[] };
+export type MapGenerationSources = { atlas: FacingAtlas; characters: Character[]; worldBookIds?: string[]; referenceCharacterIds?:string[]; includeUser?:boolean; memory?:Awaited<ReturnType<typeof characterMemory>>[] };
 export function mapGenerationSources(sources?: MapGenerationSources) {
   if (!sources) return undefined;
   return { 居住规则: "本世界只有以下已选择的生活角色，不从世界书或历史方案中额外添加具名居民。",
     生活角色: sources.characters.filter(item => mapResidentIds(sources.atlas).includes(item.id)).map(({ id, name, persona }) => ({ id, name, persona: persona?.slice(0, 1600) })),
+    参考角色记忆: sources.memory,
+    用户资料: sources.includeUser ? resolveUserIdentity(sources.atlas.characterIds[0],"facing") : undefined,
     参考世界书: loadWorldBooks().filter(book => (sources.worldBookIds ?? sources.atlas.worldBookIds).includes(book.id)).map(book => ({ name: book.name, 内容: book.entries.filter(entry => !entry.disable).map(entry => entry.content).join("\n").slice(0, 6000) })) };
 }
 function object(value: unknown): Record<string, unknown> {
@@ -56,6 +58,7 @@ export async function planFacingMap(lead: Character, atlas: FacingAtlas, page: F
   requirement: string, preferences: MapPreferences, signal: AbortSignal, extension?: MapExtension, sources?: MapGenerationSources): Promise<MapPlan> {
   const books = loadWorldBooks().filter(book => (sources?.worldBookIds ?? atlas.worldBookIds).includes(book.id));
   const input = {
+    参考资料: mapGenerationSources(sources),
     世界: loadCharacterWorldGroups().find(group => group.id === atlas.worldId)?.description, 地图: page.name,
     上级地点: page.parentPlaceId ? mapPlacePath(atlas, page.parentPlaceId) : undefined,
     已有地点: page.places, 扩展方向: extension?.direction,
@@ -247,4 +250,12 @@ async function patchRecipient(atlasId: string, invitationId: string, characterId
   await updateFacingAtlas(atlasId, atlas => ({ ...atlas, invitations: atlas.invitations.map(item => item.id !== invitationId ? item : {
     ...item, recipients: item.recipients.map(recipient => recipient.characterId === characterId ? { ...recipient, ...patch } : recipient),
   }) }));
+}
+
+export async function enrichMapGenerationSources(sources:MapGenerationSources,signal:AbortSignal):Promise<MapGenerationSources>{
+  if(sources.referenceCharacterIds===undefined)return sources;
+  const ids=new Set(sources.referenceCharacterIds);
+  const selected=sources.characters.filter(character=>ids.has(character.id)&&mapResidentIds(sources.atlas).includes(character.id));
+  const memory=[];for(const character of selected){throwIfAborted(signal);memory.push(await characterMemory(character));}
+  throwIfAborted(signal);return {...sources,memory};
 }

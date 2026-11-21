@@ -695,8 +695,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
 
   const characters = useMemo(() => loadCharacters(), []);
   const userIdentity = useMemo(
-    () => resolveUserIdentity(activeCharacterId, "story") ?? resolveUserIdentity(activeCharacterId) ?? resolveUserIdentity(),
-    [activeCharacterId]
+    () => {const session=loadStorySessions().find(item=>item.id===activeSessionId);return session?.facingIdentity!==undefined?session.facingIdentity:resolveUserIdentity(activeCharacterId, "story") ?? resolveUserIdentity(activeCharacterId) ?? resolveUserIdentity();},
+    [activeCharacterId, activeSessionId]
   );
   const currentCharacter = useMemo(
     () => characters.find((character) => character.id === activeCharacterId) || null,
@@ -2492,6 +2492,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
             </div>
             <div className="story-header-center" />
             <div className="story-header-right" style={{ gap: 8 }}>
+              {currentSession.sourceFacingMeetingId&&<button type="button" className="story-top-btn" aria-label="返回面对面对话" onClick={()=>window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"facing",facingMeetingId:currentSession.sourceFacingMeetingId}}))}>见面</button>}
               <button className="story-top-btn" data-story-action="new" onClick={() => setQuickStoryOpen(true)} aria-label="快捷进入新剧情">
                 <PlusIcon width={16} height={16} />
               </button>

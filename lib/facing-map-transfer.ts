@@ -74,7 +74,8 @@ export async function readMapPackage(file: File, signal: AbortSignal): Promise<M
   const unique = new Set<string>();
   function id(value: unknown) { const result = string(value, 200); if (!result || unique.has(result)) throw new Error("地图文件存在重复或空白 ID。"); unique.add(result); return result; }
   function place(value: unknown): MapPlace {
-    const p = object(value); return { id: id(p.id), name: string(p.name, 200), description: string(p.description),
+    const p = object(value); const binding=object(p.sceneBinding);
+    return { ...(binding.source==="default"||binding.source==="character"||binding.source==="shared"?{sceneBinding:{source:binding.source,characterId:string(binding.characterId,200)||undefined,sceneId:string(binding.sceneId,200)||undefined,sceneName:string(binding.sceneName,200)||undefined}}:{}), id: id(p.id), name: string(p.name, 200), description: string(p.description),
       x: number(p.x), y: number(p.y), ...(p.tileId ? { tileId: string(p.tileId, 200) } : {}) };
   }
   const rootPlace = data.rootPlace ? place(data.rootPlace) : undefined;

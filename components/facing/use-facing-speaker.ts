@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { Character } from "@/lib/character-types";
-import { groupFacingScenes, loadFacingAssets, loadFacingSettings, type FacingAsset } from "@/lib/facing-storage";
+import { groupFacingScenes, loadFacingUsableAssets, loadFacingSettings, type FacingAsset } from "@/lib/facing-storage";
 import { resolveConfiguredImageGenerationSettings } from "@/lib/image-generation-service";
 import { loadShownImageDataUrl } from "@/lib/shown-image";
 
 /** Selecting a speaker uses local media and never starts image generation. */
 export function useFacingSpeaker(character: Character, location: string, multi: boolean, reactionId?: string) {
   const settings = loadFacingSettings().characters[character.id] ?? {};
-  const assets = loadFacingAssets(character.id);
+  const assets = loadFacingUsableAssets(character.id);
   const groups = groupFacingScenes(assets, settings.portraitId);
   const group = groups.find(item => item.name === location) ?? groups.find(item => item.name === location.split(" · ").at(-1));
   const portrait = group?.portrait;

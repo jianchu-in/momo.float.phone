@@ -230,10 +230,10 @@ export async function savePhoneSnapshot<AppPayload = unknown>(snapshot: CheckPho
 
 /** Financial edits must fail visibly and update the cache only after the transaction commits. */
 export async function updatePhoneSnapshot<AppPayload>(characterId: string, appId: CheckPhoneAppId,
-  update: (snapshot: CheckPhoneSnapshot<AppPayload>) => CheckPhoneSnapshot<AppPayload>): Promise<CheckPhoneSnapshot<AppPayload>> {
+  update: (snapshot: CheckPhoneSnapshot<AppPayload>) => CheckPhoneSnapshot<AppPayload>, createIfMissing?:CheckPhoneSnapshot<AppPayload>): Promise<CheckPhoneSnapshot<AppPayload>> {
   const id = snapshotKey(characterId, appId);
   const saved = await db.transaction("rw", db.snapshots, async () => {
-    const current = await db.snapshots.get(id);
+    const current = await db.snapshots.get(id) ?? createIfMissing;
     if (!current) throw new Error("角色尚无已保存的资产，请先在查手机中建立角色资产。");
     const result = update(current as CheckPhoneSnapshot<AppPayload>);
     await db.snapshots.put(result as CheckPhoneSnapshot);
@@ -278,4 +278,17 @@ export function loadCheckPhoneProjectionEntries(
   const entries = loadProjectionEventsByKey(projectionStorageKey(characterId));
   if (!options?.afterTimestamp) return entries;
   return entries.filter(entry => entry.timestamp > options.afterTimestamp!);
+}
+
+/** Role-to-role phone conversations must commit both sides together. */
+export async function updatePhoneSnapshotPair<T>(first:CheckPhoneSnapshot<T>,second:CheckPhoneSnapshot<T>,
+  updateFirst:(value:CheckPhoneSnapshot<T>)=>CheckPhoneSnapshot<T>, updateSecond:(value:CheckPhoneSnapshot<T>)=>CheckPhoneSnapshot<T>) {
+  if(first.id===second.id)throw new Error("不能把同一手机作为会话双方。");
+  const result=await db.transaction("rw",db.snapshots,async()=>{
+    const a=updateFirst((await db.snapshots.get(first.id)??first) as CheckPhoneSnapshot<T>);
+    const b=updateSecond((await db.snapshots.get(second.id)??second) as CheckPhoneSnapshot<T>);
+    await db.snapshots.bulkPut([a,b] as CheckPhoneSnapshot[]);return [a,b] as const;
+  });
+  for(const value of result)snapshotCache.set(value.id,value as CheckPhoneSnapshot);
+  return result[0];
 }

@@ -6,7 +6,7 @@ export const MAP_PLANS_KEY = "ai_phone_facing_map_plans_v1";
 export const MAP_VIEW_KEY = "ai_phone_facing_map_view_v1";
 registerKvMigration(MAP_PLANS_KEY);
 registerKvMigration(MAP_VIEW_KEY);
-export type SavedMapPlan = { id: string; worldId: string; name: string; description: string; places: MapPlace[]; width: number; height: number; updatedAt: string };
+export type SavedMapPlan = { id: string; worldId: string; sourcePageId?:string; name: string; description: string; places: MapPlace[]; width: number; height: number; updatedAt: string };
 export type PlanContent = Pick<SavedMapPlan, "description" | "places">;
 
 function parse<T>(raw: string | null, fallback: T): T { try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }

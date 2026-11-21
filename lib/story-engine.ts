@@ -20,7 +20,7 @@ import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from
 import { getWeekStartIso } from "./calendar-utils";
 import { parseStoryResponse } from "./story-parser";
 import { STORY_PARSER_VERSION } from "./story-parser";
-import { loadStoryMessages, replaceStoryMessages, resolveActiveStorySchemes, type StoryCharacterSettings, type StoryGlobalSettings, type StoryIllustration, type StoryMessage } from "./story-storage";
+import { loadStorySessions, loadStoryMessages, replaceStoryMessages, resolveActiveStorySchemes, type StoryCharacterSettings, type StoryGlobalSettings, type StoryIllustration, type StoryMessage } from "./story-storage";
 import { buildStoryIllustrationMessages, readStoryIllustration, storyIllustrationSettingsForRound, stripStoryIllustrationBlock } from "./story-illustration";
 import type { ChatMessage } from "./chat-storage";
 import { MacroEngine } from "./macro-engine";
@@ -287,7 +287,8 @@ export async function generateStoryCompletion(
     llmMessages.push(...buildStoryIllustrationMessages(illustrationSettings, characterId, options?.participantIds));
   }
 
-  const userIdentity = resolveUserIdentity(characterId, "story");
+  const sourceSession = loadStorySessions().find(item=>item.id === history[0]?.sessionId);
+  const userIdentity = sourceSession?.facingIdentity !== undefined ? sourceSession.facingIdentity : resolveUserIdentity(characterId, "story");
   const macroEngine = new MacroEngine(character.name, userIdentity?.name ?? "用户");
 
   let rawOutput: string;
@@ -356,7 +357,8 @@ async function buildStoryPromptMessages(
     throw new ChatEngineError(`Character not found: ${characterId}`);
   }
 
-  const userIdentity = resolveUserIdentity(characterId, "story");
+  const sourceSession = loadStorySessions().find(item=>item.id === history[0]?.sessionId);
+  const userIdentity = sourceSession?.facingIdentity !== undefined ? sourceSession.facingIdentity : resolveUserIdentity(characterId, "story");
   const allCharacters = loadCharacters();
   const participantCharacters = Array.from(new Set([characterId, ...(participantIds || [])]))
     .map((id) => allCharacters.find((item) => item.id === id))
@@ -534,7 +536,8 @@ export function rebuildStorySessionRenderCache(characterId: string, sessionId: s
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
 
   const character = loadCharacters().find((c) => c.id === characterId);
-  const userIdentity = resolveUserIdentity(characterId, "story");
+  const sourceSession=loadStorySessions().find(item=>item.id===sessionId);
+  const userIdentity=sourceSession?.facingIdentity!==undefined?sourceSession.facingIdentity:resolveUserIdentity(characterId,"story");
   const macroEngine = new MacroEngine(character?.name ?? "", userIdentity?.name ?? "用户");
 
   const rebuilt = loadStoryMessages(sessionId).map((message) => {

@@ -1062,6 +1062,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [glassPaintPass, setGlassPaintPass] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeApp, setActiveApp] = useState<DesktopIconId | null>(null);
+  const [facingInitMeetingId,setFacingInitMeetingId]=useState<string|null>(null);
   const [customApps, setCustomApps] = useState<InstalledCustomApp[]>([]);
   // 自定义 APP 桌面图标样式偏好（global = 忽略上传图标走全局效果）
   const [customAppIconStyles, setCustomAppIconStyles] = useState<Record<string, CustomAppIconStyle>>({});
@@ -2410,6 +2411,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         if (detail.appId === "resources") {
           setResourcesInitialPage(detail.resourcePage === "vn_assets" || detail.resourcePage === "memory" ? detail.resourcePage : "main");
         }
+        if(nextAppId==="facing")setFacingInitMeetingId(typeof detail.facingMeetingId==="string"?detail.facingMeetingId:null);
         setActiveApp(nextAppId as DesktopIconId);
         if (detail.sessionId) setChatInitSessionId(detail.sessionId);
         else setChatInitSessionId(null);
@@ -4085,7 +4087,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     }
 
     if (activeApp === "facing") {
-      return <FacingApp onClose={() => setActiveApp(null)} />;
+      return <FacingApp onClose={() => setActiveApp(null)} initialMeetingId={facingInitMeetingId} onLaunchConsumed={()=>setFacingInitMeetingId(null)} />;
     }
 
     if (activeApp === "vnmode") {

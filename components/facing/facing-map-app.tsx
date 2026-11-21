@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { copyTextPreservingView } from "@/lib/clipboard-view";
+import { kvGet, kvSet, registerDynamicPrefix } from "@/lib/kv-db";
 import { ChevronLeft, History, Map as MapIcon, Plus, RefreshCw, Settings2, X } from "lucide-react";
 import type { Character } from "@/lib/character-types";
 import { getCharacterWorldGroup, loadCharacterWorldGroups } from "@/lib/character-world-storage";
@@ -9,11 +11,12 @@ import { facingId, type FacingMeeting } from "@/lib/facing-storage";
 import { loadWorldBooks, resolveUserIdentity, loadApiConfigs, loadBindingConfig, resolveBinding } from "@/lib/settings-storage";
 import { downloadFile } from "@/lib/download-utils";
 import { deleteThemeAsset, getThemeAssetDataUrl } from "@/lib/theme-storage";
-import { answerMapInvitation, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap, polishMapTilePlan, refineFacingMapPlan,
+import { answerMapInvitation, enrichMapGenerationSources, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap, polishMapTilePlan, refineFacingMapPlan,
   type MapExtension, type MapPlan } from "@/lib/facing-map-engine";
 import { commitMapTile, createFacingAtlas, createMapInterior, loadFacingAtlases, loadFacingAtlas, loadMapPreferences,
   mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
   type FacingAtlas, type MapTile, type MapPlace, type MapPoint, type MapPreferences, type MapTrip } from "@/lib/facing-map-storage";
+import { MapSceneMatcher } from "./facing-map-scene-matcher";
 import { FacingMapCanvas } from "./facing-map-canvas";
 import { MapDimensions, MapSheet, MapExpansionPreview } from "./facing-map-panels";
 import { editMapTile, replaceMapTile, removeMapTile, removeMapPlaces, placesForTile, tileForPlace } from "@/lib/facing-map-editing";
@@ -27,7 +30,8 @@ import { deleteFacingAtlas, renameFacingAtlas } from "@/lib/facing-map-storage";
 import { mapCharacterResidence, mapResidentIds, saveMapResidents } from "@/lib/facing-map-storage";
 import { loadMapPlans, saveMapPlan, formatMapPlan, mapPlanPlaces, validateMapPlan } from "@/lib/facing-map-plans";
 
-type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | null;
+registerDynamicPrefix("ai_phone_facing_map_draft_v1:");
+type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | "scene-match" | null;
 type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile; uploaded?: boolean };
 export function FacingMapApp({ character, characters, currentMeeting, onBack, onSettings, onArrive }: {
   character: Character; characters: Character[]; currentMeeting?: FacingMeeting;
@@ -47,6 +51,9 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   const [mapName, setMapName] = useState(world?.name ?? "我的世界地图");
   const [characterIds, setCharacterIds] = useState(members.map(item => item.id));
   const [bookIds, setBookIds] = useState<string[]>([]);
+  const [referenceCharacterIds,setReferenceCharacterIds]=useState<string[]>(members.map(item=>item.id));
+  const [includeUser,setIncludeUser]=useState(false);
+  const planEditor=useRef<HTMLFieldSetElement>(null);
   const [requirement, setRequirement] = useState("");
   const [plan, setPlan] = useState<MapPlan>({ description: "", places: [] });
   const [planId, setPlanId] = useState("");
@@ -88,6 +95,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
 
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => () => { if (candidate) URL.revokeObjectURL(candidate.url); }, [candidate]);
+  useEffect(()=>{
+    if(sheet!=="generate"||!atlas||!page||replacement)return;
+    kvSet(`ai_phone_facing_map_draft_v1:${atlas.id}:${page.id}:${extension?.direction??"base"}`,JSON.stringify({plan,planId,planName,requirement,width:settings.width,height:settings.height,referenceCharacterIds,includeUser}));
+  },[sheet,atlas?.id,page?.id,plan,planId,planName,requirement,settings.width,settings.height,extension?.direction,replacement?.id,referenceCharacterIds,includeUser]);
   function reload() { if (atlas) setAtlas(loadFacingAtlas(atlas.id) ?? undefined); }
   async function run(label: string, action: (signal: AbortSignal) => Promise<void>) {
     if (lock.current) return;
@@ -107,10 +118,13 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     if (!page) return;
     setReplacement(undefined);
     setExtension(direction && page.tiles.length ? { direction, tile: mapBoundaryTile(page, direction) } : undefined);
-    setPlan({ description: page.parentPlaceId ? `绘制「${page.name}」的内部平面图，保留清晰的房间、设施和通道。` : "", places: [] });
-    setCandidate(undefined); setRequirement(""); setError("");
-    setPlanId(""); setPlanName(`${page.name}文字方案`); setNotice("");
-    setSettings({ ...loadMapPreferences(), ...(page.parentPlaceId ? { width: 1536, height: 1152 } : {}) });
+    const draftKey=`ai_phone_facing_map_draft_v1:${atlas?.id}:${page.id}:${direction??"base"}`;
+    let previous:{plan:MapPlan;planId:string;planName:string;requirement:string;width:number;height:number;referenceCharacterIds?:string[];includeUser?:boolean}|undefined;try{previous=JSON.parse(kvGet(draftKey)??"null");}catch{}
+    setReferenceCharacterIds(previous?.referenceCharacterIds??members.map(item=>item.id));setIncludeUser(previous?.includeUser??false);
+    setPlan(previous?.plan??{ description: page.parentPlaceId ? `绘制「${page.name}」的内部平面图，保留清晰的房间、设施和通道。` : "", places: [] });
+    setCandidate(undefined); setRequirement(previous?.requirement??""); setError("");
+    setPlanId(previous?.planId??""); setPlanName(previous?.planName??`${page.name}文字方案`); setNotice("");
+    setSettings({ ...loadMapPreferences(), ...(previous?{width:previous.width,height:previous.height}:{}), ...(page.parentPlaceId && !previous ? { width: 1536, height: 1152 } : {}) });
     setSheet("generate");
     setBookIds([...(atlas?.worldBookIds ?? [])]);
   }
@@ -136,7 +150,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     if (!atlas || !page) return;
     await run("正在生成文字方案…", async signal => {
       if (JSON.stringify(atlas.worldBookIds) !== JSON.stringify(bookIds)) setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, worldBookIds: bookIds })));
-      const sources = { atlas, characters, worldBookIds: bookIds };
+      const sources = await enrichMapGenerationSources({ atlas, characters, worldBookIds: bookIds, referenceCharacterIds, includeUser },signal);
       const result = replacement ? await polishMapTilePlan(character, plan, requirement, settings, signal, sources)
         : plan.description.trim() ? await refineFacingMapPlan(character, plan, requirement, settings, signal, sources)
         : await planFacingMap(character, atlas, page, characters, requirement, settings, signal, extension, sources);
@@ -150,7 +164,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       if (JSON.stringify(atlas.worldBookIds) !== JSON.stringify(bookIds)) setAtlas(await updateFacingAtlas(atlas.id, current => ({ ...current, worldBookIds: bookIds })));
       validateMapPlan(plan);
       const savedPlan = { ...plan, places: plan.places.map(place => ({ ...place })) };
-      const result = await renderFacingMap(character, savedPlan, settings, signal, extension, referenceOriginal ? replacement : undefined, { atlas, characters, worldBookIds: bookIds });
+      const result = await renderFacingMap(character, savedPlan, settings, signal, extension, referenceOriginal ? replacement : undefined, await enrichMapGenerationSources({ atlas, characters, worldBookIds: bookIds, referenceCharacterIds, includeUser },signal));
       if (!signal.aborted) setCandidate({ blob: result.blob, url: URL.createObjectURL(result.blob), plan: savedPlan, extension, replacement });
     });
   }
@@ -201,7 +215,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
 
   async function persistPlan(asNew = false) {
     await run("保存文字方案", async () => {
-      const saved = await saveMapPlan({ ...plan, id: asNew ? undefined : planId || undefined, worldId, name: planName, width: settings.width, height: settings.height });
+      const saved = await saveMapPlan({ ...plan, sourcePageId:page?.id, id: asNew ? undefined : planId || undefined, worldId, name: planName, width: settings.width, height: settings.height });
       setPlanId(saved.id); setPlanName(saved.name); setNotice("文字方案已保存，可随时选择后生图或上传已有地图。");
     });
   }
@@ -209,13 +223,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     setError("");
     try {
       const content = formatMapPlan(plan, settings);
-      try { await navigator.clipboard.writeText(content); }
-      catch {
-        const input = document.createElement("textarea"); input.value = content;
-        input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select();
-        try { if (!document.execCommand("copy")) throw new Error("复制失败，请允许浏览器访问剪贴板后重试。"); }
-        finally { input.remove(); }
-      }
+      await copyTextPreservingView(content,planEditor.current);
       setNotice("已复制地图描述、地点清单与坐标。");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "复制失败。"); }
   }
@@ -398,6 +406,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           </button>;
         })}
         <div className="facing-choices">
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("scene-match")}>设置地点场景</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void interior()}>进入内部地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>套用场所模板</button>
           <button type="button" className="facing-primary" disabled={!!busy} onClick={() => prepareTrip()}>前往这里</button>
@@ -421,6 +430,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>详细场所模板</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => openGenerate()}>生成地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>生活角色 · {members.length}</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("scene-match")}>匹配场景素材</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("tiles")}>图块与扩展</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("transfer")}>导入 / 导出</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>前往动画</button>
@@ -473,9 +483,12 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <p className="fmap-note">生活角色决定这个世界的居民、地图动向与同行名单；先从原世界移除，才能加入另一个世界。生成地图时可以另选参考世界书。</p>
       <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void (sheet === "create" ? create() : saveSources())}>{sheet === "create" ? "创建并打开" : "保存生活角色"}</button>
     </MapSheet>}
+    {sheet === "scene-match" && atlas && page && <MapSceneMatcher atlas={atlas} page={page} characters={characters} initialCharacterId={character.id} onClose={closeSheet} onSave={setAtlas}/>}
     {sheet === "generate" && <MapSheet title={replacement ? "升级图块与重新生图" : extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
-      <fieldset className="fmap-operation-fields" disabled={!!busy}>
-      <details><summary>生成参考资料</summary><p className="fmap-note">本世界生活角色：{members.map(item => item.name).join("、") || "暂无"}。可在生活角色中管理；参考其他世界书不会增加生活角色。</p>
+      <fieldset ref={planEditor} className="fmap-operation-fields" disabled={!!busy}>
+      <details><summary>生成参考资料 · 角色与记忆</summary>
+        <fieldset><legend>参考角色及其记忆</legend>{members.map(item=><label className="fmap-check" key={item.id}><input type="checkbox" checked={referenceCharacterIds.includes(item.id)} onChange={()=>setReferenceCharacterIds(toggle(referenceCharacterIds,item.id))}/>{item.name}</label>)}</fieldset>
+        <label className="fmap-check"><input type="checkbox" checked={includeUser} onChange={event=>setIncludeUser(event.target.checked)}/>参考用户资料与特点</label><p className="fmap-note">本世界生活角色：{members.map(item => item.name).join("、") || "暂无"}。可在生活角色中管理；参考其他世界书不会增加生活角色。</p>
         {books.map(book => <label className="fmap-check" key={book.id}><input type="checkbox" checked={bookIds.includes(book.id)} onChange={() => setBookIds(toggle(bookIds, book.id))} />{book.name}</label>)}
       </details>
       <label>选择已有文字方案<select aria-label="选择已有文字方案" value={planId} onChange={event => {

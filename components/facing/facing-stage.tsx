@@ -52,7 +52,9 @@ export function FacingMedia({ url, mediaType, name, loop = true, onEnd, onRatio 
 type FacingStageDraft = Pick<FacingAsset, "category" | "name" | "mediaType" | "layout" | "composition"> & { url: string };
 
 export function FacingStage({ portrait, scene, reaction, draft, fallback, name, points = [], editing, activePoint, onPoint,
-  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, children }: {
+  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, onLayout, onEditPortrait, children }: {
+  onLayout?: (layout: {x:number;y:number;scale:number}) => void;
+  onEditPortrait?: () => void;
   hideBlank?: boolean;
   fullFallback?: boolean;
   portrait?: FacingAsset;
@@ -74,6 +76,9 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const [ratio, setRatio] = useState<{ key: string; value: number }>();
   const area = useRef<HTMLDivElement>(null);
   const figure = useRef<HTMLDivElement>(null);
+  const drag = useRef<{x:number;y:number;left:number;top:number;moved:boolean} | undefined>(undefined);
+  const [dragLayout,setDragLayout] = useState<{x:number;y:number}>();
+  useEffect(()=>setDragLayout(undefined),[portrait?.id,portrait?.layout?.x,portrait?.layout?.y]);
   const portraitUrl = useFacingMediaUrl(portrait, true);
   const reactionUrl = useFacingMediaUrl(reaction, true);
   const sceneUrl = useFacingMediaUrl(scene, true);
@@ -85,7 +90,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const mediaUrl = reactionUrl || portraitDraft?.url || portraitUrl;
   const mediaKey = (reactionUrl ? reaction?.mediaId : portraitDraft?.url ?? portrait?.mediaId) ?? fallback ?? "";
   const ratioValue = ratio?.key === mediaKey ? ratio.value : 0.72;
-  const layout = foreground?.layout ?? portrait?.layout;
+  const layout = { ...(foreground?.layout ?? portrait?.layout), ...dragLayout };
   const full = (foreground?.composition === "full" && Boolean(mediaUrl)) || Boolean(fullFallback && fallback);
   const fitWidth = full ? Math.max(size.width, size.height * ratioValue) : Math.min(size.width, size.height * ratioValue);
   const width = fitWidth * (layout?.scale ?? 100) / 100;
@@ -109,7 +114,12 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
       "--facing-scene-y": `${background.layout?.y ?? 50}%`, "--facing-scene-scale": (background.layout?.scale ?? 100) / 100 } as React.CSSProperties}>
       <FacingMedia url={backgroundUrl} mediaType={sceneDraft ? sceneDraft.mediaType : scene?.motionMediaType ?? background.mediaType} name={background.name} />
     </div>}
-    <div ref={figure} className="facing-figure" style={full ? {
+    <div ref={figure} className="facing-figure" data-movable={!!onLayout || undefined}
+      onPointerDown={onLayout ? event=>{if((event.target as HTMLElement).closest("button"))return;event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);drag.current={x:event.clientX,y:event.clientY,left:layout.x??50,top:layout.y??100,moved:false};}:undefined}
+      onPointerMove={onLayout ? event=>{const d=drag.current;const bounds=area.current?.getBoundingClientRect();if(!d||!bounds?.width||!bounds.height)return;const dx=event.clientX-d.x,dy=event.clientY-d.y;if(Math.hypot(dx,dy)>5)d.moved=true;if(d.moved)setDragLayout({x:Math.max(0,Math.min(100,d.left+dx/bounds.width*100)),y:Math.max(0,Math.min(100,d.top+dy/bounds.height*100))});}:undefined}
+      onPointerUp={onLayout ? ()=>{const d=drag.current;drag.current=undefined;if(d?.moved&&dragLayout)onLayout({...dragLayout,scale:layout.scale??100});else if(d)onEditPortrait?.();}:undefined}
+      onPointerCancel={()=>{drag.current=undefined;setDragLayout(undefined);}}
+      style={full ? {
       width, height, transform: "none",
       left: (size.width - width) * (layout?.x ?? 50) / 100,
       top: (size.height - height) * (layout?.y ?? 50) / 100,

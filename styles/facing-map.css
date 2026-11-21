@@ -90,3 +90,5 @@
 .fmap-delete-confirm { display: grid; gap: 9px; border-radius: 12px; padding: 10px; background: #fff1eb; }
 
 .fmap-sheet .fmap-operation-fields { display: grid; gap: 12px; border: 0; padding: 0; max-height: none; overflow: visible; min-width: 0; }
+/* Keep the long plan editor in normal sheet flow after save/copy focus changes. */
+.fmap-sheet .fmap-operation-fields{flex:0 0 auto;min-height:min-content;overflow:visible;max-height:none;overflow-anchor:none}

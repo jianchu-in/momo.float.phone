@@ -22,6 +22,7 @@ Module._resolveFilename = function(request, parent, ...rest) { return resolve.ca
 for (const ext of [".ts", ".tsx"]) require.extensions[ext] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
 }).outputText, filename);
+require.extensions[".css"] = () => {};
 const React = require("react");
 const { act } = React;
 const { createRoot } = require("react-dom/client");
@@ -31,6 +32,7 @@ let textCalls = 0, imageCalls = 0;
 function mock(name, exports) { const id = path.join(project, name); require.cache[id] = { id, filename: id, loaded: true, exports }; }
 const plan = { description: "河边社区与公园", places: [{ id: "park", name: "公园", description: "河岸花园", x: 750, y: 250 }] };
 mock("lib/facing-map-engine.ts", {
+  enrichMapGenerationSources: async sources=>sources,
   extensionPosition: (tile, direction, width, height) => ({ x: tile ? tile.x + tile.width : 0, y: 0 }),
   planFacingMap: async () => { textCalls++; return structuredClone(plan); },
   refineFacingMapPlan: async (_character, value) => { textCalls++; return { ...value, description: value.description + "，增加长椅" }; },

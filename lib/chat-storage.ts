@@ -161,6 +161,7 @@ export type ChatMessage = {
     mediaUrl?: string;
     mediaData?: {
         reversePhoneOperationId?: string;
+        characterPhoneOperationId?: string;
         reversePhoneActorId?: string;
         amount?: number;          // 红包/转账金额
         count?: number;           // 红包个数

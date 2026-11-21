@@ -67,7 +67,7 @@ export async function requestReverseSection(character: Character, scope: Reverse
 export async function requestReverseChat(character: Character, scope: ReverseScope, data: unknown, signal: AbortSignal, onPreview: (value: ChatDecision) => void): Promise<ChatDecision> {
   const raw = await requestReverse(character, scope, [
     '先输出单行JSON头：{"action":"none或reply或remark或both","reaction":"仅none时写查看反应","remark":"修改后的备注，仅remark或both时写"}。',
-    '下一行开始只写代用户发送的回复正文，reply或both时必填；none和remark时不要回复正文。禁止Markdown代码块。',
+    '下一行开始只写代用户发送的回复正文，需要分段发送时用空行分隔每条消息。reply或both时必填；none和remark时不要回复正文。禁止Markdown代码块。',
     '根据当前这段最近20条消息和权限决定只点评、代回复、改备注或两者都做。代回复是用用户手机给当前联系人发消息；包括你自己的会话。不把自己当用户，不假装当前联系人在替你查岗。',
     '有回复或改备注操作时，不额外输出查看反应。只有none时生成reaction；每项操作至多一次。禁止改变给出的会话ID和操作目标。',
   ].join("\n"), data, signal, value => { try { const preview = parseReverseChat(value, false); if (preview) onPreview(preview); } catch { /* Wait until the one-line header is complete. */ } });

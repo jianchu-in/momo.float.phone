@@ -400,6 +400,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
   const [debugRawOutput, setDebugRawOutput] = useState<string | null>(null);
   const [selectedTab, setSelectedTab] = useState<ShoppingTabId>("home");
   const [selectedProduct, setSelectedProduct] = useState<ShoppingProductDetail | null>(null);
+  const [deleteOrderId,setDeleteOrderId]=useState<string|null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [translationPreview, setTranslationPreview] = useState<ShoppingTranslationPreview | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -1611,7 +1612,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
                 <ChevronLeft size={20} strokeWidth={2.5} />
               </button>
               <strong style={{ fontSize: "calc(16px*var(--app-text-scale,1))", color: "#222" }}>Order Details</strong>
-              <div style={{ width: "40px" }} />
+              <button type="button" aria-label="删除订单" disabled={!!loadingTask} onClick={()=>setDeleteOrderId(activeOrder.id)} style={{border:0,background:"transparent",color:"#c54c62"}}>删除</button>
             </header>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -2052,6 +2053,7 @@ export function ShoppingApp({ onClose, visible = true, onIdle, onBusyChange }: S
         </div>
       )}
 
+      {deleteOrderId&&<ConfirmDialog title="删除这条订单？" message="移除本地订单记录，已有付款流水保留。" confirmLabel="删除订单" onCancel={()=>setDeleteOrderId(null)} onConfirm={()=>{persist(current=>({...current,orders:current.orders.filter(order=>order.id!==deleteOrderId)}));setSelectedOrderId(null);setDeleteOrderId(null);}}/>}
       {confirmCartDeleteItemId && (
         <ConfirmDialog
           title="确认删除商品？"

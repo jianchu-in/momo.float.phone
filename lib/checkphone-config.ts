@@ -152,6 +152,10 @@ export type CheckPhoneChatBubble = {
 };
 
 export type CheckPhoneChatConversation = {
+  peerType?: "user" | "character" | "npc";
+  peerUserKey?:string;
+  peerCharacterId?: string;
+  pendingReply?: { operationId:string; sentMessageId:string };
   id: string;
   name: string;
   preview: string;

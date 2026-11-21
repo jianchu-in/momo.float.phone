@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { splitReverseReply } from "@/lib/reverse-phone-replies";
 import { abortableDelay, isAbortError, throwIfAborted } from "@/lib/abort-utils";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -154,12 +155,22 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       if ((reply && !permissions().chat.reply) || (remark && !permissions().chat.remark)) throw new Error("角色返回的操作超出当前权限，请重试或跳过。");
       if (!reply && !remark) await showSpeech(decision.reaction, signal, `${task.id}:speech`);
       if (reply) {
-        setLoading(""); setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id, draft: decision.reply, typing: true } });
-        await abortableDelay(600, signal); await tap("send", signal);
-        setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id, draft: decision.reply, sending: true } });
-        const message = await sendReverseMessage(character, scope, target.id, decision.reply, `${latest.current!.id}:${task.id}:reply`);
-        await event("action", `我替${scope.userName}给${peer.name}发送了：“${message.content}”`, `${task.id}:reply`);
-        throwIfAborted(signal); setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id, draft: "" } }); await abortableDelay(450, signal);
+        const baseOperation=`${latest.current!.id}:${task.id}:reply`;
+        const previous=loadChatMessages(target.id).find(message=>message.mediaData?.reversePhoneOperationId===baseOperation);
+        const parts=previous?.content===decision.reply?[decision.reply]:splitReverseReply(decision.reply);
+        for(const [index,text] of parts.entries()){
+          throwIfAborted(signal);
+          const operation=index===0?baseOperation:`${baseOperation}:${index}`;
+          let message=loadChatMessages(target.id).find(item=>item.mediaData?.reversePhoneOperationId===operation);
+          if(!message){
+            setLoading("");setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:text,typing:true}});
+            await abortableDelay(600,signal);await tap("send",signal);
+            setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:text,sending:true}});
+            message=await sendReverseMessage(character,scope,target.id,text,operation);
+          }
+          await event("action",`我替${scope.userName}给${peer.name}发送了：“${message.content}”`,index===0?`${task.id}:reply`:`${task.id}:reply:${index}`);
+          throwIfAborted(signal);setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:""}});await abortableDelay(450,signal);
+        }
       }
       if (remark) {
         setLoading(`他正在修改你对${peer.name}的备注…`); await abortableDelay(900, signal);

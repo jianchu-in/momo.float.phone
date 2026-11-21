@@ -37,6 +37,9 @@ export type FacingAsset = {
   folder?: string;
   portraitIds?: string[];
   generated?: boolean;
+  description?: string;
+  referenceMode?: "none" | "character" | "avatar";
+  npcGender?: "male" | "female";
   location?: string;
 };
 
@@ -96,7 +99,7 @@ export function facingMeetingPosition(meeting: FacingMeeting): FacingScenePositi
 export function resolveFacingScene(position: FacingScenePosition, groups: FacingSceneGroup[], assets: FacingAsset[]) {
   const group = groups.find(item => item.name === position.sceneName);
   const recordedPortrait = assets.find(asset => asset.id === position.portraitId);
-  const recordedBackdrop = assets.find(asset => asset.id === position.sceneId && asset.category === "scene");
+  const recordedBackdrop = assets.find(asset => asset.id === position.sceneId && asset.category === "scene") ?? readJson<FacingAsset[]>(kvGet(FACING_ASSETS_KEY), []).find(asset=>asset.id===position.sceneId&&asset.category==="scene");
   const allowed = !group?.backdrop?.portraitIds || group.backdrop.portraitIds.includes(recordedPortrait?.id ?? "");
   const portrait = recordedPortrait && allowed && (!group?.backdrop || recordedPortrait.composition !== "full") && (recordedPortrait.composition !== "full" || !recordedPortrait.location || facingAssetLocation(recordedPortrait) === position.sceneName)
     ? recordedPortrait : group?.portrait;
@@ -114,6 +117,8 @@ export type FacingHotspot = {
 };
 
 export type FacingCharacterSettings = {
+  portraitLayouts?: Record<string, VnAssetLayout>;
+  fallbackNpcGender?: "male" | "female";
   portraitId?: string;
   fullPortraitId?: string;
   sceneId?: string;
@@ -200,6 +205,8 @@ export type FacingMeeting = {
   turns: FacingTurn[];
   completedRounds?: number;
   pausedAt?: string;
+  deletedAt?: string;
+  mergedFrom?: string[];
   mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string };
   visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number; replacement?: boolean; round?: number };
 };
@@ -354,12 +361,13 @@ export async function deleteFacingAssets(characterId: string, assetIds: readonly
 export function loadFacingMeetings(characterId: string, identityId?: string | null, includeParticipants = false): FacingMeeting[] {
   return kvKeysWithPrefix(FACING_MEETING_PREFIX)
     .map(key => readJson<FacingMeeting | null>(kvGet(key), null))
-    .filter((record): record is FacingMeeting => !!record && (record.characterId === characterId || (includeParticipants && facingParticipantIds(record).includes(characterId))) && (identityId === undefined || record.identityId === identityId))
+    .filter((record): record is FacingMeeting => !!record && !record.deletedAt && (record.characterId === characterId || (includeParticipants && facingParticipantIds(record).includes(characterId))) && (identityId === undefined || record.identityId === identityId))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function loadFacingMeeting(id: string): FacingMeeting | null {
-  return readJson(kvGet(FACING_MEETING_PREFIX + id), null);
+  const record=readJson<FacingMeeting|null>(kvGet(FACING_MEETING_PREFIX + id), null);
+  return record?.deletedAt ? null : record;
 }
 
 export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, activityId: string) {
@@ -399,7 +407,9 @@ export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: 
     const current = readJson(raw, meeting);
     const turns = update(current.turns);
     const last = turns.at(-1);
-    const scene = last ? facingReplyVersion(last) : current.scene;
+    const previousLast=current.turns.at(-1);
+    const positionChanged=last?.sceneName!==previousLast?.sceneName||last?.sceneId!==previousLast?.sceneId||last?.portraitId!==previousLast?.portraitId;
+    const scene = last?.id === previousLast?.id && !positionChanged ? current.scene : last ? facingReplyVersion(last) : current.scene;
     const previous = current.turns.at(-1);
     const visual = last?.id === previous?.id && last?.action === previous?.action && last?.text === previous?.text && last?.versionIndex === previous?.versionIndex
       ? current.visual : undefined;
@@ -465,5 +475,78 @@ export async function appendFacingTurns(meeting: FacingMeeting, incoming: Facing
       scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };
     return JSON.stringify(saved);
   });
+  return saved;
+}
+
+
+export const FACING_SHARED_CHARACTER_ID = "__facing_shared__";
+export function loadFacingUsableAssets(characterId: string): FacingAsset[] {
+  const own = loadFacingAssets(characterId);
+  if (characterId === FACING_SHARED_CHARACTER_ID) return own;
+  const shared = loadFacingAssets(FACING_SHARED_CHARACTER_ID);
+  const ownSprites = own.filter(item => item.category === "portrait" && item.composition !== "full" && !item.generated);
+  const gender = loadFacingSettings().characters[characterId]?.fallbackNpcGender ?? "male";
+  return [...own, ...shared.filter(item => item.category === "portrait" && !ownSprites.length && (!item.npcGender || item.npcGender === gender)),
+    ...shared.filter(item => item.category === "scene").map(item => ownSprites.length ? { ...item, portraitIds: undefined } : item)];
+}
+export async function changeFacingScene(meetingId: string, scene: FacingScenePosition): Promise<FacingMeeting> {
+  let saved!: FacingMeeting;
+  await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
+    const current = readJson<FacingMeeting | null>(raw, null);
+    if (!current || current.deletedAt) throw new Error("见面记录不存在。");
+    saved = { ...current, scene, visual: undefined, updatedAt: new Date().toISOString() };
+    return JSON.stringify(saved);
+  });
+  return saved;
+}
+export async function manageFacingMeetings(ids: string[], operation: "delete" | "rename", title = "") {
+  if (operation === "rename" && !title.trim()) throw new Error("请填写记录名称。");
+  await kvUpdatePersistedEntries(Object.fromEntries([...new Set(ids)].map(id => [FACING_MEETING_PREFIX + id, (raw: string | null) => {
+    const current = readJson<FacingMeeting | null>(raw, null);
+    if (!current) throw new Error("部分见面记录不存在。");
+    return JSON.stringify({ ...current, ...(operation === "delete" ? { deletedAt: new Date().toISOString() } : { title: title.trim() }), updatedAt: new Date().toISOString() });
+  }])));
+}
+export async function mergeFacingMeetings(targetId: string, ids: string[], removeSources = false): Promise<FacingMeeting> {
+  const keys = [...new Set([targetId, ...ids])];
+  if (keys.length < 2) throw new Error("请至少选择两条见面记录。");
+  let saved!: FacingMeeting;
+  const records = keys.map(id => loadFacingMeeting(id)).filter((item): item is FacingMeeting => !!item && !item.deletedAt);
+  if (records.length !== keys.length) throw new Error("部分见面记录已移除。");
+  const target = records.find(item => item.id === targetId)!;
+  const cast = (item: FacingMeeting) => facingParticipantIds(item).sort().join("|");
+  if (records.some(item => item.identityId !== target.identityId || cast(item) !== cast(target))) throw new Error("只能合并同一用户身份、相同见面角色的记录。");
+  const turns = new Map<string, FacingTurn>();
+  for (const item of records.sort((a,b) => a.updatedAt.localeCompare(b.updatedAt))) for (const turn of item.turns) {
+    const previous=turns.get(turn.id);
+    if(!previous){turns.set(turn.id,turn);continue;}
+    const selected=facingReplyVersion(turn);
+    const versions=[...new Map([...(previous.versions??[facingReplyVersion(previous)]),...(turn.versions??[selected])].map(version=>[JSON.stringify(version),version])).values()];
+    turns.set(turn.id,versions.length>1?{...turn,versions,versionIndex:versions.findIndex(version=>JSON.stringify(version)===JSON.stringify(selected))}:turn);
+  }
+  saved = { ...target, turns: [...turns.values()].sort((a,b) => a.at.localeCompare(b.at)), updatedAt: new Date().toISOString(),
+    visual: undefined, mergedFrom: [...new Set([...(target.mergedFrom ?? []), ...keys.filter(id=>id!==targetId)])] };
+  saved.completedRounds = new Set(saved.turns.filter(turn=>turn.role === "assistant").map(turn=>turn.replyTo ?? turn.id)).size;
+  saved.scene = records.at(-1)?.scene ?? records.at(-1)?.turns.at(-1) ?? target.scene;
+  await kvUpdatePersistedEntries(Object.fromEntries(keys.map(id => [FACING_MEETING_PREFIX + id, (raw: string | null) => {
+    const current = readJson<FacingMeeting | null>(raw,null);
+    if (!current || JSON.stringify(current) !== JSON.stringify(records.find(item=>item.id===id))) throw new Error("记录已更新，请重新选择后合并。");
+    return JSON.stringify(id === targetId ? saved : removeSources ? { ...current, deletedAt: new Date().toISOString() } : current);
+  }])));
+  return saved;
+}
+
+export async function replaceFacingAssetMedia(asset: FacingAsset, blob: Blob, mediaType: string): Promise<FacingAsset> {
+  if (!MEDIA_TYPES.has(mediaType) || !blob.size || blob.size > 30 * 1024 * 1024) throw new Error("请选择不超过30 MB的有效素材。");
+  const mediaId = await saveThemeAssetFromBlob(blob.slice(0,blob.size,mediaType), "facing_media");
+  const saved = { ...asset, mediaId, mediaType, motionMediaId:undefined, motionMediaType:undefined };
+  try {
+    await kvUpdatePersisted(FACING_ASSETS_KEY, raw => {
+      const items = readJson<FacingAsset[]>(raw,[]);
+      if (!items.some(item=>item.id === asset.id && item.characterId === asset.characterId)) throw new Error("原素材已删除。");
+      return JSON.stringify(items.map(item=>item.id === asset.id ? saved : item));
+    });
+  } catch(error) { await deleteThemeAsset(mediaId).catch(()=>{}); throw error; }
+  // Keep media still used by another asset or historical backup reference intact.
   return saved;
 }

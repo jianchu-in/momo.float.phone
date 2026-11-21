@@ -6,7 +6,7 @@ import { splitVisibleCallActions } from "./call-action-text";
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
-import { FACING_REPLY_LENGTHS, facingParticipantIds, groupFacingScenes, loadFacingAssets, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { FACING_REPLY_LENGTHS, facingParticipantIds, groupFacingScenes, loadFacingUsableAssets, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -164,7 +164,7 @@ export async function generateFacingReply(options: {
     ].filter(Boolean).join("\n");
   }
   const roster = await Promise.all((multi ? cast : []).map(async item => {
-    const ownScenes = groupFacingScenes(loadFacingAssets(item.id));
+    const ownScenes = groupFacingScenes(loadFacingUsableAssets(item.id));
     const [ownCore, ownLong] = useMemory && item.id !== character.id ? await Promise.all([
       retrieveCoreMemoriesForPrompt(item.id, config).catch(() => null), retrieveMemoriesForPrompt(item.id, activationContext, config).catch(() => null),
     ]) : [null, null];
@@ -232,7 +232,7 @@ export async function generateFacingReply(options: {
     const line = splitVisibleCallActions(typeof item.dialogue === "string" ? item.dialogue.trim() : "");
     const movement = splitVisibleCallActions(typeof item.action === "string" ? item.action.trim() : "");
     const action = [...new Set([...movement.actions, ...(movement.speech ? [`（${movement.speech}）`] : []), ...line.actions])].join(" ");
-    const ownScene = (speakerId === character.id ? scenes : groupFacingScenes(loadFacingAssets(speakerId))).find(group => group.name === (nextScene?.name ?? scene));
+    const ownScene = (speakerId === character.id ? scenes : groupFacingScenes(loadFacingUsableAssets(speakerId))).find(group => group.name === (nextScene?.name ?? scene));
     const reaction = options.deferVisual ? undefined : ownScene?.reactions.find(asset => asset.id === item.reaction_id || asset.name === item.reaction_id);
     if (line.speech || action || reaction || nextScene) replies.push({ speakerId, speakerName: speaker.name,
       dialogue: line.speech, action: action || undefined, reaction, nextScene, visualContinues: item.visual_continues === true && !nextScene });
