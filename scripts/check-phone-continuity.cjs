@@ -31,10 +31,10 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 20));
 function mock(name, exports) { const id = path.join(project, name); require.cache[id] = { id, filename: id, loaded: true, exports }; }
 
 const png=value=>'data:image/png;base64,'+Buffer.from(value).toString('base64');
-let streamCalls=0,streamMode='normal',imageCalls=[],textCalls=[];
+let streamCalls=0,streamMode='normal',imageCalls=[],textCalls=[],phoneRefreshOutput='',releaseStream;
 mock('lib/chat-engine.ts', {
- sendLLMStreamRequest:async(...args)=>{streamCalls++; if(streamMode==='fail')throw new Error('模拟接收失败');args[6]?.onDelta?.('收到。');args[6]?.onDelta?.('\n\n晚点见。');if(streamMode==='abort')args[5].signal.dispatchEvent(new window.Event('abort'));return {content:'收到。\n\n晚点见。'};},
- sendLLMRequest:async(...args)=>{textCalls.push(args);return JSON.stringify({description:'润色后的原场景'});},
+ sendLLMStreamRequest:async(...args)=>{streamCalls++; if(streamMode==='fail')throw new Error('模拟接收失败');if(streamMode==='hold')await new Promise(resolve=>{releaseStream=resolve;});args[6]?.onDelta?.('收到。');args[6]?.onDelta?.('\n\n晚点见。');if(streamMode==='abort')args[5].signal.dispatchEvent(new window.Event('abort'));return {content:'收到。\n\n晚点见。'};},
+ sendLLMRequest:async(...args)=>{textCalls.push(args);return args[5]?.appId==='checkphone_chat'?phoneRefreshOutput:JSON.stringify({description:'润色后的原场景'});},
  sendLLMRequestPreferStream:async(...args)=>{textCalls.push(args);return JSON.stringify({description:'润色后的原场景'});},
 });
 mock('lib/image-generation-service.ts',{
@@ -84,6 +84,50 @@ async function main(){
  snap=await phoneStore.updatePhoneSnapshot('a','chat',old=>({...old,payload:{...old.payload,conversations:[...old.payload.conversations,{id:'npc',name:'店员',tagLabel:'NPC',preview:'',timeLabel:'',messages:[]}]}}));
  await phone.appendCharacterPhoneMessage(chars[0],'npc','有现货吗','npc1');snap=await phone.replyToCharacterPhone(chars[0],'npc',new AbortController().signal,()=>{});assert.equal(snap.payload.conversations.find(c=>c.id==='npc').messages.length,3);
  const userContact=phone.characterPhoneContacts(chars[0],snap.payload).find(c=>c.peerType==='user');await phone.appendCharacterPhoneMessage(chars[0],userContact.id,'我到家了','user1');assert.ok(load('lib/chat-storage.ts').loadChatSessions().some(s=>load('lib/chat-storage.ts').loadChatMessages(s.id).some(m=>m.content==='我到家了')));
+ // Refresh omission keeps NPC history, long conversations and pending proxy replies.
+ const fresh={...snap.payload,conversations:[]};
+ const omitted=phone.mergeCharacterPhoneRefresh(chars[0],snap,fresh,'omit');
+ assert.equal(omitted.payload.conversations.find(c=>c.id==='npc').messages.length,3);
+ const longMessages=Array.from({length:110},(_,i)=>({id:'old-'+i,text:'旧消息'+i,timeLabel:'2026-11-21T00:00:00Z',direction:'incoming'}));
+ const history={...snap,payload:{...snap.payload,conversations:snap.payload.conversations.map(c=>c.id===target.id?{...c,messages:longMessages}:c)}};
+ const generated={...fresh,conversations:[{...target,remark:'老朋友',messages:[{id:'new',text:'新消息',direction:'incoming',timeLabel:'2026-11-21T01:00:00Z'}]}]};
+ assert.equal(phone.mergeCharacterPhoneRefresh(chars[0],history,generated,'long').payload.conversations.find(c=>c.id===target.id).messages.length,111);
+ const waiting={...history,payload:{...history.payload,conversations:history.payload.conversations.map(c=>c.id===target.id?{...c,pendingReply:{operationId:'pending',sentMessageId:'old-109'}}:c)}};
+ const kept=phone.mergeCharacterPhoneRefresh(chars[0],waiting,generated,'waiting').payload.conversations.find(c=>c.id===target.id);
+ assert.equal(kept.messages.length,110);assert.equal(kept.pendingReply.operationId,'pending');
+ // Both proxy participants retain one event per committed message, retries deduplicate.
+ for(const charId of ['a','b']){
+  const events=phoneStore.loadCheckPhoneProjectionEntries(charId).filter(e=>e.id.startsWith('character_phone_chat_phone_op1:'));
+  assert.equal(events.length,3);assert.equal(new Set(events.map(e=>e.id)).size,3);
+ }
+ phoneRefreshOutput='#聊天设置1\n[用户备注]小太阳\n\n#补充会话1\n[名称]角色b\n[备注]老朋友\n[静音]否\n[置顶]否\n[标签]同世界\n[消息1方向]incoming\n[消息1时间]2026-11-21 08:00\n[消息1正文]今天一起吃饭吗？\n[消息2方向]outgoing\n[消息2时间]2026-11-21 08:01\n[消息2正文]好，老地方见。';
+ const generatedPhone=await load('lib/checkphone-engine.ts').generateCheckPhoneChat('a',snap.payload);
+ assert.ok(!generatedPhone.error,generatedPhone.error);assert.equal(generatedPhone.payload.userRemark,'小太阳');
+ assert.equal(generatedPhone.payload.conversations.find(c=>c.name==='角色b').remark,'老朋友');
+ assert.equal(generatedPhone.payload.conversations.find(c=>c.name==='角色b').messages.length,2);
+ const freshContacts=phone.characterPhoneContacts(chars[0],generatedPhone.payload);assert.equal(freshContacts[0].peerType,'user');assert.equal(freshContacts[0].remark,'小太阳');assert.equal(freshContacts[0].pinned,true);
+ const chatStore=load('lib/chat-storage.ts'),sessions=chatStore.loadChatSessions();
+ chatStore.saveChatSessions(sessions.map(s=>s.contactId==='a'?{...s,characterRemarkForUser:'真实备注'}:s));
+ const realRemark=phone.mergeCharacterPhoneRefresh(chars[0],{...snap,payload:{...snap.payload,conversations:[{...userContact,remark:'旧备注'}]}},generatedPhone.payload,'remark');
+ assert.equal(realRemark.payload.conversations.find(c=>c.peerType==='user').remark,'真实备注');
+ const differentUser={...generatedPhone.payload,userRemarkKey:JSON.stringify(['other-account','other-user'])};
+ assert.equal(phone.characterPhoneContacts(chars[0],differentUser)[0].remark,'真实备注','real remark wins over an unrelated suggested remark');
+ const realSession=chatStore.loadChatSessions().find(s=>s.contactId==='a');
+ chatStore.saveChatSessions([{...realSession,id:'other-account-chat',chatAccountId:'other-account',characterRemarkForUser:'其他账号备注'},...chatStore.loadChatSessions()]);
+ chatStore.pushChatMessage({sessionId:'other-account-chat',role:'user',content:'其他账号的秘密'});
+ const isolated=await load('lib/checkphone-engine.ts').generateCheckPhoneChat('a',snap.payload);
+ assert.equal(isolated.payload.userRemark,'真实备注');assert.ok(!JSON.stringify(isolated.payload.conversations).includes('其他账号的秘密'));
+ chatStore.saveChatSessions(sessions);
+ assert.equal(phone.characterPhoneContacts(chars[0],differentUser)[0].remark,undefined,'suggested remark never crosses account or identity');
+ // User CSS must retain its normal targets while excluding the nested phone,
+ // including timestamp rules, nested media rules and pseudo-elements.
+ const fixture=document.createElement('div');fixture.className='chat-app session-demo';fixture.innerHTML='<b class="bubble"></b><section class="chat-app character-phone-chat"><b class="bubble"></b><time></time></section>';
+ const css=load('lib/css-scoper.ts').scopeSessionCSS(':root{color:red}.bubble,time{display:none!important}.bubble::before{content:"x"}@media(max-width:900px){.bubble{color:red}}','.chat-app',false,'.character-phone-chat');
+ let customMatches=0;require('postcss').parse(css).walkRules(rule=>{
+  if(rule.selector.includes('::')){assert.ok(rule.selector.endsWith(':not(:where(.character-phone-chat, .character-phone-chat *))::before'));return;}
+  for(const el of fixture.querySelectorAll('.character-phone-chat, .character-phone-chat *'))assert.equal(el.matches(rule.selector),false);
+  if(fixture.querySelector('.bubble').matches(rule.selector))customMatches++;
+ });assert.equal(customMatches,2);
  assert.deepEqual(load('lib/reverse-phone-replies.ts').splitReverseReply('一段\n\n二段|||三段'),['一段','二段','三段']);
  const host=document.getElementById('root');let root=createRoot(host);const Library=load('components/facing/facing-assets.tsx').FacingAssets;
  load('lib/character-moments-profile.ts').saveCharacterMomentsProfile('a',{coverAssetId:kitchen.mediaId,signature:'角色签名'});
@@ -94,6 +138,14 @@ async function main(){
  assert.ok(host.querySelector('.chat-app .minimal-list-item'));assert.ok([...host.querySelectorAll('.minimal-avatar-wrapper img')].some(img=>img.src===chars[1].avatar));
  const row=[...host.querySelectorAll('.minimal-list-item')].find(el=>el.textContent.includes('角色b'));await act(async()=>{row.dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
  assert.ok(host.querySelector('[aria-label="代回复内容"]'));assert.ok(host.querySelector('.chat-bubble-role-user'));assert.match(host.textContent,/晚点见/);
+ await act(async()=>{await phone.appendCharacterPhoneMessage(chars[0],target.id,'再确认一下','switch-chat');await tick();});
+ streamMode='hold';
+ await act(async()=>{[...host.querySelectorAll('button')].find(b=>b.textContent.includes('重试接收')).dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ assert.match(host.textContent,/角色b正在打字中/);
+ await act(async()=>{host.querySelector('[aria-label="返回"]').dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ await act(async()=>{[...host.querySelectorAll('.minimal-list-item')].find(b=>b.textContent.includes('店员')).dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});
+ assert.ok(!host.textContent.includes('正在打字中'),'switching conversations must not display another contact streaming');
+ await act(async()=>{releaseStream();for(let i=0;i<6;i++)await tick();});streamMode='normal';
  await act(async()=>root.unmount());root=createRoot(host);
 
  await act(async()=>{root.render(React.createElement(Library,{character:chars[0],assets:f.loadFacingAssets('a'),groups:f.groupFacingScenes(f.loadFacingAssets('a')),initialAssetId:sprite.id,onBack(){},onChange(){},async onDelete(){}}));await tick();});
@@ -104,6 +156,6 @@ async function main(){
  await act(async()=>{button('保存素材').dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<6;i++)await tick();});const replaced=f.loadFacingAssets('a').find(a=>a.id===sprite.id);assert.notEqual(replaced.mediaId,sprite.mediaId);assert.equal(replaced.description,'原立绘文案');assert.ok(f.loadFacingAssets('a').find(a=>a.id===kitchen.id).portraitIds.includes(sprite.id));await act(async()=>root.unmount());
  // The clipboard fallback restores the scroll container even if selection scrolls it.
  const scroll=document.createElement('div');document.body.append(scroll);scroll.scrollTop=231;window.HTMLElement.prototype.focus=function(){};window.HTMLTextAreaElement.prototype.select=function(){scroll.scrollTop=999;};await load('lib/clipboard-view.ts').copyTextPreservingView('坐标',scroll);assert.equal(scroll.scrollTop,231);
- console.log('PASS continuity: role/NPC proxy chats, mirrored durable segmented replies/retry, avatar roster, scene mapping/shared fallback, manual scene persistence, story branch handoff/idempotency, record merge/delete, portrait regeneration/reference controls and clipboard scroll.');
+ console.log('PASS continuity: role/NPC proxy chats and deduplicated memories, refresh/long history/pending reply preservation, real/suggested remarks and account isolation, streaming conversation isolation, default CSS boundary, avatar roster, scene mapping, story handoff, records, portrait regeneration and clipboard scroll.');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e instanceof Error?e.stack:String(e));process.exit(1);});

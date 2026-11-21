@@ -22,7 +22,7 @@ export function characterPhoneContacts(owner:Character,payload?:CheckPhoneChatPa
  const userKey=JSON.stringify([account??null,user?.id??null]);
  const userOld=old.find(item=>item.peerType==="user"&&item.peerUserKey===userKey||!!direct&&item.id===`real_conv_${direct.id}`);
  const real=direct?loadChatMessages(direct.id).filter(m=>m.role!=="system"&&!m.isRetracted).slice(-80).map(m=>({id:m.id,text:getChatMessagePreview(m)||m.content,timeLabel:m.createdAt,direction:m.role==="user"?"incoming" as const:"outgoing" as const})):[];
- const userRow:CheckPhoneChatConversation={...userOld,id:userOld?.id??(direct?`real_conv_${direct.id}`:`phone_user_${user?.id??"default"}_${account??"main"}`),peerType:"user",peerUserKey:userKey,name:user?.name||"用户",remark:direct?.characterRemarkForUser?.trim()||userOld?.remark?.trim()||payload?.userRemark?.trim()||undefined,pinned:true,preview:real.at(-1)?.text||userOld?.preview||"与用户的对话",timeLabel:real.at(-1)?.timeLabel||userOld?.timeLabel||"",tagLabel:"真实会话",messages:real.length?real:userOld?.messages??[]};
+ const userRow:CheckPhoneChatConversation={...userOld,id:userOld?.id??(direct?`real_conv_${direct.id}`:`phone_user_${user?.id??"default"}_${account??"main"}`),peerType:"user",peerUserKey:userKey,name:user?.name||"用户",remark:direct?.characterRemarkForUser?.trim()||userOld?.remark?.trim()||(payload?.userRemarkKey===userKey?payload.userRemark?.trim():undefined)||undefined,pinned:true,preview:real.at(-1)?.text||userOld?.preview||"与用户的对话",timeLabel:real.at(-1)?.timeLabel||userOld?.timeLabel||"",tagLabel:"真实会话",messages:real.length?real:userOld?.messages??[]};
  const known=chars.filter(char=>char.id!==owner.id&&world?.memberIds.includes(char.id));
  const rows=known.map(char=>{const prior=old.find(item=>item.peerCharacterId===char.id||norm(item.name)===norm(char.name));return {...prior,id:prior?.id??`phone_char_${char.id}`,peerCharacterId:char.id,peerType:"character" as const,name:char.name,preview:prior?.preview||"同世界角色",timeLabel:prior?.timeLabel||"",tagLabel:prior?.tagLabel||"同世界",messages:prior?.messages??[]};});
  const reserved=new Set([norm(userRow.name),...chars.map(char=>norm(char.name))]);
@@ -35,16 +35,18 @@ export function mergeCharacterPhoneRefresh(
  fresh:CheckPhoneChatPayload, refreshId:string,
 ):CheckPhoneSnapshot<CheckPhoneChatPayload> {
  const now=new Date().toISOString();
- const incoming=characterPhoneContacts(owner,fresh).map(item=>{
+ const incoming:CheckPhoneChatConversation[]=characterPhoneContacts(owner,fresh).map(item=>{
   const previous=current.payload.conversations.find(old=>(
    item.peerType==="user"?old.peerType==="user"&&old.peerUserKey===item.peerUserKey:
    item.peerCharacterId?old.peerCharacterId===item.peerCharacterId:
    old.peerType==="npc"&&norm(old.name)===norm(item.name)
   ));
   if(item.peerType==="user"){
-   return {...item,id:previous?.id??item.id,remark:previous?.remark||item.remark,
+   return {...item,id:previous?.id??item.id,remark:item.remark||previous?.remark,
     messages:item.messages.length?item.messages:previous?.messages??[]};
   }
+  // Do not fabricate a second reply while a real proxy reply is pending.
+  if(previous?.pendingReply)return {...previous,name:item.name,peerCharacterId:item.peerCharacterId,peerType:item.peerType};
   const existing=previous?.messages??[];
   const generated=item.messages.filter(message=>!!message.text.trim());
   const seen=new Set(existing.slice(-12).map(message=>`${message.direction}:${message.text.trim()}`));
@@ -53,15 +55,19 @@ export function mergeCharacterPhoneRefresh(
    if(seen.has(key))return false;
    seen.add(key);return true;
   }).map((message,index)=>({...message,id:`phone_generated_${refreshId}_${item.peerCharacterId??item.id}_${index}`}));
-  const messages=[...existing,...additional].slice(-100);
+  const messages=[...existing,...additional];
   return {...item,id:previous?.id??item.id,
-   pinned:previous?.pinned??item.pinned,
+   pinned:previous?.pinned??item.pinned,remark:item.remark||previous?.remark,
    messages,pendingReply:previous?.pendingReply,
    preview:messages.at(-1)?.text||item.preview,
    timeLabel:messages.at(-1)?.timeLabel||item.timeLabel};
  });
+ // A refresh selects only a few contacts; omission must not delete older NPC chats.
+ for(const previous of characterPhoneContacts(owner,current.payload)){
+  if(previous.peerType==="npc"&&!incoming.some(item=>item.peerType==="npc"&&norm(item.name)===norm(previous.name)))incoming.push(previous);
+ }
  return {...current,updatedAt:now,payload:{...fresh,
-  userRemark:current.payload.userRemark||fresh.userRemark,
+  userRemark:current.payload.userRemarkKey===fresh.userRemarkKey?current.payload.userRemark||fresh.userRemark:fresh.userRemark,
   conversations:incoming,
  }};
 }

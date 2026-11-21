@@ -133,7 +133,7 @@ export function scopeSessionCSS(raw: string, scopeSelector: string, priority = f
 
 /** Guard the selected element itself, including when the scope is an ancestor. */
 function excludeSelectorSubtree(selector: string, excludedScope: string): string {
-  const guard = `:not(${excludedScope}, ${excludedScope} *)`;
+  const guard = `:not(:where(${excludedScope}, ${excludedScope} *))`;
   // Pseudo-elements must remain last; ignore colons in attributes and functions.
   let index = findSyntaxBoundary(selector, 0, ":");
   while (index >= 0) {

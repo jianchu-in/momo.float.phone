@@ -2,6 +2,7 @@ import { loadCharacters } from "./character-storage";
 import { normalizeBilingualTextInput, splitBilingualText } from "./bilingual-text";
 import { previewMessagesForApi, sendLLMRequest } from "./chat-engine";
 import { getChatMessagePreview, loadChatMessages, loadChatSessions, type ChatMessage, type ChatSession } from "./chat-storage";
+import { loadChatScope } from "./chat-scope-storage";
 import {
   CHECKPHONE_APP_SPECS,
   type CheckPhoneAssetsPayload,
@@ -1059,8 +1060,10 @@ function extractRealMoments(characterId: string, userName: string): CheckPhoneCh
 }
 
 function buildRealCheckPhoneChatPayload(characterId: string): CheckPhoneChatPayload {
-  const sessions = loadChatSessions();
-  const userName = resolveUserIdentity(characterId, "checkphone")?.name ?? "用户";
+  const accountId = loadChatScope().chatAccountId ?? null;
+  const sessions = loadChatSessions().filter(session => (session.chatAccountId ?? null) === accountId);
+  const user = resolveUserIdentity(characterId, "checkphone");
+  const userName = user?.name ?? "用户";
   const directSession = sessions.find((session) => !session.isGroup && session.contactId === characterId);
   const conversations = extractDirectConversation(directSession, characterId, userName);
   const groups = extractRealGroups(sessions, characterId, userName);
@@ -1068,6 +1071,8 @@ function buildRealCheckPhoneChatPayload(characterId: string): CheckPhoneChatPayl
   return {
     headerTitle: "聊天",
     headerSubtitle: "真实互动与补充内容",
+    userRemark: directSession?.characterRemarkForUser?.trim() || undefined,
+    userRemarkKey: JSON.stringify([accountId, user?.id ?? null]),
     conversations,
     groups,
     momentsFeed,
@@ -1125,6 +1130,8 @@ function mergeChatPayload(
   return {
     headerTitle: realPayload.headerTitle,
     headerSubtitle: realPayload.headerSubtitle,
+    userRemark: realPayload.userRemark || supplemental?.userRemark,
+    userRemarkKey: realPayload.userRemarkKey,
     conversations: mergeBy(
       realPayload.conversations,
       (supplemental?.conversations ?? []).filter((item) => {
@@ -5013,6 +5020,7 @@ function parseChatBlockPayload(text: string): PhoneBlockParseResult {
   const supplementalConversations = extractTopLevelTaggedBlocks(source, "补充会话").map((entry) => ({
     id: `supp_conv_${entry.order}`,
     name: entry.fields["名称"] || "",
+    remark: entry.fields["备注"] || undefined,
     muted: parseBlockBoolean(entry.fields["静音"]),
     pinned: parseBlockBoolean(entry.fields["置顶"]),
     tagLabel: entry.fields["标签"] || "补充会话",
@@ -5047,12 +5055,13 @@ function parseChatBlockPayload(text: string): PhoneBlockParseResult {
     note: entry.fields["备注"] || "",
   }));
 
-  if (supplementalConversations.length + supplementalGroups.length + supplementalMoments.length + supplementalContacts.length === 0) {
+  const userRemark = extractTopLevelTaggedBlocks(source, "聊天设置")[0]?.fields["用户备注"]?.trim();
+  if (supplementalConversations.length + supplementalGroups.length + supplementalMoments.length + supplementalContacts.length === 0 && !userRemark) {
     return { parsed: null, sanitizedCandidate: source, parseMode: "failed", parseError: "未找到聊天补充块" };
   }
 
   return {
-    parsed: { supplementalConversations, supplementalGroups, supplementalMoments, supplementalContacts },
+    parsed: { supplementalConversations, supplementalGroups, supplementalMoments, supplementalContacts, userRemark },
     sanitizedCandidate: source,
     parseMode: "sanitized",
   };
@@ -5109,6 +5118,7 @@ function normalizeChatPayload(payload: unknown): Partial<CheckPhoneChatPayload> 
       const tagLabel = typeof thread.tagLabel === "string" && thread.tagLabel.trim() ? thread.tagLabel.trim() : "会话";
       const muted = thread.muted === true;
       const pinned = thread.pinned === true;
+      const remark = typeof thread.remark === "string" ? thread.remark.trim() || undefined : undefined;
       const messages = (Array.isArray(thread.messages) ? thread.messages : [])
         .map((entry) => normalizeBubble(entry))
         .filter(Boolean) as CheckPhoneChatPayload["conversations"][number]["messages"];
@@ -5122,6 +5132,7 @@ function normalizeChatPayload(payload: unknown): Partial<CheckPhoneChatPayload> 
         timeLabel: lastMessage.timeLabel,
         muted,
         pinned,
+        remark,
         tagLabel,
         messages: slicedMessages,
       };
@@ -5235,6 +5246,7 @@ function normalizeChatPayload(payload: unknown): Partial<CheckPhoneChatPayload> 
 
   return {
     conversations: conversations.slice(0, 6),
+    userRemark: typeof record.userRemark === "string" ? record.userRemark.trim() || undefined : undefined,
     groups: groups.slice(0, 5),
     momentsFeed: momentsFeed.slice(0, 6),
     contacts: contacts.slice(0, 8),
@@ -5263,16 +5275,18 @@ export async function generateCheckPhoneChat(
     const phoneOwner = loadCharacters().find(item => item.id === characterId);
     const phoneWorld = getCharacterWorldGroup(characterId);
     const worldPeers = loadCharacters().filter(item => item.id !== characterId && phoneWorld?.memberIds.includes(item.id));
-    if (phoneOwner && worldPeers.length) {
+    if (phoneOwner) {
       const candidates = worldPeers.map(item => ({ name: item.name, persona: (item.persona || "").slice(0, 280) }));
       messages.push({ role: "system", content:
         "【角色手机聊天补充规则】当前手机主人：" + phoneOwner.name +
         "。以下是他在同世界认识的角色：" + JSON.stringify(candidates) +
-        "。请根据人物性格与关系，从中挑选约2到4位平时会自然交流的人物（人数不足则按实际人数），" +
+        "。有候选时请根据人物性格与关系，从中挑选约2到4位平时会自然交流的人物（人数不足则按实际人数，没有候选则只保留合理NPC），" +
         "为每人生成有来有回、符合双方性格的最近聊天记录（建议每段4到8条消息），" +
-        "写入输出格式要求的conversations及messages，且不要只生成联系人名称或一句预览。" +
+        "严格沿用#补充会话1等文本块格式，禁止改成JSON或conversations/messages字段。" +
+        "[名称]使用候选角色原名，[备注]可填写手机主人给他的备注，消息使用[消息1方向]incoming/outgoing、[消息1时间]、[消息1正文]依次编号，不能只写预览。" +
         "不要把用户与角色的真实私聊编造成新记录，不要编造其他世界的角色；" +
-        "若已有历史，请延续关系和话题而非覆盖历史。用户聊天应排在首位并置顶，备注符合手机主人性格。" });
+        "若已有历史，请延续关系和话题而非覆盖历史。用户会话由系统保留并置顶，不要生成用户的补充会话。" +
+        "需要建议用户备注时额外输出#聊天设置1块，使用[用户备注]填写符合手机主人性格的称呼；已有真实备注优先。" });
     }
     const rawOutput = await sendLLMRequest(
       apiConfig,

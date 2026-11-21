@@ -215,6 +215,8 @@ export type CheckPhoneChatPayload = {
   headerSubtitle: string;
   /** 自动刷新时建议的用户备注；已有真实私聊备注始终优先。 */
   userRemark?: string;
+  /** Suggested remarks belong to the account and identity used during generation. */
+  userRemarkKey?: string;
   conversations: CheckPhoneChatConversation[];
   groups: CheckPhoneChatGroup[];
   momentsFeed: CheckPhoneChatMomentItem[];
