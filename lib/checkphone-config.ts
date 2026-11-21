@@ -162,6 +162,8 @@ export type CheckPhoneChatConversation = {
   timeLabel: string;
   muted?: boolean;
   pinned?: boolean;
+  /** 角色给聊天对象的备注，不更改联系人真实姓名。 */
+  remark?: string;
   tagLabel: string;
   messages: CheckPhoneChatBubble[];
 };
@@ -211,6 +213,8 @@ export type CheckPhoneChatContact = {
 export type CheckPhoneChatPayload = {
   headerTitle: string;
   headerSubtitle: string;
+  /** 自动刷新时建议的用户备注；已有真实私聊备注始终优先。 */
+  userRemark?: string;
   conversations: CheckPhoneChatConversation[];
   groups: CheckPhoneChatGroup[];
   momentsFeed: CheckPhoneChatMomentItem[];
