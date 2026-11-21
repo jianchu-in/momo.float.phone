@@ -5258,6 +5258,21 @@ export async function generateCheckPhoneChat(
       ].filter(Boolean).join("\n"),
       lastRefreshAt: previousUpdatedAt ?? "",
     });
+    // 补充会话必须以当前世界的角色卡为候选，而不是随机虚构跨世界联系人。
+    const phoneOwner = loadCharacters().find(item => item.id === characterId);
+    const phoneWorld = getCharacterWorldGroup(characterId);
+    const worldPeers = loadCharacters().filter(item => item.id !== characterId && phoneWorld?.memberIds.includes(item.id));
+    if (phoneOwner && worldPeers.length) {
+      const candidates = worldPeers.map(item => ({ name: item.name, persona: (item.persona || "").slice(0, 280) }));
+      messages.push({ role: "system", content:
+        "【角色手机聊天补充规则】当前手机主人：" + phoneOwner.name +
+        "。以下是他在同世界认识的角色：" + JSON.stringify(candidates) +
+        "。请根据人物性格与关系，从中挑选约2到4位平时会自然交流的人物（人数不足则按实际人数），" +
+        "为每人生成有来有回、符合双方性格的最近聊天记录（建议每段4到8条消息），" +
+        "写入输出格式要求的conversations及messages，且不要只生成联系人名称或一句预览。" +
+        "不要把用户与角色的真实私聊编造成新记录，不要编造其他世界的角色；" +
+        "若已有历史，请延续关系和话题而非覆盖历史。用户聊天应排在首位并置顶，备注符合手机主人性格。" });
+    }
     const rawOutput = await sendLLMRequest(
       apiConfig,
       preset,
