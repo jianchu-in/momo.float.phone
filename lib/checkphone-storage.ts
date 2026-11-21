@@ -271,6 +271,26 @@ export function removeCheckPhoneProjectionEntry(characterId: string, entryId: st
   saveProjectionEventsByKey(key, remaining);
 }
 
+/** 用户在角色手机里代角色发送/接收消息时，写入该角色的短期记忆事件。
+ * 和快照分开存储，以稳定的 messageId 去重；遵循已有 checkphone 记忆开关。
+ */
+export function recordCharacterPhoneChatMemory(
+  characterId: string,
+  messageId: string,
+  content: string,
+  timestamp = new Date().toISOString(),
+): void {
+  if (!characterId || !messageId || !content.trim() || typeof window === "undefined") return;
+  const key = projectionStorageKey(characterId);
+  const id = `character_phone_chat_${messageId}`;
+  const current = loadProjectionEventsByKey(key);
+  if (current.some(entry => entry.id === id)) return;
+  saveProjectionEventsByKey(key, [...current, {
+    id, appId: "chat", timestamp,
+    content: `[角色手机代回复] ${cleanEventText(content, 3000)}`,
+  }]);
+}
+
 export function loadCheckPhoneProjectionEntries(
   characterId: string,
   options?: { afterTimestamp?: string },
