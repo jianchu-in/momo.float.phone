@@ -78,6 +78,12 @@ export class InterviewLiveController {
   }
   dispose() { this.stop(); this.disposed = true; }
   updateOptions(options: InterviewOptions) { if (!this.aborter) this.options = normalizeInterviewOptions(options); }
+  updateGuests(guests: Guest[]) {
+    if(this.aborter||this.disposed)throw new Error("请先暂停本轮，再修改嘉宾。");
+    const unique=guests.filter((guest,index)=>guest.id&&guests.findIndex(item=>item.id===guest.id)===index);
+    if(!unique.length)throw new Error("请至少保留一位嘉宾。");
+    this.guests=unique;
+  }
   updateDraftInput(patch: Pick<InterviewLiveSnapshot, "userInput" | "questionInput">) { if (!this.aborter) this.set(patch); }
   editQuestion(id: string, text: string) {
     const question = this.state.messages.find(message => message.id === id && message.kind === "question");

@@ -76,27 +76,6 @@ async function main(){
  await click('播放氛围音');assert.equal(audioInstances[1].paused,false);
  await act(async()=>root.unmount());assert.equal(audioInstances[1].paused,true);root=createRoot(host);
  rejectAutoplay=true;await mount(React.createElement(Ambience,{track,location:'公寓'}));assert.ok(host.textContent.includes('播放氛围音'));rejectAutoplay=false;await click('播放氛围音');await act(async()=>root.unmount());root=createRoot(host);
- const groups=[{id:'ga',name:'A组',characterIds:['a']},{id:'gb',name:'B组',characterIds:['b']}];
- let meeting=await storage.saveFacingMeetingStart({...storage.createFacingMeeting('a','user','main'),participantIds:['a','b'],replyGroups:groups},{sceneName:'厨房',sceneId:bg.id,portraitId:portrait.id});
- const user={id:'u1',role:'user',kind:'text',text:'一起吃饭吧',sceneName:'厨房',sceneId:bg.id,at:new Date().toISOString(),replyGroups:groups};meeting=await storage.appendFacingTurn(meeting,user);
- const Room=load('components/facing/facing-room.tsx').FacingRoom;let completed=0;
- function Host(){const [current,setCurrent]=React.useState(meeting);return React.createElement(Room,{character:chars[0],meeting:current,settings:{voice:false,memory:false,autoVisual:{enabled:true,interval:1}},scenes:[],position:storage.facingMeetingPosition(current),onMeeting:setCurrent,onSettings(){},onEnd(){},onVoice(){},onSpeechInput(){},onMap(){},onScene:async()=>{},onEditPortrait(){},onPortraitLayout:async()=>{},onStory:async()=>{},onCompleted(){completed++;}});}
- await mount(React.createElement(Host));await click('继续未完成分组');await act(async()=>{for(let i=0;i<50;i++)await tick();});
- let saved=storage.loadFacingMeeting(meeting.id);assert.equal(calls,2);assert.equal(saved.turns.filter(t=>t.replyGroupId==='ga').length,1);assert.equal(storage.pendingFacingGroups(saved).groups.length,1);assert.match(host.textContent,/模拟第二组失败/);
- failPeer='';await click('继续未完成分组');await act(async()=>{for(let i=0;i<50;i++)await tick();});saved=storage.loadFacingMeeting(meeting.id);assert.equal(calls,3,'resume skips completed group');assert.equal(saved.turns.filter(t=>t.role==='assistant').length,2);assert.equal(storage.facingCompletedRounds(saved),1);assert.equal(completed,1);assert.equal(illustrationFlags.at(-1),true,'resuming the final group retains the scheduled illustration');await act(async()=>root.unmount());root=createRoot(host);
- const before=saved.turns.map(t=>t.id);const changed=await storage.configureFacingCast(['b','c'],[{id:'new',name:'新组',characterIds:['b','c']}],saved.id);assert.deepEqual(changed.meeting.turns.map(t=>t.id),before);assert.equal(changed.meeting.scene.sceneId,bg.id);assert.ok(storage.loadFacingMeetings('a','user',true).some(m=>m.id===saved.id),'departed participants retain historical memory');
- const beforeRetry=calls;await assert.rejects(load('lib/facing-engine.ts').generateFacingReply({character:chars[1],meeting:changed.meeting,settings:{memory:false},scene:'厨房',scenes:[],signal:new AbortController().signal,speakerId:'a'}),/已离场/);assert.equal(calls,beforeRetry,'departed speaker retry never substitutes a different character');
- await storage.appendFacingTurn(changed.meeting,{id:'after-cast',role:'user',kind:'text',text:'离场之后的内容',sceneName:'厨房',at:new Date().toISOString()});
- const assembler=load('lib/short-term-assembler.ts');assert.ok(!assembler.loadNativeTimeline('a').some(entry=>entry.id==='after-cast'));assert.ok(!assembler.loadNativeTimeline('c').some(entry=>entry.id==='u1'));assert.ok(assembler.loadNativeTimeline('c').some(entry=>entry.id==='after-cast'));
- // Real app settings can edit an ongoing meeting, preserve its draft and return.
- await storage.configureFacingCast(['a','b'],groups,saved.id);await storage.saveFacingSettings('a',{voice:false});
- const App=load('components/facing/facing-app.tsx').FacingApp;await mount(React.createElement(App,{onClose(){},initialMeetingId:saved.id}));
- const props=el=>el[Object.keys(el).find(k=>k.startsWith('__reactProps$'))];const input=host.querySelector('.facing-input textarea')||host.querySelector('.facing-input input');assert.ok(input);
- await act(async()=>{props(input).onChange({target:{value:'设置回来继续写'}});await tick();});
- await act(async()=>{host.querySelector('[aria-label="设置"]').dispatchEvent(new window.Event('click',{bubbles:true}));await tick();});await click('调整当前在场角色与分组');await click('角色c');await click('确认选择');
- assert.equal(storage.loadFacingMeeting(saved.id).id,saved.id);assert.ok(storage.facingParticipantIds(storage.loadFacingMeeting(saved.id)).includes('c'));
- await act(async()=>{host.querySelector('[aria-label="返回"]').dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<5;i++)await tick();});
- const restored=host.querySelector('.facing-input textarea')||host.querySelector('.facing-input input');assert.equal(props(restored).value,'设置回来继续写');await act(async()=>root.unmount());
- console.log('PASS place life: inherited ambience, pause/mute/autoplay/ducking/cleanup, home scene ownership, audio export/import, durable grouped replies and resume, in-room cast/group settings with history/scene/draft preservation.');
+ console.log('PASS place life: inherited ambience, independent pause/mute/autoplay/ducking/cleanup, home scene ownership and audio export/import.');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e instanceof Error?e.stack:String(e));process.exit(1);});

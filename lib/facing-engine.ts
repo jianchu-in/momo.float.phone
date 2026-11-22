@@ -109,19 +109,15 @@ export async function generateFacingReply(options: {
   signal: AbortSignal;
   retryInstruction?: string;
   speakerId?: string;
-  speakerIds?: string[];
-  groupContext?: string;
   visualActivity?: string;
   illustrate?: boolean;
   deferVisual?: boolean;
 }): Promise<{ replies: FacingReply[] }> {
   const { character, meeting, settings, scene, scenes, signal } = options;
   const participantIds = facingParticipantIds(meeting);
-  if(options.speakerId&&!participantIds.includes(options.speakerId))throw new Error("这位角色已离场，请先在设置中重新加入他，再重试原回复。");
   const cast = loadCharacters().filter(item => participantIds.includes(item.id));
   const multi = cast.length > 1;
-  const eligible=options.speakerIds?cast.filter(item=>options.speakerIds!.includes(item.id)).map(item=>item.id):cast.map(item=>item.id);
-  const speakingIds = options.speakerId && participantIds.includes(options.speakerId) ? [options.speakerId] : multi ? chooseFacingSpeakers(eligible) : [character.id];
+  const speakingIds = options.speakerId && participantIds.includes(options.speakerId) ? [options.speakerId] : multi ? chooseFacingSpeakers(cast.map(item => item.id)) : [character.id];
   const destinations = options.deferVisual ? [] : scenes.filter(item => item.name !== scene);
   const summarizeReactions = (group?: FacingSceneGroup) => (group?.reactions ?? []).map(asset => ({ id: asset.id, name: asset.name }));
   const currentScene = scenes.find(item => item.name === scene);
@@ -167,7 +163,7 @@ export async function generateFacingReply(options: {
       JSON.stringify({ 地点: scene, 地点介绍: context.description, 在场角色: cast.map(item => ({ 姓名: item.name })) }),
     ].filter(Boolean).join("\n");
   }
-  const roster = await Promise.all((multi ? cast.filter(item=>!options.speakerIds||options.speakerIds.includes(item.id)) : []).map(async item => {
+  const roster = await Promise.all((multi ? cast : []).map(async item => {
     const ownScenes = groupFacingScenes(loadFacingUsableAssets(item.id));
     const [ownCore, ownLong] = useMemory && item.id !== character.id ? await Promise.all([
       retrieveCoreMemoriesForPrompt(item.id, config).catch(() => null), retrieveMemoriesForPrompt(item.id, activationContext, config).catch(() => null),
@@ -183,7 +179,7 @@ export async function generateFacingReply(options: {
   const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
   const mode: LLMMessage = {
     role: "system",
-    content: [FACING_MODE_PROMPT, mapContextPrompt, options.groupContext&&`同一轮中前面分组已经说过的话，请自然衔接，不要重复代他们发言：\n${options.groupContext}`,
+    content: [FACING_MODE_PROMPT, mapContextPrompt,
       options.illustrate && "本轮需要生成一张新的完整补图，不复用素材。请在JSON对象最外层附加 image_description（详细描述本轮结束时当前场所、最后发言角色的外貌、衣着、情绪、姿态、用户视点和光线，供生图使用），以及 image_rating（safe/nsfw/uncertain，仅判断要画的当前画面）。这两个字段不要写进角色台词。背景和人物取自参考图，保持剧情连续，不把计划当已发生。",
       multi && `这是多人当面互动，像群聊一样自然接话，每人保持独立人设。只有指定的角色本轮发言，其余人可以安静在场。不要替用户说话。一次请求返回完整 JSON 对象 {"scene_id":null,"replies":[{"speaker_id":"角色ID","dialogue":"只含该角色台词","action":"（可见动作）","reaction_id":null}]}。每位角色各一项，不将多人的台词混写进同一项。严格按这个名单和顺序输出：${JSON.stringify(speakingIds)}。角色资料：${JSON.stringify(roster)}`,
       options.speakerId && `本次只重试 ${options.speakerId} 的回应，保持其他人的原回复。`,

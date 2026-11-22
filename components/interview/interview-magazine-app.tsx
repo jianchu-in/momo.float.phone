@@ -12,6 +12,7 @@ import {
   Plus,
   Radio,
   Send,
+  Settings2,
   Sparkles,
   Trash2,
   X,
@@ -57,7 +58,7 @@ import {
 } from "@/lib/interview-magazine-types";
 import { InterviewMemoryPanel } from "./interview-memory-panel";
 import { loadUserIdentities, resolveUserIdentity } from "@/lib/settings-storage";
-import { InterviewAudience, InterviewLiveSession, InterviewOptionsEditor } from "./interview-live-session";
+import { InterviewAudience, InterviewLiveSession, InterviewOptionsEditor, InterviewSessionSettings } from "./interview-live-session";
 import { DEFAULT_INTERVIEW_OPTIONS, interviewGuestGroups, normalizeInterviewOptions } from "@/lib/interview-magazine-options";
 import type { InterviewOptions, InterviewLiveSnapshot } from "@/lib/interview-magazine-types";
 
@@ -211,6 +212,7 @@ export function InterviewMagazineApp({ onClose }: Props) {
   const composeAbortRef = useRef<AbortController | null>(null);
   const [interviewOptions, setInterviewOptions] = useState<InterviewOptions>(DEFAULT_INTERVIEW_OPTIONS);
   const [useLiveInterview, setUseLiveInterview] = useState(false);
+  const [legacySettings, setLegacySettings] = useState<InterviewLiveSnapshot>();
   const [liveInitial, setLiveInitial] = useState<InterviewLiveSnapshot | undefined>();
   const [liveKey, setLiveKey] = useState("");
   const liveDraftId = useRef<string | null>(null);
@@ -670,6 +672,7 @@ export function InterviewMagazineApp({ onClose }: Props) {
     const composeRunId = composeRunRef.current + 1;
     composeRunRef.current = composeRunId;
     const completedTranscript = transcript.filter(message => message.content.trim());
+    const issueCharacterIds = [...new Set([...selectedCharacterIds, ...completedTranscript.flatMap(message => message.speakerCharacterId ? [message.speakerCharacterId] : [])])].filter(id => characters.some(character => character.id === id));
     const draftToDelete = useLiveInterview ? liveDraftId.current : activeDraftId;
     composeAbortRef.current?.abort();
     const composeAbort = new AbortController();
@@ -682,7 +685,7 @@ export function InterviewMagazineApp({ onClose }: Props) {
         signal: composeAbort.signal,
         options: useLiveInterview ? liveOptions : undefined,
         theme,
-        characterIds: selectedCharacterIds,
+        characterIds: issueCharacterIds,
         userIdentityId,
         transcript: completedTranscript,
         issueNumber,
@@ -752,6 +755,9 @@ export function InterviewMagazineApp({ onClose }: Props) {
 
   return (
     <div className="interview-app">
+      {legacySettings && <InterviewSessionSettings characters={characters} guestIds={selectedCharacterIds} options={interviewOptions} onClose={() => setLegacySettings(undefined)} onApply={(ids, options) => {
+        setSelectedCharacterIds(ids); setInterviewOptions(options); setLiveInitial({ ...legacySettings, ...(options.participation !== interviewOptions.participation ? { userAsGuest: options.participation === "guest", phase: legacySettings.phase === "awaiting_user" && options.participation !== "guest" ? "idle" : legacySettings.phase } : {}) }); setLiveKey(activeDraftId || `interview_${Date.now()}`); liveDraftId.current = activeDraftId; setUseLiveInterview(true); setLegacySettings(undefined);
+      }} />}
       <BackgroundLayer imageUrl={bgImageUrl} />
       <div className="interview-content">
         {screen === "setup" ? (
@@ -777,6 +783,7 @@ export function InterviewMagazineApp({ onClose }: Props) {
           <InterviewLiveSession key={liveKey} theme={theme} guests={activeCharacters.map(character => ({ id: character.id, name: character.name }))}
             userIdentityId={userIdentityId} userName={userIdentities.find(identity => identity.id === userIdentityId)?.name || "我"}
             initialOptions={interviewOptions} initialState={liveInitial} draftId={activeDraftId}
+            characters={characters} onConfigure={(ids, options) => { setSelectedCharacterIds(ids); setInterviewOptions(options); }}
             externalError={error}
             onChange={(state, options) => { setMessages(state.messages); setCharacterRounds(state.round); setInterviewOptions(options); setError(""); }}
             onDraftSaved={draft => { liveDraftId.current = draft.id; setActiveDraftId(draft.id); setDrafts(loadInterviewDrafts()); }}
@@ -800,6 +807,7 @@ export function InterviewMagazineApp({ onClose }: Props) {
             onSubmitUserAnswer={submitUserAnswer}
             onContinue={continueInterview}
             onPause={pauseInterview}
+            onSettings={() => { const snapshot: InterviewLiveSnapshot = { messages, round: characterRounds, phase: phase === "user" ? "awaiting_user" : "stopped", userAsGuest: phase === "user", question: "", userInput }; stopInterviewRun(); pauseInterview(); setLegacySettings(snapshot); }}
             onWrap={() => { void composeArticle(); }}
             onAbort={exitInterviewToHome}
           />
@@ -1269,6 +1277,7 @@ function InterviewScreen({
   onPause,
   onWrap,
   onAbort,
+  onSettings,
 }: {
   theme: string;
   characters: Character[];
@@ -1287,6 +1296,7 @@ function InterviewScreen({
   onPause: () => void;
   onWrap: () => void;
   onAbort: () => void;
+  onSettings: () => void;
 }) {
   const characterNameById = useMemo(
     () => Object.fromEntries(characters.map((c) => [c.id, c.name])),
@@ -1308,7 +1318,7 @@ function InterviewScreen({
           </SmallCaps>
           <div className="text-white text-xs opacity-50 font-mono mt-1">ROUND {turns}/{maxCharacterTurns}</div>
         </div>
-        <div className="w-10"></div>
+        <button type="button" className="interview-icon-btn" aria-label="在场访谈设置" onClick={onSettings}><Settings2 size={18} /></button>
       </header>
 
       <main className="interview-scroll px-4 pt-6 pb-32 scroll-smooth" ref={scrollRef}>

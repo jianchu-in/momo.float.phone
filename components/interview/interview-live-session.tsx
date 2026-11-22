@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, Pause, Send } from "lucide-react";
+import { ChevronLeft, Pause, Send, Settings2 } from "lucide-react";
 import { generateHostOpening, generateHostQuestion, generateCharacterInterviewAnswer, generateInterviewGroupAnswers, generateInterviewAudience } from "@/lib/interview-magazine-engine";
 import { InterviewLiveController, initialInterviewLiveState, isInterviewLiveBusy } from "@/lib/interview-magazine-live";
-import { normalizeInterviewOptions } from "@/lib/interview-magazine-options";
-import { saveInterviewDraft } from "@/lib/interview-magazine-storage";
+import { interviewGuestGroups, normalizeInterviewOptions } from "@/lib/interview-magazine-options";
+import { saveInterviewDraft,loadInterviewHostPrompt,loadInterviewMemoryPrompt,saveInterviewHostPrompt,saveInterviewMemoryPrompt } from "@/lib/interview-magazine-storage";
 import { INTERVIEW_DEFAULT_AUDIENCE_PROMPT, INTERVIEW_MAGAZINE_HOST_NAME, type InterviewAudienceRound, type InterviewDraft, type InterviewLiveSnapshot, type InterviewOptions } from "@/lib/interview-magazine-types";
 import { loadApiConfigs } from "@/lib/settings-storage";
 
@@ -68,14 +68,34 @@ export function InterviewAudience({ rounds, busy, error }: { rounds?: InterviewA
   </section>;
 }
 
-export function InterviewLiveSession({ theme, guests, userIdentityId, userName, initialOptions, initialState, draftId, externalError, onChange, onDraftSaved, onBack, onCompose }: {
+export function InterviewSessionSettings({characters,guestIds,options,onApply,onClose}:{characters:{id:string;name:string}[];guestIds:string[];options:InterviewOptions;onApply:(ids:string[],options:InterviewOptions)=>void;onClose:()=>void}){
+ const [ids,setIds]=useState(guestIds),[draft,setDraft]=useState(()=>normalizeInterviewOptions(options)),[query,setQuery]=useState(""),[error,setError]=useState("");
+ const [hostPrompt,setHostPrompt]=useState(loadInterviewHostPrompt),[memoryPrompt,setMemoryPrompt]=useState(loadInterviewMemoryPrompt);
+ const picked=ids.flatMap(id=>characters.find(char=>char.id===id)??[]),groups=interviewGuestGroups(picked,draft.guestGroups);
+ return <div role="dialog" aria-modal="true" aria-label="在场访谈设置" className="absolute inset-0 z-[80] flex flex-col bg-[#151419] text-white" style={{paddingTop:"max(16px, env(safe-area-inset-top))",paddingBottom:"max(16px, env(safe-area-inset-bottom))"}}>
+  <header className="interview-header"><button type="button" onClick={onClose}>取消</button><strong>在场 · 本期访谈设置</strong><button type="button" disabled={!ids.length} onClick={()=>{try{const normalized=normalizeInterviewOptions({...draft,guestGroups:Object.fromEntries(Object.entries(draft.guestGroups??{}).filter(([id])=>ids.includes(id)))});if(hostPrompt!==loadInterviewHostPrompt())saveInterviewHostPrompt(hostPrompt);if(memoryPrompt!==loadInterviewMemoryPrompt())saveInterviewMemoryPrompt(memoryPrompt);onApply(ids,normalized);}catch(e){setError(e instanceof Error?e.message:"设置保存失败");}}}>保存并返回问答</button></header>
+  <main className="interview-scroll px-5 py-4 flex flex-col gap-4"><p className="text-xs text-white/60">本轮已暂停。已有实录和未发送文字保留，修改用于后续问答，不会重新开场或自动调用接口。</p>
+   <section aria-label="受访嘉宾" className="interview-glass-panel p-3"><strong>受访嘉宾 · 可多选</strong><input aria-label="搜索嘉宾" className="interview-glass-input w-full p-2 my-2" value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索角色"/><div className="max-h-48 overflow-y-auto">{characters.filter(char=>char.name.toLowerCase().includes(query.toLowerCase())).map(char=><label key={char.id} className="flex gap-2 items-center py-2"><input type="checkbox" aria-label={`选择嘉宾${char.name}`} checked={ids.includes(char.id)} onChange={e=>setIds(old=>e.target.checked?[...old,char.id]:old.filter(id=>id!==char.id))}/>{char.name}</label>)}</div></section>
+   {picked.length>1&&<section aria-label="嘉宾分组" className="interview-glass-panel p-3"><strong>嘉宾分组</strong><p className="text-xs text-white/60">全员回答时，每轮嘉宾回答按当前 {groups.length} 个非空组请求；同组使用排在最前面的嘉宾绑定。轮流采访仍按原方式调用。</p>{picked.map(char=><label key={char.id} className="flex justify-between py-2">{char.name}<select aria-label={`${char.name}的分组`} className="interview-glass-input bg-[#181818] p-2" value={draft.guestGroups?.[char.id]??1} onChange={e=>setDraft(old=>({...old,guestGroups:{...old.guestGroups,[char.id]:Number(e.target.value)}}))}>{[...new Set([...picked.map((_,i)=>i+1),draft.guestGroups?.[char.id]??1])].map(group=><option key={group} value={group}>第{group}组</option>)}</select></label>)}</section>}
+   <InterviewOptionsEditor options={draft} onChange={setDraft}/>
+   <details className="interview-glass-panel p-3"><summary>主持与记忆提示词（所有访谈共用）</summary><label className="block mt-3">主持提示词<textarea aria-label="主持提示词" className="interview-glass-input w-full p-2" rows={5} value={hostPrompt} onChange={e=>setHostPrompt(e.target.value)}/></label><label className="block mt-3">记忆提示词<textarea aria-label="记忆提示词" className="interview-glass-input w-full p-2" rows={5} value={memoryPrompt} onChange={e=>setMemoryPrompt(e.target.value)}/></label></details>
+   {error&&<p role="alert">{error}</p>}
+  </main>
+ </div>;
+}
+
+export function InterviewLiveSession({ theme, guests:initialGuests,characters, userIdentityId, userName, initialOptions, initialState, draftId, externalError, onChange, onDraftSaved, onBack, onCompose,onConfigure }: {
   theme: string; guests: { id: string; name: string }[]; userIdentityId: string; userName: string;
   initialOptions: InterviewOptions; initialState?: InterviewLiveSnapshot; draftId?: string | null;
+  characters?:{id:string;name:string}[];
+  onConfigure?:(ids:string[],options:InterviewOptions)=>void;
   externalError?: string;
   onChange: (state: InterviewLiveSnapshot, options: InterviewOptions) => void;
   onDraftSaved: (draft: InterviewDraft) => void;
   onBack: () => void; onCompose: (state: InterviewLiveSnapshot, options: InterviewOptions) => void;
 }) {
+  const [guests,setGuests]=useState(initialGuests),[settingsOpen,setSettingsOpen]=useState(false);
+  const guestsRef=useRef(guests);guestsRef.current=guests;
   const [options, setOptions] = useState(() => normalizeInterviewOptions(initialOptions));
   const [state, setState] = useState(() => initialInterviewLiveState(normalizeInterviewOptions(initialOptions), initialState));
   const [question, setQuestion] = useState(initialState?.questionInput || "");
@@ -96,11 +116,11 @@ export function InterviewLiveSession({ theme, guests, userIdentityId, userName, 
   const save = (notify = true) => {
     const snapshot = runner.current?.state || stateRef.current;
     if (!snapshot.messages.length && !snapshot.round) return;
-    const fingerprint = JSON.stringify([snapshot, optionsRef.current]);
+    const fingerprint = JSON.stringify([snapshot, optionsRef.current, guestsRef.current]);
     if (fingerprint === lastSaved.current) return;
     lastSaved.current = fingerprint;
     const status = snapshot.phase === "awaiting_user" ? "awaiting_user" : snapshot.phase === "done" ? "done" : snapshot.phase === "error" ? "error" : "paused";
-    const draft: InterviewDraft = { id: savedId.current, theme, characterIds: guests.map(guest => guest.id), characterNames: guests.map(guest => guest.name),
+    const draft: InterviewDraft = { id: savedId.current, theme, characterIds: guestsRef.current.map(guest => guest.id), characterNames: guestsRef.current.map(guest => guest.name),
       userIdentityId, userName, transcript: snapshot.messages, characterRounds: snapshot.round, status,
       options: optionsRef.current, liveState: snapshot, userInput: snapshot.userInput, createdAt: createdAt.current, updatedAt: new Date().toISOString() };
     saveInterviewDraft(draft);
@@ -108,21 +128,21 @@ export function InterviewLiveSession({ theme, guests, userIdentityId, userName, 
   };
   useEffect(() => {
     let alive = true;
-    const ids = guests.map(guest => guest.id);
+    const ids = ()=>guestsRef.current.map(guest => guest.id);
     const live = new InterviewLiveController(guests, optionsRef.current, {
-      opening: (signal, nextOptions, userAsGuest) => generateHostOpening(theme, ids, userIdentityId, { signal, options: nextOptions, userAsGuest }),
-      question: (target, transcript, signal, nextOptions, userAsGuest) => generateHostQuestion({ theme, characterIds: ids, userIdentityId, transcript,
+      opening: (signal, nextOptions, userAsGuest) => generateHostOpening(theme, ids(), userIdentityId, { signal, options: nextOptions, userAsGuest }),
+      question: (target, transcript, signal, nextOptions, userAsGuest) => generateHostQuestion({ theme, characterIds: ids(), userIdentityId, transcript,
         target, phase: target === "user" ? "用户明确出场，请向其提问并等待真实输入" : "根据已有实录提出新一轮采访问题", signal, options: nextOptions, userAsGuest }),
-      answer: input => generateCharacterInterviewAnswer({ ...input, theme, characterIds: ids, userIdentityId }),
-      groupAnswers: input => generateInterviewGroupAnswers({ ...input, theme, characterIds: ids, userIdentityId }),
-      audience: input => generateInterviewAudience({ ...input, theme, characterIds: ids, userName }),
+      answer: input => generateCharacterInterviewAnswer({ ...input, theme, characterIds: [...new Set([...ids(), input.characterId])], userIdentityId }),
+      groupAnswers: input => generateInterviewGroupAnswers({ ...input, theme, characterIds: ids(), userIdentityId }),
+      audience: input => generateInterviewAudience({ ...input, theme, characterIds: ids(), userName }),
     }, next => {
       if (!alive) return;
       stateRef.current = next; setState(next); callbacks.current.onChange(next, optionsRef.current);
     }, initialState);
     runner.current = live;
     // Defer one microtask so Strict Mode's probe cannot submit a duplicate opening.
-    Promise.resolve().then(() => { if (alive) void live.start(); });
+    Promise.resolve().then(() => { if (alive && !initialState) void live.start(); });
     const timer = setInterval(() => save(), 1000);
     return () => { alive = false; clearInterval(timer); live.stop(); save(false); live.dispose(); runner.current = null; };
     // One controller owns one recorded session; parent updates must not restart it.
@@ -147,7 +167,7 @@ export function InterviewLiveSession({ theme, guests, userIdentityId, userName, 
     <header className="interview-header">
       <button type="button" className="interview-icon-btn" aria-label="保存并返回" onClick={() => { stop(); callbacks.current.onBack(); }}><ChevronLeft size={20} /></button>
       <div className="text-center min-w-0"><strong className="text-white text-sm">{theme}</strong><div className="text-xs text-white/45">第 {state.round} 轮 · {state.userAsGuest ? "用户已出场" : INTERVIEW_PARTICIPATIONS.find(([id]) => id === options.participation)?.[1]}</div></div>
-      <span className="text-white/45 text-xs">{busy ? "录制中" : "等待操作"}</span>
+      <button type="button" className="interview-icon-btn" aria-label="在场访谈设置" onClick={()=>{stop();setSettingsOpen(true);}}><Settings2 size={18}/></button>
     </header>
     <div ref={scrollRef} className="interview-scroll px-5 py-5 flex flex-col gap-5" aria-live="polite" onScroll={event => {
       const node = event.currentTarget; followBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
@@ -202,5 +222,12 @@ export function InterviewLiveSession({ theme, guests, userIdentityId, userName, 
         </>}
       </div>
     </footer>
+    {settingsOpen&&<InterviewSessionSettings characters={characters??initialGuests} guestIds={guests.map(guest=>guest.id)} options={options} onClose={()=>setSettingsOpen(false)} onApply={(ids,next)=>{
+      const available=characters??initialGuests,nextGuests=ids.flatMap(id=>available.find(char=>char.id===id)??[]);
+      runner.current?.updateGuests(nextGuests);runner.current?.updateOptions(next);
+      if(next.participation!==optionsRef.current.participation)runner.current?.setPresence(next.participation==="guest");
+      guestsRef.current=nextGuests;setGuests(nextGuests);optionsRef.current=next;setOptions(next);
+      onConfigure?.(ids,next);callbacks.current.onChange(runner.current?.state??stateRef.current,next);save();setSettingsOpen(false);
+    }}/>}
   </>;
 }

@@ -36,6 +36,7 @@ async function main() {
   const group = scenario({ flow: "all_user" }, { answer: input => { const d = deferred(); pending.push({ input, ...d }); input.onDelta(input.characterId); return d.promise; } });
   const first = group.live.start(); await tick();
   assert.equal(pending.length, 2);
+  assert.throws(()=>group.live.updateGuests([{id:"c",name:"丙"}]),/暂停/);
   await group.live.nextQuestion();
   assert.equal(pending.length, 2, "Repeated clicks must not create a second concurrent round");
   assert.equal(group.live.state.messages.filter(m => m.status === "streaming").length, 2);
@@ -112,6 +113,14 @@ async function main() {
   grouped.deleteMessage(questionToEdit.id);
   assert.equal(grouped.state.messages.length, 7);
   assert.equal(grouped.state.audienceRounds.length, 0);
+
+  const beforeRosterChange = grouped.state.messages.length, beforeRosterCalls = groupRequests.length;
+  grouped.updateGuests([{id:"2",name:"嘉宾2"},{id:"8",name:"新嘉宾"}]);
+  grouped.updateOptions({...grouped.options,guestGroups:{2:1,8:2}});
+  assert.equal(grouped.state.messages.length,beforeRosterChange); assert.equal(groupRequests.length,beforeRosterCalls);
+  await grouped.manualQuestion("更换嘉宾后的问题","主持人");
+  assert.deepEqual(individualRequests.slice(-2).map(call=>call.characterId).join(),"2,8");
+  assert.throws(()=>grouped.updateGuests([]),/至少/);
 
   const flexible = scenario({ participation: "flexible", flow: "all", questionAsHost: false });
   await flexible.live.start(); await flexible.live.manualQuestion("先幕后代问", "简初");

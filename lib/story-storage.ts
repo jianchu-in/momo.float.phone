@@ -1258,15 +1258,11 @@ export function loadStoryProjectionEntries(
 export async function continueFacingInStory(meeting: import("./facing-storage").FacingMeeting,
   identity: import("@/components/settings/user-identity").UserIdentity | null,
 ): Promise<StorySession> {
+  const participants = [...new Set(meeting.participantIds ?? meeting.mapContext?.participantIds ?? [meeting.characterId])];
+  if(participants.length!==1)throw new Error("多人面对面不支持衔接剧情。");
   await hydrateStoryStorage();
-  const participants = [...new Set(meeting.participantIds ?? [meeting.characterId])];
   const snapshotKey = JSON.stringify([meeting.id, meeting.turns.at(-1)?.id ?? "", meeting.updatedAt, meeting.scene]);
-  const matchingGroup=participants.length>1?loadStoryGroups().find(group=>[...group.characterIds].sort().join("|")===[...participants].sort().join("|")):undefined;
-  const groupId = participants.length > 1 ? matchingGroup?.id??`facing_group_${meeting.id}` : meeting.characterId;
-  const ownerType = participants.length > 1 ? "group" as const : "single" as const;
-  if (ownerType === "group" && !loadStoryGroups().some(group=>group.id===groupId)) {
-    const now=new Date().toISOString();saveStoryGroups([{id:groupId,name:meeting.title||"面对面续写",characterIds:participants,createdAt:now,updatedAt:now},...loadStoryGroups()]);
-  }
+  const groupId=meeting.characterId,ownerType="single" as const;
   const main=createOrGetStorySession(meeting.characterId,{ownerType,ownerId:groupId,participantIds:participants});
   let saved!: StorySession; let copied: StoryMessage[]=[];
   await storyDb.transaction("rw",storyDb.sessions,storyDb.messages,async()=>{

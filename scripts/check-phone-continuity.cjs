@@ -68,10 +68,10 @@ async function main(){
  meeting=await f.changeFacingTurns(meeting,turns=>turns.map(turn=>turn.id==='a1'?{...turn,sceneName:'卧室'}:turn));assert.equal(meeting.scene.sceneName,'卧室','selecting a reply version with a different scene still updates the scene');meeting=await f.changeFacingScene(meeting.id,{...sharedPosition,sceneName:'商场'});
  const story=load('lib/story-storage.ts');const first=await story.continueFacingInStory(meeting,{id:'user',name:'测试用户',avatarUrl:png('user')});const second=await story.continueFacingInStory(meeting,{id:'user',name:'测试用户'});assert.equal(first.id,second.id,'double confirmation reuses one branch');assert.notEqual(first.branchId,'main');assert.equal(story.loadStoryMessages(first.id).length,3);assert.match(story.loadStoryMessages(first.id).find(m=>m.role==='system').rawContent,/商场/);assert.equal(first.facingIdentity.name,'测试用户');assert.ok(f.loadFacingMeeting(meeting.id));
  const multi=await f.saveFacingMeetingStart({...f.createFacingMeeting('a','user','main'),participantIds:['a','b']},meeting.scene);
- const groupStory=await story.continueFacingInStory(multi,{id:'user',name:'测试用户'});
- const multi2=await f.saveFacingMeetingStart({...f.createFacingMeeting('a','user','main'),participantIds:['b','a']},meeting.scene);
- const groupStory2=await story.continueFacingInStory(multi2,{id:'user',name:'测试用户'});
- assert.equal(groupStory.ownerType,'group');assert.equal(groupStory.ownerId,groupStory2.ownerId,'same cast reuses its existing story group');assert.notEqual(groupStory.id,groupStory2.id);
+ const beforeGroups=story.loadStoryGroups().length;
+ await assert.rejects(story.continueFacingInStory(multi,{id:'user',name:'测试用户'}),/多人面对面不支持/);
+ await assert.rejects(story.continueFacingInStory({...multi,participantIds:undefined,mapContext:{atlasId:'map',placeId:'room',participantIds:['a','b'],secret:false,description:''}},{id:'user',name:'测试用户'}),/多人面对面不支持/);
+ assert.equal(story.loadStoryGroups().length,beforeGroups);
  const branch=await f.saveFacingMeetingStart(f.createFacingMeeting('a','user','branch',meeting),f.facingMeetingPosition(meeting));const merged=await f.mergeFacingMeetings(meeting.id,[branch.id]);assert.equal(merged.turns.length,2);await f.manageFacingMeetings([branch.id],'delete');assert.equal(f.loadFacingMeeting(branch.id),null);assert.ok(f.loadFacingMeeting(meeting.id));
  const phone=load('lib/character-phone-chat.ts'),phoneStore=load('lib/checkphone-storage.ts');let snap=await phone.ensureCharacterPhoneChat(chars[0]);const contacts=phone.characterPhoneContacts(chars[0],snap.payload);assert.ok(contacts.some(c=>c.peerType==='user'));assert.ok(contacts.some(c=>c.peerCharacterId==='b'));assert.ok(!contacts.some(c=>c.peerCharacterId==='c'));
  const target=contacts.find(c=>c.peerCharacterId==='b');snap=await phone.appendCharacterPhoneMessage(chars[0],target.id,'周末见','op1');assert.equal(snap.payload.conversations.find(c=>c.id===target.id).messages.length,1);
