@@ -5,9 +5,11 @@ import {FACING_SHARED_CHARACTER_ID,loadFacingAssets} from "@/lib/facing-storage"
 import {scanMapScenes,saveMapSceneBindings} from "@/lib/facing-map-scenes";
 import type {FacingAtlas,FacingMapPage,MapPlace} from "@/lib/facing-map-storage";
 import {MapSheet} from "./facing-map-panels";
+import {bigMapPlace} from "@/lib/facing-place-life";
 export function MapSceneMatcher({atlas,page,characters,initialCharacterId,onClose,onSave}:{atlas:FacingAtlas;page:FacingMapPage;characters:Character[];initialCharacterId:string;onClose:()=>void;onSave:(atlas:FacingAtlas)=>void}){
- const [owner,setOwner]=useState(initialCharacterId),[places,setPlaces]=useState<MapPlace[]>(page.places),[busy,setBusy]=useState(false),[error,setError]=useState("");
- const sources=[...characters.map(character=>({id:character.id,name:character.name})),{id:FACING_SHARED_CHARACTER_ID,name:"通用场景素材"}];
+ const home=bigMapPlace(atlas,page.parentPlaceId),homeOwners=home?.homeCharacterIds?.filter(id=>characters.some(char=>char.id===id))??[];
+ const [owner,setOwner]=useState(homeOwners[0]??initialCharacterId),[places,setPlaces]=useState<MapPlace[]>(page.places),[busy,setBusy]=useState(false),[error,setError]=useState("");
+ const sources=[...characters.map(character=>({id:character.id,name:character.name+(homeOwners.includes(character.id)?" · 此家的角色":"")})).sort((a,b)=>Number(homeOwners.includes(b.id))-Number(homeOwners.includes(a.id))),{id:FACING_SHARED_CHARACTER_ID,name:"通用场景素材"}];
  const options=sources.flatMap(source=>loadFacingAssets(source.id).filter(asset=>asset.category==="scene").map(asset=>({owner:source.id,id:asset.id,name:`${source.name} · ${asset.name}`,sceneName:asset.name})));
  async function save(){if(busy)return;setBusy(true);setError("");try{onSave(await saveMapSceneBindings(atlas.id,page.id,places));onClose();}catch(e){setError(e instanceof Error?e.message:"保存失败");}finally{setBusy(false);}}
  return <MapSheet title="地点匹配场景素材" onClose={()=>{if(!busy)onClose();}}><p>按地点名称扫描匹配，不调用API。先预览，再保存；每个地点也可单独选择默认或其他素材。</p><label>扫描素材来源<select value={owner} disabled={busy} onChange={e=>setOwner(e.target.value)}>{sources.map(source=><option key={source.id} value={source.id}>{source.name}</option>)}</select></label><button type="button" disabled={busy} onClick={()=>setPlaces(scanMapScenes(page.places,owner))}>扫描匹配本页地点</button>

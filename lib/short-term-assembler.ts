@@ -859,6 +859,7 @@ function* assembleNativeTimeline(
             .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         for (const meeting of meetings) {
             for (const turn of meeting.turns) {
+                if (turn.participantIds && !turn.participantIds.includes(characterId)) continue;
                 if (++processedMessages % 100 === 0) yield;
                 if (seen.has(turn.id) || (options?.afterTimestamp && turn.at <= options.afterTimestamp)) continue;
                 seen.add(turn.id);

@@ -15,3 +15,6 @@
 .facing-scene-rail > .facing-scene-card { flex: 0 0 180px; margin: 0; scroll-snap-align: start; }
 .facing-assets-scroll .facing-asset-rail > .facing-library-tile { flex: 0 0 145px; width: 145px; scroll-snap-align: start; }
 .facing-library-tile > .facing-asset-tile { width: 100%; }
+.facing-ambience { position:absolute;top:calc(var(--page-header-safe-top,48px) + 92px);left:10px;z-index:45;display:flex;flex-direction:column;max-width:190px;padding:5px 9px;border-radius:12px;background:#fffdf0df;color:#514560;font-size:11px;box-shadow:0 3px 14px #0001; }
+.facing-ambience button { min-height:32px; }
+.facing-ambience small { font-size:10px; }

@@ -1,5 +1,6 @@
 import { FACING_SHARED_CHARACTER_ID, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingSettings, loadFacingUsableAssets, type FacingAsset } from "./facing-storage";
 import { mapPlace, updateFacingAtlas, type FacingAtlas, type MapPlace } from "./facing-map-storage";
+import {bigMapPlace} from "./facing-place-life";
 export type MapSceneBinding = { source:"default"|"character"|"shared"; characterId?:string; sceneId?:string; sceneName?:string };
 const key=(value:string)=>value.normalize("NFKC").toLowerCase().replace(/[\s·・/\\／_—-]/g,"");
 export function matchPlaceScene(place:Pick<MapPlace,"name">, assets:FacingAsset[]) {
@@ -27,6 +28,8 @@ export function sceneForMapPlace(atlas:FacingAtlas,placeId:string,characterId:st
     if(scene){const portraits=usable.filter(asset=>asset.category==="portrait"&&!asset.generated&&asset.composition!=="full");
       const group=groupFacingScenes([{...scene,portraitIds:scene.characterId===characterId?scene.portraitIds:undefined},...portraits],loadFacingSettings().characters[characterId]?.portraitId)[0];return facingScenePosition(group);}
   }
-  const scene=place?matchPlaceScene(place,usable):undefined;
-  return facingScenePosition(scene?groups.find(group=>group.backdrop?.id===scene.id):groups[0]);
+  const homeOwner=bigMapPlace(atlas,placeId)?.homeCharacterIds?.[0];
+  const scene=place?(homeOwner?matchPlaceScene(place,loadFacingAssets(homeOwner)):undefined)??matchPlaceScene(place,usable):undefined;
+  if(scene){const portraits=usable.filter(asset=>asset.category==="portrait"&&!asset.generated&&asset.composition!=="full");return facingScenePosition(groupFacingScenes([{...scene,portraitIds:scene.characterId===characterId?scene.portraitIds:undefined},...portraits])[0]);}
+  return facingScenePosition(groups[0]);
 }

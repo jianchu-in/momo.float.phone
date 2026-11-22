@@ -2,6 +2,7 @@ import { throwIfAborted } from "./abort-utils";
 import { facingId } from "./facing-storage";
 import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, registerDynamicPrefix } from "./kv-db";
 import { getThemeAssetDataUrl, deleteThemeAsset } from "./theme-storage";
+import {loadMediaBlob,storeMediaBlob,deleteMediaRef} from "./media-cache-storage";
 import { createFacingAtlas, loadFacingAtlas, mapBounds, mapPlace, storeMapTile, updateFacingAtlas,
   type FacingAtlas, type FacingMapPage, type MapPlace, type MapTile } from "./facing-map-storage";
 import type { MapTemplateTarget } from "./facing-map-templates";
@@ -9,8 +10,8 @@ import type { MapTemplateTarget } from "./facing-map-templates";
 const PREFIX = "ai_phone_facing_map_template_v1:";
 registerDynamicPrefix(PREFIX);
 export type MapPackage = { format: "facing-map"; version: 1; kind: "atlas" | "place" | "template";
-  name: string; description: string; rootPlace?: MapPlace; pages: FacingMapPage[]; images: Record<string, string> };
-export type SavedMapTemplate = Omit<MapPackage, "format" | "version" | "kind" | "images"> & { id: string };
+  name: string; description: string; rootPlace?: MapPlace; pages: FacingMapPage[]; images: Record<string, string>; audio?:Record<string,string> };
+export type SavedMapTemplate = Omit<MapPackage, "format" | "version" | "kind" | "images" | "audio"> & { id: string };
 export function loadCustomMapTemplates(): SavedMapTemplate[] {
   return kvKeysWithPrefix(PREFIX).flatMap(key => {
     try { const raw = kvGet(key); return raw ? [JSON.parse(raw) as SavedMapTemplate] : []; } catch { return []; }
@@ -45,10 +46,18 @@ export async function exportMapPackage(atlas: FacingAtlas, signal: AbortSignal, 
   const pages = place ? nestedPages(atlas, place.id) : atlas.pages;
   return { format: "facing-map", version: 1, kind: place ? "place" : "atlas", name: place?.name ?? atlas.name,
     description: place?.description ?? pages[0]?.description ?? "", rootPlace: place,
-    pages, images: await packageImages(pages, signal) };
+    pages, images: await packageImages(pages, signal),audio:await packageAudio(pages,place,signal) };
+}
+async function packageAudio(pages:FacingMapPage[],root:MapPlace|undefined,signal:AbortSignal){
+ const audio:Record<string,string>={};
+ for(const place of [...(root?[root]:[]),...pages.flatMap(page=>page.places)]){
+  const ref=place.ambience?.mediaRef;if(!ref||audio[ref])continue;throwIfAborted(signal);
+  const media=await loadMediaBlob(ref);if(!media||media.category!=="audio")throw new Error("部分氛围音文件已丢失，请移除或重新上传后导出。");
+  audio[ref]=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error("氛围音导出失败"));reader.readAsDataURL(media.blob.type?media.blob:new Blob([media.blob],{type:media.mimeType}));});
+ }return audio;
 }
 export async function exportCustomMapTemplate(template: SavedMapTemplate, signal: AbortSignal): Promise<MapPackage> {
-  return { ...template, format: "facing-map", version: 1, kind: "template", images: await packageImages(template.pages, signal) };
+  return { ...template, format: "facing-map", version: 1, kind: "template", images: await packageImages(template.pages, signal),audio:await packageAudio(template.pages,template.rootPlace,signal) };
 }
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("地图文件结构无效。");
@@ -70,13 +79,19 @@ function list(value: unknown, max: number): unknown[] {
 export async function readMapPackage(file: File, signal: AbortSignal): Promise<MapPackage> {
   if (file.size > 150 * 1024 * 1024) throw new Error("地图文件过大，请导入不超过 150 MB 的 JSON 文件。");
   const data = object(JSON.parse(await file.text())); throwIfAborted(signal);
+  const audioSources=data.audio?object(data.audio):{},cleanAudio:Record<string,string>={};
   if (data.format !== "facing-map" || data.version !== 1 || !["atlas", "place", "template"].includes(String(data.kind))) throw new Error("这不是受支持的地图或场所模板文件。");
   const unique = new Set<string>();
   function id(value: unknown) { const result = string(value, 200); if (!result || unique.has(result)) throw new Error("地图文件存在重复或空白 ID。"); unique.add(result); return result; }
   function place(value: unknown): MapPlace {
-    const p = object(value); const binding=object(p.sceneBinding);
+    const p = object(value); const binding=p.sceneBinding?object(p.sceneBinding):{};
+    let ambience:MapPlace["ambience"];
+    if(p.ambience){const track=object(p.ambience),ref=string(track.mediaRef,200),source=audioSources[ref];
+      if(typeof source!=="string"||source.length>42*1024*1024||!/^data:audio\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+$/.test(source))throw new Error("地图缺少有效的氛围音文件。");
+      cleanAudio[ref]=source;ambience={mediaRef:ref,name:string(track.name,300),volume:Math.max(0,Math.min(1,number(track.volume)))};
+    }
     return { ...(binding.source==="default"||binding.source==="character"||binding.source==="shared"?{sceneBinding:{source:binding.source,characterId:string(binding.characterId,200)||undefined,sceneId:string(binding.sceneId,200)||undefined,sceneName:string(binding.sceneName,200)||undefined}}:{}), id: id(p.id), name: string(p.name, 200), description: string(p.description),
-      x: number(p.x), y: number(p.y), ...(p.tileId ? { tileId: string(p.tileId, 200) } : {}) };
+      x: number(p.x), y: number(p.y), ambience,homeCharacterIds:p.homeCharacterIds?list(p.homeCharacterIds,1000).map(id=>string(id,200)):undefined, ...(p.tileId ? { tileId: string(p.tileId, 200) } : {}) };
   }
   const rootPlace = data.rootPlace ? place(data.rootPlace) : undefined;
   const images = object(data.images), cleanImages: Record<string, string> = Object.create(null);
@@ -111,7 +126,7 @@ export async function readMapPackage(file: File, signal: AbortSignal): Promise<M
     }
   }
   if (done.size !== pages.length) throw new Error("地图文件存在循环或失效的内部地图关联。");
-  return { format: "facing-map", version: 1, kind, name: string(data.name, 200), description: string(data.description), rootPlace, pages, images: cleanImages };
+  return { format: "facing-map", version: 1, kind, name: string(data.name, 200), description: string(data.description), rootPlace, pages, images: cleanImages,audio:cleanAudio };
 }
 function cloneLayout(pages: FacingMapPage[], rootPlace?: MapPlace) {
   const ids = new Map<string, string>();
@@ -122,23 +137,26 @@ function cloneLayout(pages: FacingMapPage[], rootPlace?: MapPlace) {
     parentPlaceId: page.parentPlaceId ? ids.get(page.parentPlaceId) : undefined, entryPlaceId: page.entryPlaceId ? ids.get(page.entryPlaceId) : undefined,
     tiles: page.tiles.map(tile => ({ ...tile, id: ids.get(tile.id)! })), places: page.places.map(clonePlace), roads: [] })) };
 }
-async function withImportedMedia<T>(data: MapPackage, signal: AbortSignal, save: (pages: FacingMapPage[]) => Promise<T>): Promise<T> {
+async function withImportedMedia<T>(data: MapPackage, signal: AbortSignal, save: (pages: FacingMapPage[],rootPlace?:MapPlace) => Promise<T>): Promise<T> {
   const media = new Map<string, MapTile>();
+  const audio=new Map<string,string>();
   try {
+    for(const [id,source] of Object.entries(data.audio??{})){throwIfAborted(signal);const blob=await(await fetch(source,{signal})).blob();audio.set(id,await storeMediaBlob(blob,blob.type,"audio"));}
     for (const [id, source] of Object.entries(data.images)) {
       throwIfAborted(signal);
       const blob = await (await fetch(source, { signal })).blob();
       const tile = await storeMapTile(blob, { x: 0, y: 0 }); media.set(id, tile);
     }
     throwIfAborted(signal);
-    const pages = data.pages.map(page => ({ ...page, tiles: page.tiles.map(tile => ({ ...tile, mediaId: media.get(tile.mediaId)!.mediaId,
+    const remap=(place:MapPlace)=>({...place,ambience:place.ambience?{...place.ambience,mediaRef:audio.get(place.ambience.mediaRef)??place.ambience.mediaRef}:undefined});
+    const pages = data.pages.map(page => ({ ...page,places:page.places.map(remap), tiles: page.tiles.map(tile => ({ ...tile, mediaId: media.get(tile.mediaId)!.mediaId,
       pixelWidth: media.get(tile.mediaId)!.pixelWidth, pixelHeight: media.get(tile.mediaId)!.pixelHeight })) }));
-    return await save(pages);
-  } catch (cause) { await Promise.allSettled([...media.values()].map(tile => deleteThemeAsset(tile.mediaId))); throw cause; }
+    return await save(pages,data.rootPlace?remap(data.rootPlace):undefined);
+  } catch (cause) { await Promise.allSettled([...media.values()].map(tile => deleteThemeAsset(tile.mediaId)).concat([...audio.values()].map(deleteMediaRef))); throw cause; }
 }
 export async function importMapPackage(data: MapPackage, worldId: string, characterIds: string[], signal: AbortSignal, asTemplate = data.kind !== "atlas") {
-  return withImportedMedia(data, signal, async pages => {
-    const cloned = cloneLayout(pages, data.rootPlace);
+  return withImportedMedia(data, signal, async (pages,rootPlace) => {
+    const cloned = cloneLayout(pages, rootPlace);
     if (asTemplate) {
       const rootPlace = cloned.rootPlace ?? { id: facingId(), name: data.name, description: data.description, x: 0, y: 0 };
       const template: SavedMapTemplate = { id: facingId(), name: data.name, description: data.description, rootPlace,

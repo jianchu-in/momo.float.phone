@@ -17,6 +17,7 @@ import { commitMapTile, createFacingAtlas, createMapInterior, loadFacingAtlases,
   mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
   type FacingAtlas, type MapTile, type MapPlace, type MapPoint, type MapPreferences, type MapTrip } from "@/lib/facing-map-storage";
 import { MapSceneMatcher } from "./facing-map-scene-matcher";
+import { FacingPlaceSettings } from "./facing-place-settings";
 import { FacingMapCanvas } from "./facing-map-canvas";
 import { MapDimensions, MapSheet, MapExpansionPreview } from "./facing-map-panels";
 import { editMapTile, replaceMapTile, removeMapTile, removeMapPlaces, placesForTile, tileForPlace } from "@/lib/facing-map-editing";
@@ -31,9 +32,10 @@ import { mapCharacterResidence, mapResidentIds, saveMapResidents } from "@/lib/f
 import { loadMapPlans, saveMapPlan, formatMapPlan, mapPlanPlaces, validateMapPlan } from "@/lib/facing-map-plans";
 
 registerDynamicPrefix("ai_phone_facing_map_draft_v1:");
-type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | "scene-match" | null;
+type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | "scene-match" | "place-life" | null;
 type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile; uploaded?: boolean };
-export function FacingMapApp({ character, characters, currentMeeting, onBack, onSettings, onArrive }: {
+export function FacingMapApp({ character, characters, currentMeeting, onBack, onSettings, onArrive, onLocation }: {
+  onLocation?: (location:{atlasId:string;placeId:string}|undefined)=>void;
   character: Character; characters: Character[]; currentMeeting?: FacingMeeting;
   onBack: () => void; onSettings: () => void;
   onArrive: (atlas: FacingAtlas, trip: MapTrip, visitId: string) => Promise<void>;
@@ -88,6 +90,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   const identityId = identity?.id ?? null;
   const identityKey = identityId ?? "default";
   const userPlaceId = atlas?.userPlaces[identityKey];
+  useEffect(()=>{onLocation?.(atlas&&(page?.parentPlaceId||userPlaceId)?{atlasId:atlas.id,placeId:page?.parentPlaceId||userPlaceId!}:undefined);},[atlas,page?.id,userPlaceId,onLocation]);
   const invitation = atlas?.invitations.find(item => item.id === invitationId);
   const selectedActivities = atlas && selected && page ? (snapshot?.entries ?? []).filter(entry => placeOnMapPage(atlas, entry.placeId, page.id)?.id === selected.id) : [];
   const api = loadApiConfigs().find(item => item.id === resolveBinding(loadBindingConfig(), character.id, "facing").apiConfigId);
@@ -406,6 +409,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           </button>;
         })}
         <div className="facing-choices">
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("place-life")}>家的归属与氛围音</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("scene-match")}>设置地点场景</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void interior()}>进入内部地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>套用场所模板</button>
@@ -431,6 +435,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => openGenerate()}>生成地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>生活角色 · {members.length}</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("scene-match")}>匹配场景素材</button>
+          {page.parentPlaceId&&<button type="button" className="facing-small" disabled={!!busy} onClick={()=>{setSelectedId(undefined);setSheet("place-life");}}>本大地点的家与氛围音</button>}
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("tiles")}>图块与扩展</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("transfer")}>导入 / 导出</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>前往动画</button>
@@ -484,6 +489,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void (sheet === "create" ? create() : saveSources())}>{sheet === "create" ? "创建并打开" : "保存生活角色"}</button>
     </MapSheet>}
     {sheet === "scene-match" && atlas && page && <MapSceneMatcher atlas={atlas} page={page} characters={characters} initialCharacterId={character.id} onClose={closeSheet} onSave={setAtlas}/>}
+    {sheet === "place-life" && atlas && (selected||page?.parentPlaceId) && <FacingPlaceSettings atlas={atlas} placeId={selected?.id||page!.parentPlaceId!} characters={members} onSave={setAtlas} onClose={closeSheet} onMatch={(current,id)=>void run("打开家的场景匹配",async()=>{const saved=await createMapInterior(current.id,mapPlace(current,id)!.place);setAtlas(saved);setPageId(saved.pages.find(item=>item.parentPlaceId===id)!.id);setSelectedId(undefined);setSheet("scene-match");})}/>}
     {sheet === "generate" && <MapSheet title={replacement ? "升级图块与重新生图" : extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
       <fieldset ref={planEditor} className="fmap-operation-fields" disabled={!!busy}>
       <details><summary>生成参考资料 · 角色与记忆</summary>

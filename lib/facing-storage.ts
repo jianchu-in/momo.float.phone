@@ -150,9 +150,13 @@ export function shouldCheckFacingVisual(round: number, settings?: FacingAutoVisu
   return settings?.enabled === true && round > 0 && round % step === 0;
 }
 
-export type FacingSettings = { characterId?: string; participantIds?: string[]; characters: Record<string, FacingCharacterSettings> };
+export type FacingReplyGroup = { id:string; name:string; characterIds:string[] };
+export type FacingSettings = { characterId?: string; participantIds?: string[]; replyGroups?:FacingReplyGroup[]; characters: Record<string, FacingCharacterSettings> };
 
 export type FacingTurn = {
+  participantIds?:string[];
+  replyGroups?: FacingReplyGroup[];
+  replyGroupId?: string;
   id: string;
   role: "user" | "assistant";
   kind: "text" | "voice" | "touch" | "reply";
@@ -192,6 +196,8 @@ export function facingTurnText(turn: FacingTurn): string {
 }
 
 export type FacingMeeting = {
+  replyGroups?:FacingReplyGroup[];
+  participantHistoryIds?:string[];
   id: string;
   type: "main" | "branch" | "independent";
   characterId: string;
@@ -251,6 +257,29 @@ export async function saveFacingParticipants(ids: string[]): Promise<FacingSetti
     return JSON.stringify(saved);
   });
   return saved!;
+}
+
+export function normalizeFacingReplyGroups(groups:FacingReplyGroup[]|undefined,ids:string[]):FacingReplyGroup[]{
+ if(!groups?.length)return [];
+ const used=new Set<string>(),seenGroups=new Set<string>();
+ const result=groups.filter(group=>{if(!group.id||seenGroups.has(group.id))return false;seenGroups.add(group.id);return true;}).map((group,index)=>({...group,name:group.name.trim()||`第${index+1}组`,characterIds:group.characterIds.filter(id=>ids.includes(id)&&!used.has(id)&&!!used.add(id))}));
+ const missing=ids.filter(id=>!used.has(id));if(result[0])result[0].characterIds.push(...missing);
+ return result.filter(group=>group.characterIds.length);
+}
+export async function configureFacingCast(ids:string[],groups:FacingReplyGroup[],meetingId?:string){
+ const participantIds=[...new Set(ids.filter(Boolean))];if(!participantIds.length)throw new Error("请至少保留一位在场角色。");
+ const replyGroups=normalizeFacingReplyGroups(groups,participantIds);let settings:FacingSettings,meeting:FacingMeeting|undefined;
+ await kvUpdatePersistedEntries({
+  [FACING_SETTINGS_KEY]:raw=>{settings={...readJson<FacingSettings>(raw,{characters:{}}),characterId:participantIds[0],participantIds,replyGroups};return JSON.stringify(settings);},
+  ...(meetingId?{[FACING_MEETING_PREFIX+meetingId]:(raw:string|null)=>{const previous=readJson<FacingMeeting|null>(raw,null);if(!previous||previous.deletedAt)throw new Error("这段对话已不存在。");meeting={...previous,turns:previous.turns.map(turn=>turn.participantIds?turn:{...turn,participantIds:facingParticipantIds(previous)}),characterId:participantIds[0],participantIds,replyGroups,participantHistoryIds:[...new Set([...(previous.participantHistoryIds??[]),...facingParticipantIds(previous),...participantIds])],mapContext:previous.mapContext?{...previous.mapContext,participantIds}:undefined,updatedAt:new Date().toISOString()};return JSON.stringify(meeting);}}:{}),
+ });return {settings:settings!,meeting};
+}
+
+export function pendingFacingGroups(meeting:FacingMeeting){
+ const user=meeting.turns.slice().reverse().find(turn=>turn.role==="user");
+ const ids=facingParticipantIds(meeting);
+ const groups=((user?.replyGroups?.length??0)>1?user!.replyGroups!:[]).map(group=>({...group,characterIds:group.characterIds.filter(id=>ids.includes(id))})).filter(group=>group.characterIds.length&&!meeting.turns.some(turn=>turn.replyTo===user?.id&&turn.replyGroupId===group.id));
+ return {user,groups};
 }
 
 export function loadFacingAssets(characterId: string): FacingAsset[] {
@@ -361,7 +390,7 @@ export async function deleteFacingAssets(characterId: string, assetIds: readonly
 export function loadFacingMeetings(characterId: string, identityId?: string | null, includeParticipants = false): FacingMeeting[] {
   return kvKeysWithPrefix(FACING_MEETING_PREFIX)
     .map(key => readJson<FacingMeeting | null>(kvGet(key), null))
-    .filter((record): record is FacingMeeting => !!record && !record.deletedAt && (record.characterId === characterId || (includeParticipants && facingParticipantIds(record).includes(characterId))) && (identityId === undefined || record.identityId === identityId))
+    .filter((record): record is FacingMeeting => !!record && !record.deletedAt && (record.characterId === characterId || (includeParticipants && [...facingParticipantIds(record),...(record.participantHistoryIds??[])].includes(characterId))) && (identityId === undefined || record.identityId === identityId))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
@@ -456,7 +485,8 @@ export async function appendFacingTurns(meeting: FacingMeeting, incoming: Facing
     const turns = current.turns.slice();
     const rounds = new Set(current.turns.filter(item => item.role === "assistant").map(item => item.replyTo ?? item.id));
     let addedRounds = 0;
-    for (const turn of incoming) {
+    for (const incomingTurn of incoming) {
+      const turn=incomingTurn.participantIds?incomingTurn:{...incomingTurn,participantIds:facingParticipantIds(current)};
       if (turns.some(item => item.id === turn.id || (turn.replyTo && item.replyTo === turn.replyTo && item.speakerId === turn.speakerId))) continue;
       const replyIndex = turn.replyTo ? turns.findIndex(item => item.id === turn.replyTo) : -1;
       let insert = replyIndex + 1;

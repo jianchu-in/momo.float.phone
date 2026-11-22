@@ -4,19 +4,22 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, Settings2, UserRound, X } from "lucide-react";
 import { FacingMapApp } from "./facing-map-app";
 import { FacingMapSettings } from "./facing-map-panels";
-import { mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
+import { loadFacingAtlas, mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
+import {bigMapPlace} from "@/lib/facing-place-life";
+import {FacingAmbience} from "./facing-ambience";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { createFacingMeeting, deleteFacingAssets, loadFacingUsableAssets, changeFacingScene, manageFacingMeetings, mergeFacingMeetings, FACING_SHARED_CHARACTER_ID, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
-  type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
+  configureFacingCast, normalizeFacingReplyGroups, type FacingReplyGroup, type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
 import { sceneForMapPlace } from "@/lib/facing-map-scenes";
 import { continueFacingInStory } from "@/lib/story-storage";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { loadUserIdentities, resolveUserIdentity } from "@/lib/settings-storage";
 import { saveFacingParticipants } from "@/lib/facing-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
 import "@/styles/facing-life.css";
 import { FacingProducts } from "./facing-life-panels";
 import { FacingAssets } from "./facing-assets";
+import { FacingGroupEditor } from "./facing-group-editor";
 import { FacingRoom } from "./facing-room";
 import { FacingStage } from "./facing-stage";
 import { ShownImage } from "@/components/ui/shown-image";
@@ -77,6 +80,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const character = characters.find(item => item.id === preferences.characterId);
   const participantIds = [...new Set([preferences.characterId, ...(preferences.participantIds ?? [])])].filter((id): id is string => !!id && characters.some(item => item.id === id));
   const [castDraft, setCastDraft] = useState(participantIds);
+  const [castGroups,setCastGroups]=useState<FacingReplyGroup[]>(preferences.replyGroups??[]),[editingCastMeeting,setEditingCastMeeting]=useState<string>();
   const castNames = participantIds.map(id => characters.find(item => item.id === id)!.name).join("、");
   const [page, setPage] = useState<Page>("home");
   const [mapOrigin, setMapOrigin] = useState<"home" | "room">("home");
@@ -91,6 +95,11 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const [recordRevision,setRecordRevision]=useState(0), [recordSelection,setRecordSelection]=useState<string[]>([]),[recordName,setRecordName]=useState("");
   const [confirmRecordDelete,setConfirmRecordDelete]=useState(false),[removeMergedSources,setRemoveMergedSources]=useState(false),[recordBusy,setRecordBusy]=useState(false);
   const [meeting, setMeeting] = useState<FacingMeeting>();
+  const [audioLocation,setAudioLocation]=useState<{atlasId:string;placeId:string}>();
+  const roomDrafts=useRef(new Map<string,{text:string;photo?:File}>());
+  const audioAtlas=audioLocation?loadFacingAtlas(audioLocation.atlasId):undefined;
+  const audioPlace=audioAtlas?bigMapPlace(audioAtlas,audioLocation?.placeId):undefined;
+  useEffect(()=>{if(page==="home"||page==="records"||page==="record")setAudioLocation(undefined);},[page]);
   const [draftMeeting, setDraftMeeting] = useState<FacingMeeting>();
   const [openingScene, setOpeningScene] = useState(FACING_DEFAULT_SCENE);
   const [starting, setStarting] = useState(false);
@@ -118,11 +127,11 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
 
   async function selectCharacters() {
     setError("");
-    try { setPreferences(await saveFacingParticipants(castDraft)); setAssets(loadFacingUsableAssets(castDraft[0])); setSheet(null); }
+    try { const saved=await configureFacingCast(castDraft,castGroups,editingCastMeeting);setPreferences(saved.settings);if(saved.meeting)setMeeting(saved.meeting);setAssets(loadFacingUsableAssets(castDraft[0]));setSheet(null); }
     catch { setError("角色选择保存失败。"); }
   }
 
-  function openCharacters() { setCastDraft(participantIds); setSheet("characters"); }
+  function openCharacters() { const editing=page==="settings"&&settingOrigin==="room"?meeting:undefined;setEditingCastMeeting(editing?.id);setCastDraft(editing?facingParticipantIds(editing):participantIds);setCastGroups(editing?.replyGroups??preferences.replyGroups??[]);setSheet("characters"); }
 
   async function changeSetting(patch: Partial<FacingCharacterSettings>) {
     if (character) {setPreferences(await saveFacingSettings(character.id, patch));setAssets(loadFacingUsableAssets(character.id));}
@@ -141,13 +150,14 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
 
   function openRoom(item: FacingMeeting) {
     unlockAudioPlayback();
+    setAudioLocation(item.mapContext?{atlasId:item.mapContext.atlasId,placeId:item.mapContext.placeId}:undefined);
     setMeeting(loadFacingMeeting(item.id) ?? item);
-    if (item.characterId !== character?.id) {
+    if (item.characterId !== character?.id || [...facingParticipantIds(item)].sort().join("|")!==castKey) {
       setAssets(loadFacingUsableAssets(item.characterId));
       setPreferences(current => ({ ...current, characterId: item.characterId,
-        participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)] }));
-      void saveFacingParticipants([item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)])
-        .then(setPreferences).catch(() => setError("见面角色选择保存失败。"));
+        participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)],replyGroups:item.replyGroups }));
+      void configureFacingCast([item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)],item.replyGroups??[])
+        .then(result=>setPreferences(result.settings)).catch(() => setError("见面角色选择保存失败。"));
     }
     setRecordType(item.type);
     setPage("room");
@@ -159,7 +169,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     const preferred = parent ? facingMeetingPosition(parent).sceneName : homeScene.position.sceneName;
     setOpeningScene(groups.some(group => group.name === preferred) ? preferred : initialGroup?.name ?? FACING_DEFAULT_SCENE);
     const draft = createFacingMeeting(character.id, identityId, type, parent);
-    setDraftMeeting(parent ? draft : { ...draft, participantIds });
+    setDraftMeeting(parent ? {...draft,replyGroups:parent.replyGroups} : { ...draft, participantIds,replyGroups:normalizeFacingReplyGroups(preferences.replyGroups,participantIds) });
     setSheet("new");
   }
 
@@ -203,6 +213,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
 
   useEffect(()=>{if(!initialMeetingId)return;const saved=loadFacingMeeting(initialMeetingId);if(saved)openRoom(saved);else setError("原面对面记录已移除，可以从见面记录选择其他对话。");onLaunchConsumed?.();},[initialMeetingId]);
   return <div ref={appRef} className="facing-app" style={{ paddingBottom: pageInset }}>
+    <FacingAmbience track={audioPlace?.ambience} location={audioPlace?.name}/>
     {page === "home" && <>
       <Header title="面对面" onBack={onClose}>
         {character && <button type="button" className="facing-icon" onClick={() => { setMapOrigin("home"); setPage("map"); }} aria-label="世界地图"><MapIcon size={20} /></button>}
@@ -228,11 +239,12 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       </div>}
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
+      initialDraft={roomDrafts.current.get(meeting.id)?.text} initialPhoto={roomDrafts.current.get(meeting.id)?.photo} onDraft={(text,photo)=>roomDrafts.current.set(meeting.id,{text,photo})}
       portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
       autoAsset={assets.find(asset => asset.id === meeting.visual?.assetId)} autoProgress={autoVisual.progress[meeting.id]}
       onCompleted={completed => autoVisual.check(completed, character)}
       onMap={() => { setMapOrigin("room"); setPage("map"); }}
-      onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
+      onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,loadUserIdentities().find(item=>item.id===meeting.identityId)??resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
       onScene={async name=>{const group=groups.find(item=>item.name===name);if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
       onEditPortrait={(id,owner)=>{setAssetEditId(id??"new");setAssetOwnerId(owner??character.id);setAssetOrigin("room");setPage(loadFacingAssets(FACING_SHARED_CHARACTER_ID).some(a=>a.id===id)?"shared-assets":"assets");}}
       onPortraitLayout={async (owner,id,layout)=>{const previous=loadFacingSettings().characters[owner];setPreferences(await saveFacingSettings(owner,{portraitLayouts:{...previous?.portraitLayouts,[id]:layout}}));}}
@@ -243,6 +255,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       <main className="facing-scroll facing-form">
         <h2 className="facing-record-title">{character.name}</h2>
         <div className="facing-list">
+          <button type="button" onClick={openCharacters}><UserRound size={18}/><span>{settingOrigin==="room"?"调整当前在场角色与分组":"选择角色与回应分组"}</span><ChevronRight size={17}/></button>
           <button type="button" onClick={() => { setMapSettingsOrigin("settings"); setPage("map-settings"); }}><MapIcon size={18} /><span>地图设置</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
           <button type="button" onClick={()=>{setAssetOrigin("settings");setAssetEditId(undefined);setPage("shared-assets");}}><Images size={18}/><span>通用场景素材</span><ChevronRight size={17}/></button>
@@ -313,7 +326,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     {(page === "map" || (page === "map-settings" && mapSettingsOrigin === "map")) && character &&
       <div style={{ display: page === "map" ? "flex" : "none", flex: 1, minHeight: 0 }}>
         <FacingMapApp character={character} characters={characters} currentMeeting={meeting}
-          onBack={() => setPage(mapOrigin)} onSettings={() => { setMapSettingsOrigin("map"); setPage("map-settings"); }} onArrive={arriveFromMap} />
+          onBack={() => setPage(mapOrigin)} onSettings={() => { setMapSettingsOrigin("map"); setPage("map-settings"); }} onArrive={arriveFromMap} onLocation={setAudioLocation} />
       </div>}
     {page === "map-settings" && <FacingMapSettings onBack={() => setPage(mapSettingsOrigin)} />}
     {page === "assets" && character && <FacingAssets key={assetOwnerId??character.id} character={characters.find(item=>item.id===assetOwnerId)??character} assets={loadFacingAssets(assetOwnerId??character.id)} groups={groupFacingScenes(loadFacingAssets(assetOwnerId??character.id))} initialAssetId={assetEditId}
@@ -360,6 +373,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
           <span>{item.name}</span>{castDraft.includes(item.id) && <small>已选择 ✓</small>}
         </button>)}
       </div>
+      <FacingGroupEditor ids={castDraft} characters={characters} value={castGroups} onChange={setCastGroups}/>
       <button type="button" className="facing-primary" disabled={!castDraft.length} onClick={() => void selectCharacters()}>确认选择 · {castDraft.length}人</button>
     </FacingSheet>}
     {sheet === "new" && <FacingSheet title="选择开场场景" close={() => { if (!starting) setSheet(null); }}>

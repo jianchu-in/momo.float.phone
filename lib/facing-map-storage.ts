@@ -10,7 +10,8 @@ registerDynamicPrefix(MAP_PREFIX);
 registerKvMigration(FACING_MAP_SETTINGS_KEY);
 
 export type MapPoint = { x: number; y: number };
-export type MapPlace = MapPoint & { id: string; name: string; description: string; tileId?: string; sceneBinding?: import("./facing-map-scenes").MapSceneBinding };
+export type MapAmbience = { mediaRef: string; name: string; volume: number };
+export type MapPlace = MapPoint & { id: string; name: string; description: string; tileId?: string; ambience?: MapAmbience; homeCharacterIds?: string[]; sceneBinding?: import("./facing-map-scenes").MapSceneBinding };
 export type MapTile = MapPoint & { id: string; mediaId: string; width: number; height: number; pixelWidth: number; pixelHeight: number; name?: string; description?: string };
 export type MapRoad = { id: string; from: string; to: string; points: MapPoint[] };
 export type FacingMapPage = {
@@ -39,6 +40,7 @@ export type FacingAtlas = {
   userPlaces: Record<string, string>; createdAt: string; updatedAt: string;
 };
 export type MapPreferences = {
+  ambienceMuted?: boolean;
   descriptionPrompt: string; imagePrompt: string; width: number; height: number;
   animation: "route" | "car"; line: "solid" | "dashed"; duration: number;
 };
@@ -88,7 +90,7 @@ export async function saveMapResidents(atlas: FacingAtlas, ids: string[]) {
     [FACING_RESIDENTS_KEY]: raw => JSON.stringify(assignResidents(residentRegistry(raw), atlas.worldId, characterIds, atlas.id, atlas.name)),
     ...Object.fromEntries(loadFacingAtlases(atlas.worldId).map(map => [MAP_PREFIX + map.id, (raw: string | null) => {
       const current = parse(raw, map);
-      return JSON.stringify({ ...current, characterIds, updatedAt: new Date().toISOString() });
+      return JSON.stringify({ ...current, characterIds,pages:current.pages.map(page=>({...page,places:page.places.map(place=>place.homeCharacterIds?{...place,homeCharacterIds:place.homeCharacterIds.filter(id=>characterIds.includes(id))}:place)})), updatedAt: new Date().toISOString() });
     }])),
   });
   return loadFacingAtlas(atlas.id)!;

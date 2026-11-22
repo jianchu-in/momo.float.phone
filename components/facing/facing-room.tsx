@@ -7,7 +7,7 @@ import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
-import { appendFacingTurn, appendFacingTurns, facingParticipantIds, loadFacingSettings, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, FACING_DEFAULT_APPEARANCE, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
+import { appendFacingTurn, appendFacingTurns, normalizeFacingReplyGroups, pendingFacingGroups, facingParticipantIds, loadFacingSettings, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, FACING_DEFAULT_APPEARANCE, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
 import { unlockAudioPlayback } from "@/lib/tts-service";
@@ -21,7 +21,10 @@ import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, autoAsset, autoProgress, onCompleted,
-  onMeeting, onSettings, onEnd, onVoice, onSpeechInput, onMap, onScene, onEditPortrait, onPortraitLayout, onStory }: {
+  onMeeting, onSettings, onEnd, onVoice, onSpeechInput, onMap, onScene, onEditPortrait, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft }: {
+  initialDraft?:string;
+  initialPhoto?:File;
+  onDraft?:(text:string,photo?:File)=>void;
   onScene: (name:string) => Promise<void>;
   onEditPortrait: (id?:string,characterId?:string) => void;
   onPortraitLayout: (characterId:string, assetId:string, layout:{x:number;y:number;scale:number}) => Promise<void>;
@@ -55,11 +58,14 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     && meeting.visual.activityId !== expiredVisual && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? meeting.visual.assetId : undefined;
   const speakerVisual = useFacingSpeaker(speaker, position.sceneName, multi, speakerVisualId ?? activeTurn?.reactionId);
   const storedReaction = scenes.find(group => group.name === position.sceneName)?.reactions.find(asset => asset.id === activeTurn?.reactionId);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft??"");
+  const draftRef=useRef(draft);draftRef.current=draft;
+  useEffect(()=>()=>{onDraft?.(draftRef.current,photoRef.current);},[]);
   const [hidden, setHidden] = useState(false);
   const [scenePicker,setScenePicker]=useState(false);
   const [storyConfirm,setStoryConfirm]=useState(false), [storyBusy,setStoryBusy]=useState(false);
-  const [photo, setPhoto] = useState<File>();
+  const [photo, setPhoto] = useState<File|undefined>(initialPhoto);
+  const photoRef=useRef(photo);photoRef.current=photo;
   const [touches, setTouches] = useState<FacingHotspot[]>([]);
   const [touchEffect, setTouchEffect] = useState<{ label: string; x: number; y: number; id: string }>();
   const [menuId, setMenuId] = useState<string>();
@@ -93,6 +99,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const selectedPortrait=multi?speakerVisual.portrait:portrait;
   const stagePortrait=selectedPortrait ? {...selectedPortrait,layout:{...selectedPortrait.layout,...speakerSettings.portraitLayouts?.[selectedPortrait.id]}} : undefined;
   const failedTurn = meeting.turns.at(-1);
+  const unfinishedGroups=pendingFacingGroups(meeting);
   const displayedVisual = settings.autoVisual?.enabled && meeting.visual?.sceneName === position.sceneName && meeting.visual.activityId !== expiredVisual
     && (meeting.visual.expiresAt === undefined || meeting.visual.expiresAt > Date.now()) ? autoAsset : undefined;
   const pendingActivity = autoProgress?.activity?.sceneName === position.sceneName ? autoProgress.activity : undefined;
@@ -154,7 +161,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     let stored = !!options?.retry;
     try {
       const user: FacingTurn = options?.retry ?? {
-        ...position, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString(),
+        ...position, id: facingId(), role: "user", kind, text: content, at: new Date().toISOString(),replyGroups:normalizeFacingReplyGroups(meeting.replyGroups,facingParticipantIds(meeting)),
         touches: options?.touches?.map(point => point.label),
         imageRef: options?.photo ? await storeShownImage(options.photo) : undefined,
       };
@@ -167,27 +174,35 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (end < 0) throw new Error("找不到要重试的原消息。");
       const context = { ...current, turns: current.turns.slice(0, end + 1) };
       const activity = options?.retry || !settings.autoVisual?.enabled ? undefined : pendingActivity ?? existingActivity;
-      const illustrate = !options?.previous && end === current.turns.length - 1 && shouldCheckFacingVisual(facingCompletedRounds(current) + 1, settings.autoVisual);
+      const latestRound=current.turns.slice(end+1).every(turn=>turn.role==="assistant"&&turn.replyTo===user.id);
+      const illustrate = !options?.previous && latestRound && shouldCheckFacingVisual(facingCompletedRounds(current) + (current.turns.some(turn=>turn.replyTo===user.id)?0:1), settings.autoVisual);
       const deferVisual = false;
       setGenerating(true);
+      const previous=options?.previous;
+      const grouped=!previous&&(user.replyGroups?.length??0)>1;
+      const tasks: {id?:string;ids?:string[]}[]=grouped?user.replyGroups!.map(group=>({id:group.id,ids:group.characterIds.filter(id=>facingParticipantIds(current).includes(id))})).filter(group=>group.ids.length):[{}];
+      let saved=current;
+      for(const task of tasks){
+       if(task.id&&saved.turns.some(turn=>turn.replyTo===user.id&&turn.replyGroupId===task.id))continue;
+       if(run.signal.aborted)return;
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
-        signal: run.signal, retryInstruction: options?.instruction, speakerId: options?.previous?.speakerId, visualActivity: activity?.label, deferVisual, illustrate });
+        speakerIds:task.ids,groupContext:task.id?saved.turns.filter(turn=>turn.replyTo===user.id&&turn.replyGroupId).map(turn=>`${turn.speakerName}: ${turn.text}`).join("\n"):undefined,
+        signal: run.signal, retryInstruction: options?.instruction, speakerId: options?.previous?.speakerId, visualActivity: activity?.label, deferVisual:grouped&&task.id!==tasks.at(-1)?.id?true:deferVisual, illustrate:illustrate&&task.id===tasks.at(-1)?.id });
       if (run.signal.aborted) return;
       const responses: FacingTurn[] = result.replies.map(reply => ({
         ...(reply.nextScene ? facingScenePosition(reply.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
-        id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action,
+        id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action,replyGroupId:task.id,
         speakerId: reply.speakerId, speakerName: reply.speakerName,
         at: new Date().toISOString(), replyTo: user.id, reactionId: reply.reaction?.id, reactionName: reply.reaction?.name,
         visualDescription: reply.visualDescription, visualRating: reply.visualRating,
         visualContinuityId: deferVisual && existingActivity ? existingActivity.id : reply.visualContinues ? activity?.id : undefined,
       }));
-      const previous = options?.previous;
-      const saved = previous ? await changeFacingTurns(current, turns => turns.map(turn => {
+      saved = previous ? await changeFacingTurns(saved, turns => turns.map(turn => {
         if (turn.id !== previous.id) return turn;
         const response = responses.find(item => item.speakerId === previous.speakerId) ?? responses[0];
         const versions = [...(turn.versions ?? [facingReplyVersion(turn)]), facingReplyVersion(response)];
         return { ...turn, ...facingReplyVersion(response), versions, versionIndex: versions.length - 1 };
-      })) : await appendFacingTurns(current, responses);
+      })) : await appendFacingTurns(saved, responses);
       if (run.signal.aborted) return;
       const displayed = previous ? [saved.turns.find(item => item.id === previous.id)!] : responses.filter(item => saved.turns.some(turn => turn.id === item.id));
       setQueuedIds(displayed.map(item => item.id));
@@ -202,6 +217,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           const done = () => { clearTimeout(timer); run.signal.removeEventListener("abort", done); resolve(); };
           const timer = window.setTimeout(done, 650); run.signal.addEventListener("abort", done, { once: true });
         });
+      }
       }
       if (!run.signal.aborted && !previous) onCompleted(saved);
     } catch (cause) {
@@ -413,7 +429,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         {generating && <div className="facing-glass facing-message facing-log-status">{speech.playingId ? "正在说话…" : queuedIds.length ? "准备下一位回应…" : "正在回应…"}</div>}
         {stopped && <div className="facing-glass facing-message facing-log-status" role="status">已停止生成</div>}
         {error && <p className="facing-glass facing-message facing-log-status" role="alert">{error}</p>}
-        {!busy && !listening && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"
+        {!busy&&!listening&&unfinishedGroups.user&&unfinishedGroups.groups.length>0&&<button type="button" className="facing-glass facing-retry" onClick={()=>void send(unfinishedGroups.user!.text,unfinishedGroups.user!.kind,{retry:unfinishedGroups.user})}>继续未完成分组 · {unfinishedGroups.groups.length}组</button>}
+        {!busy && !listening && !unfinishedGroups.groups.length && failedTurn?.role === "user" && <button type="button" className="facing-glass facing-retry"
           onClick={() => retryMessage(failedTurn)}>重试回复</button>}
       </div>}
       <div className="facing-controls facing-glass">

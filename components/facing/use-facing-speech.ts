@@ -9,8 +9,9 @@ export function useFacingSpeech(ios: boolean, enabled: boolean, onMeeting: (meet
   const voiceOn = useRef(enabled);
   voiceOn.current = enabled;
   const [playingId, setPlayingId] = useState<string>();
-  function stop() { request.current++; playback.current?.abort(); playback.current = null; setPlayingId(undefined); }
-  useEffect(() => () => { request.current++; playback.current?.abort(); }, []);
+  function speaking(active:boolean){window.dispatchEvent(new CustomEvent("facing-voice-playback",{detail:active}));}
+  function stop() { request.current++; playback.current?.abort(); playback.current = null; setPlayingId(undefined); speaking(false); }
+  useEffect(() => () => { request.current++; playback.current?.abort(); speaking(false); }, []);
   useEffect(() => { if (!enabled) stop(); }, [enabled]);
 
   async function play(turn: FacingTurn, meeting: FacingMeeting, signal?: AbortSignal, replay = false): Promise<boolean> {
@@ -39,6 +40,7 @@ export function useFacingSpeech(ios: boolean, enabled: boolean, onMeeting: (meet
         }
       }
       if (!audio || cancelled() || (!replay && !voiceOn.current)) return false;
+      speaking(true);
       playback.current = (ios ? playAudioBlob : playAudioBlobViaMediaElement)(audio);
       await playback.current.promise;
       return !cancelled();
@@ -47,7 +49,7 @@ export function useFacingSpeech(ios: boolean, enabled: boolean, onMeeting: (meet
       return false;
     } finally {
       signal?.removeEventListener("abort", abort);
-      if (request.current === token) { playback.current = null; setPlayingId(undefined); }
+      if (request.current === token) { playback.current = null; setPlayingId(undefined); speaking(false); }
     }
   }
   return { play, stop, playingId };
