@@ -254,6 +254,28 @@ async function main() {
   await act(async () => { root.render(React.createElement(Layer, null, React.createElement('button', { id: 'portal-back' }, '返回'))); });
   const layer = shell.querySelector('[data-reverse-phone-layer]'); assert.ok(layer); assert.equal(layer.parentElement, shell); assert.ok(!originalChat.contains(layer));
   assert.ok(layer.querySelector('#portal-back')); await act(async () => root.unmount()); assert.ok(!shell.querySelector('[data-reverse-phone-layer]'));
+  // Reproduce the direct role-settings entry, which does not mount ReversePhoneApp.
+  root=createRoot(host);let returned=false;
+  await act(async()=>root.render(React.createElement(Layer,null,React.createElement(Settings,{scope,initialCharacterId:'a',initialOwner:'a',onClose(){returned=true;}}))));
+  const directSettings=shell.querySelector('[aria-label="反查岗设置"]');
+  assert.ok(directSettings.closest('.rp-safe-frame'),'Direct role settings must use the same safe-area frame as the shared phone');
+  assert.equal(directSettings.querySelector('h2').textContent,'反查岗设置');
+  await act(async()=>directSettings.querySelector('header button').dispatchEvent(new window.Event('click',{bubbles:true})));assert.ok(returned,'Return remains usable in direct role settings');
+  await act(async()=>root.unmount());
+  // A complete phone already uses rp-app: keep exactly one outer safe frame instead of adding a second top reserve.
+  root=createRoot(host);
+  await act(async()=>root.render(React.createElement(Layer,null,React.createElement('div',{className:'rp-app'},React.createElement('header',{className:'rp-top'},'我的手机')))));
+  assert.ok(shell.querySelector('.rp-safe-frame > .rp-app > .rp-top'));
+  await act(async()=>root.unmount());
+  const {StoryAutomationSettings}=load('components/chat/story-automation-settings.tsx');root=createRoot(host);
+  await act(async()=>root.render(React.createElement(Layer,null,React.createElement(StoryAutomationSettings,{session:sessions[0],onChange(){},onClose(){}}))));
+  assert.ok(shell.querySelector('[aria-label="自动进入剧情设置"]').closest('.rp-safe-frame'));
+  await act(async()=>root.unmount());
+  // No virtual phone exists in viewport fallback: the same frame uses the device safe area.
+  document.body.appendChild(host);shell.remove();root=createRoot(host);
+  await act(async()=>root.render(React.createElement(Layer,null,React.createElement('button',null,'返回'))));
+  assert.ok(document.body.querySelector('.rp-viewport-layer > .rp-safe-frame'));
+  await act(async()=>root.unmount());
   console.log('PASS reverse phone: permissions, scope isolation, real messages/remarks, conserved idempotent payments, crash recovery, visible list/recent 20, API plan/retry, title-only shelf, memory, abort, invitation retry, settings and browser editing.');
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

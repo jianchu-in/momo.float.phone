@@ -24,6 +24,15 @@
   padding-right: env(safe-area-inset-right, 0px);
 }
 .rp-viewport-layer .rp-app { --rp-safe-top: env(safe-area-inset-top, 0px); }
+/* The portal owns the safe area; a full phone app fills its remaining content once. */
+.rp-safe-frame > .rp-app {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  width: 100%;
+  height: auto;
+  padding: 0;
+}
 .rp-stage {
   /* The outer phone already reserves the status bar; embedded apps must not add it again. */
   --safe-area-top: 0px;
