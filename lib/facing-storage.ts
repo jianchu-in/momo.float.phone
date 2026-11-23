@@ -188,7 +188,7 @@ export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
 
 export function facingTurnText(turn: FacingTurn): string {
   return [turn.speakerName ? `【${turn.speakerName}】` : "", turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text,
-    ...(turn.touches ?? []).map(part => `（触碰了${part}）`), turn.imageRef ? "（当面展示了一张图片）" : "", turn.action,
+    ...(turn.touches ?? []).map(part => `（触碰了${part}）`), turn.imageRef ? "（场景参考图）" : "", turn.action,
     turn.reactionName && !turn.text && !turn.action ? `（${turn.reactionName}）` : ""].filter(Boolean).join("\n");
 }
 

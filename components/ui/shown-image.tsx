@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { loadMediaObjectUrl } from "@/lib/media-cache-storage";
 
-export function ShownImage({ mediaRef, file, className, alt = "当面展示的图片" }: { mediaRef?: string; file?: File; className?: string; alt?: string }) {
+export function ShownImage({ mediaRef, file, className, alt = "参考图片" }: { mediaRef?: string; file?: File; className?: string; alt?: string }) {
   const [image, setImage] = useState<{ source: string | File; url: string }>();
   const source = file ?? mediaRef;
   useEffect(() => {

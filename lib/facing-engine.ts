@@ -1,4 +1,4 @@
-import { loadShownImageDataUrl, SHOWN_IMAGE_CONTEXT } from "./shown-image";
+import { loadShownImageDataUrl, FACING_REFERENCE_IMAGE_CONTEXT } from "./shown-image";
 import { loadCharacters } from "./character-storage";
 import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
@@ -210,7 +210,7 @@ export async function generateFacingReply(options: {
     const content = messages[index]?.content;
     const text = typeof content === "string" ? content : latest?.content ?? "";
     const imageMessage: LLMMessage = { role: "user", content: [
-      { type: "text", text: `${SHOWN_IMAGE_CONTEXT}\n${text}` },
+      { type: "text", text: `${FACING_REFERENCE_IMAGE_CONTEXT}\n${text}` },
       { type: "image_url", image_url: { url, detail: "auto" } },
     ] };
     if (index >= 0) messages[index] = imageMessage;

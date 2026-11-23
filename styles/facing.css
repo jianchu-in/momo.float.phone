@@ -131,8 +131,9 @@
 .facing-drafts { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 3px; }
 .facing-app .facing-touch-chip { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; padding: 3px 8px;
   border-radius: 999px; background: #66517117; font-size: 12px; }
-.facing-photo-draft { display: inline-flex; align-items: flex-start; }
+.facing-photo-draft { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; max-width: 100%; gap: 4px; }
 .facing-photo-draft img { max-width: 62px; height: 42px; border-radius: 8px; object-fit: cover; }
+.facing-photo-draft small { grid-column: 1 / -1; max-width: 280px; font-size: 11px; line-height: 1.5; opacity: .8; }
 .facing-photo-draft button { display: grid; place-items: center; width: 25px; height: 26px; }
 .facing-touch-feedback { position: absolute; pointer-events: none; z-index: 4; width: 0; height: 0; }
 .facing-touch-feedback span { position: absolute; width: 36px; height: 36px; left: -18px; top: -18px; border-radius: 50%;

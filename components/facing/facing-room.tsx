@@ -461,8 +461,9 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
             onClick={() => { touchTap.current = undefined; setTouches(items => items.filter(item => item.id !== point.id)); }}>
             <X size={13} />{point.label}
           </button>)}
-          {photo && <div className="facing-photo-draft"><ShownImage file={photo} />
-            <button type="button" aria-label="移除图片" onClick={() => setPhoto(undefined)}><X size={14} /></button></div>}
+          {photo && <div className="facing-photo-draft"><ShownImage file={photo} alt="场景参考图预览" />
+            <button type="button" aria-label="移除图片" onClick={() => setPhoto(undefined)}><X size={14} /></button>
+            <small>可参考衣服、食物、物件或环境，具体用途由你的文字和当前情境决定。</small></div>}
         </div>}
         <input ref={photoPicker} type="file" accept="image/*" hidden onChange={event => {
           const file = event.currentTarget.files?.[0];
@@ -470,7 +471,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           if (file) setPhoto(file);
         }} />
         <form className="facing-composer-row" data-voice={showComposerAction ? undefined : "true"} onSubmit={submit}>
-          <button type="button" className="facing-glass facing-icon" aria-label="当面展示图片" disabled={busy || listening || live.enabled}
+          <button type="button" className="facing-glass facing-icon" aria-label="添加场景参考图" title="添加场景参考图" disabled={busy || listening || live.enabled}
             onClick={() => { setVoiceInput(false); photoPicker.current?.click(); }}><ImagePlus size={20} /></button>
           <div className="facing-input">
             {voiceInput ? useCloudStt
