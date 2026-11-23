@@ -71,6 +71,8 @@ async function main(){
  await mount(React.createElement(Ambience,{track,location:'厨房'}));assert.equal(audioInstances.length,1);assert.equal(audioInstances[0].paused,false);
  await mount(React.createElement(Ambience,{track:{...track},location:'浴室'}));assert.equal(audioInstances.length,1,'interior transitions reuse the same audio element');
  await act(async()=>{window.dispatchEvent(new window.CustomEvent('facing-voice-playback',{detail:true}));await tick();});assert.equal(audioInstances[0].volume,.05);
+ await act(async()=>{window.dispatchEvent(new window.CustomEvent('facing-live-microphone',{detail:true}));await tick();});assert.equal(audioInstances[0].volume,0,'microphone listening silences local ambience without changing saved mute preference');
+ await act(async()=>{window.dispatchEvent(new window.CustomEvent('facing-live-microphone',{detail:false}));await tick();});assert.equal(audioInstances[0].volume,.05,'after listening, restore speech ducking');
  await click('暂停氛围音');assert.equal(maps.loadMapPreferences().ambienceMuted,true);assert.equal(audioInstances[0].paused,true);
  await mount(React.createElement(Ambience,{track:importedTrack,location:'另一处'}));assert.equal(audioInstances[1].plays,0,'mute persists across locations');
  await click('播放氛围音');assert.equal(audioInstances[1].paused,false);

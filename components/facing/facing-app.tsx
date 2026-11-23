@@ -247,7 +247,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       onEditPortrait={(id,owner)=>{setAssetEditId(id??"new");setAssetOwnerId(owner??character.id);setAssetOrigin("room");setPage(loadFacingAssets(FACING_SHARED_CHARACTER_ID).some(a=>a.id===id)?"shared-assets":"assets");}}
       onPortraitLayout={async (owner,id,layout)=>{const previous=loadFacingSettings().characters[owner];setPreferences(await saveFacingSettings(owner,{portraitLayouts:{...previous?.portraitLayouts,[id]:layout}}));}}
       onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
-      onVoice={value => commitSetting({ voice: value })} onSpeechInput={value => commitSetting({ speechInput: value })} />}
+      onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
       <Header title="角色设置" onBack={() => setPage(settingOrigin)} />
       <main className="facing-scroll facing-form">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type CSSProperties } from "react";
-import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Map as MapIcon, Mic, Settings2, Square, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, Eye, EyeOff, ImagePlus, Keyboard, Map as MapIcon, Mic, Settings2, Square, Phone, PhoneOff, Pause, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
@@ -15,13 +15,16 @@ import { FacingStage } from "./facing-stage";
 import { FacingMessage } from "./facing-message";
 import { useFacingSpeaker } from "./use-facing-speaker";
 import { useFacingSpeech } from "./use-facing-speech";
+import { useFacingLiveVoice } from "./use-facing-live-voice";
+import { createFacingVoiceSession } from "@/lib/facing-voice-input";
+import { FacingStoryDialog } from "./facing-story-dialog";
 import { useFacingViewportInset } from "./use-facing-viewport-inset";
 import { ShownImage } from "@/components/ui/shown-image";
 import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, autoAsset, autoProgress, onCompleted,
-  onMeeting, onSettings, onEnd, onVoice, onSpeechInput, onMap, onScene, onEditPortrait, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft }: {
+  onMeeting, onSettings, onEnd, onSpeechInput, onMap, onScene, onEditPortrait, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft }: {
   initialDraft?:string;
   initialPhoto?:File;
   onDraft?:(text:string,photo?:File)=>void;
@@ -43,7 +46,6 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   onSettings: () => void;
   onMap: () => void;
   onEnd: () => void;
-  onVoice: (enabled: boolean) => void;
   onSpeechInput: (mode: NonNullable<FacingCharacterSettings["speechInput"]>) => void;
 }) {
   const [reaction, setReaction] = useState<FacingAsset>();
@@ -63,7 +65,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   useEffect(()=>()=>{onDraft?.(draftRef.current,photoRef.current);},[]);
   const [hidden, setHidden] = useState(false);
   const [scenePicker,setScenePicker]=useState(false);
-  const [storyConfirm,setStoryConfirm]=useState(false), [storyBusy,setStoryBusy]=useState(false);
+  const [storyConfirm,setStoryConfirm]=useState(false);
   const [photo, setPhoto] = useState<File|undefined>(initialPhoto);
   const photoRef=useRef(photo);photoRef.current=photo;
   const [touches, setTouches] = useState<FacingHotspot[]>([]);
@@ -93,7 +95,16 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const browserAvailable = isBrowserSpeechRecognitionSupported();
   const useCloudStt = cloudAvailable && (settings.speechInput !== "browser" || !browserAvailable);
   const voiceOn = settings.voice !== false;
-  const speech = useFacingSpeech(iosDevice, voiceOn, onMeeting, setError);
+  const live = useFacingLiveVoice({
+    createSession: callbacks => createFacingVoiceSession(callbacks, character.id, settings.speechInput === "browser"),
+    onTranscript: async text => {
+      const selected = photoRef.current;
+      setPhoto(undefined);
+      return await send(text, "voice", { photo: selected, touches: consumeTouches() });
+    },
+    onError: setError,
+  });
+  const speech = useFacingSpeech(iosDevice, voiceOn || live.enabled, onMeeting, setError);
   const speakerSettings = multi ? loadFacingSettings().characters[speaker.id] ?? {} : settings;
   const points: FacingHotspot[] = [];
   const selectedPortrait=multi?speakerVisual.portrait:portrait;
@@ -132,6 +143,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   }
 
   function stopGeneration() {
+    live.pause();
     const request = controller.current;
     if (!request) return;
     controller.current = null;
@@ -147,7 +159,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     retry?: FacingTurn; previous?: FacingTurn; instruction?: string; photo?: File; touches?: FacingHotspot[];
   }) {
     const content = text.trim();
-    if ((!content && !options?.photo && !options?.touches?.length && !options?.retry) || controller.current) return;
+    if ((!content && !options?.photo && !options?.touches?.length && !options?.retry) || controller.current) return false;
     const run = new AbortController();
     controller.current = run;
     speech.stop();
@@ -164,10 +176,10 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         touches: options?.touches?.map(point => point.label),
         imageRef: options?.photo ? await storeShownImage(options.photo) : undefined,
       };
-      if (run.signal.aborted) return;
+      if (run.signal.aborted) return false;
       const current = options?.retry ? meeting : await appendFacingTurn(meeting, user);
       stored = true;
-      if (run.signal.aborted) return;
+      if (run.signal.aborted) return false;
       onMeeting(current);
       const end = current.turns.findIndex(turn => turn.id === user.id);
       if (end < 0) throw new Error("找不到要重试的原消息。");
@@ -178,7 +190,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       setGenerating(true);
       const result = await generateFacingReply({ character, meeting: context, settings, scene: user.sceneName, scenes,
         signal: run.signal, retryInstruction: options?.instruction, speakerId: options?.previous?.speakerId, visualActivity: activity?.label, deferVisual, illustrate });
-      if (run.signal.aborted) return;
+      if (run.signal.aborted) return false;
       const responses: FacingTurn[] = result.replies.map(reply => ({
         ...(reply.nextScene ? facingScenePosition(reply.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
         id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action,
@@ -194,22 +206,26 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         const versions = [...(turn.versions ?? [facingReplyVersion(turn)]), facingReplyVersion(response)];
         return { ...turn, ...facingReplyVersion(response), versions, versionIndex: versions.length - 1 };
       })) : await appendFacingTurns(current, responses);
-      if (run.signal.aborted) return;
+      if (run.signal.aborted) return false;
       const displayed = previous ? [saved.turns.find(item => item.id === previous.id)!] : responses.filter(item => saved.turns.some(turn => turn.id === item.id));
       setQueuedIds(displayed.map(item => item.id));
       onMeeting(saved);
+      let spoken = displayed.length > 0;
       for (const response of displayed) {
-        if (run.signal.aborted) return;
+        if (run.signal.aborted) return false;
         setActiveTurnId(response.id);
         setQueuedIds(ids => ids.filter(id => id !== response.id));
         setReaction(result.replies.find(item => item.speakerId === response.speakerId)?.reaction);
         const played = await speech.play(response, saved, run.signal);
+        if (!played) spoken = false;
         if (!played && multi && !run.signal.aborted) await new Promise<void>(resolve => {
           const done = () => { clearTimeout(timer); run.signal.removeEventListener("abort", done); resolve(); };
           const timer = window.setTimeout(done, 650); run.signal.addEventListener("abort", done, { once: true });
         });
       }
       if (!run.signal.aborted && !previous) onCompleted(saved);
+      if (live.enabled && !spoken) setError(current => current || "回复已保存，但语音未能播放。请检查角色语音配置，再点击继续收音。");
+      return !run.signal.aborted && (!live.enabled || spoken);
     } catch (cause) {
       if (!run.signal.aborted) {
         setError(cause instanceof Error ? cause.message : stored ? "角色回复失败。" : "消息保存失败，请重试。");
@@ -217,6 +233,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         if (!stored && options?.touches?.length) setTouches(current => [...options.touches!, ...current]);
         if (!stored && kind !== "touch") setDraft(content);
       }
+      return false;
     } finally {
       if (controller.current === run) {
         controller.current = null;
@@ -292,7 +309,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   }, [touchEffect]);
 
   const hold = useHoldToTalk({
-    characterId: character.id, canStart: () => !controller.current,
+    characterId: character.id, canStart: () => !controller.current && !live.enabled,
     onRecordingStart: () => { speech.stop(); setError(""); },
     onTranscript: submitVoice,
     onError: message => {
@@ -339,13 +356,15 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || (!draft.trim() && !photo && !touches.length)) return;
+    if (busy || live.enabled || (!draft.trim() && !photo && !touches.length)) return;
     void send(draft, "text", { photo, touches: consumeTouches() });
     setDraft("");
     setPhoto(undefined);
   }
 
-  const listening = browserListening || hold.recState !== "idle";
+  const manualListening = browserListening || hold.recState !== "idle";
+  const listening = manualListening || live.phase === "listening" || live.phase === "transcribing";
+  const liveLabel = live.phase === "listening" ? "正在听你说话…" : live.phase === "transcribing" ? "正在识别…" : live.phase === "replying" ? "等角色说完，再自动收音" : "已暂停 · 点击继续说话";
   const showComposerAction = !voiceInput || generating;
   const selectedMessage = meeting.turns.find(turn => turn.id === menuId);
   const appearance = settings.appearance;
@@ -374,31 +393,35 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       reaction={multi ? speakerVisual.reaction?.generated ? speakerVisual.reaction : displayedVisual ?? reaction ?? speakerVisual.reaction : displayedVisual ?? reaction ?? storedReaction}
       fallback={multi ? speakerVisual.portrait || scene ? undefined : speakerVisual.reference : scene ? undefined : character.avatar} hideBlank={multi || !!scene}
       name={speaker.name} points={[]}
-      onEditPortrait={()=>onEditPortrait(selectedPortrait?.id,speaker.id)}
+      onEditPortrait={()=>{live.stop();onEditPortrait(selectedPortrait?.id,speaker.id);}}
       onLayout={busy||listening?undefined:layout=>{if(selectedPortrait)void onPortraitLayout(speaker.id,selectedPortrait.id,layout).catch(e=>setError(e instanceof Error?e.message:"立绘位置保存失败"));}}
       retainPoints={!reaction && !!displayedVisual} onReactionEnd={stopReaction} />
     {touchEffect && <div key={touchEffect.id} className="facing-touch-feedback" style={{ left: touchEffect.x, top: touchEffect.y }} role="status">
       <span aria-hidden="true" /><small>你触碰了他的{touchEffect.label}</small>
     </div>}
     <header className="facing-room-top">
-      <button type="button" className="facing-glass facing-icon" aria-label="返回" onClick={onEnd}><ChevronLeft size={22} /></button>
+      <button type="button" className="facing-glass facing-icon" aria-label="返回" onClick={()=>{live.stop();onEnd();}}><ChevronLeft size={22} /></button>
       <div className="facing-room-location">
-        <button type="button" className="facing-glass facing-room-scene" aria-label="更换当前场景" disabled={busy||listening} onClick={()=>setScenePicker(v=>!v)}>{position.sceneName} ▾</button>
+        <button type="button" className="facing-glass facing-room-scene" title={position.sceneName} aria-label="更换当前场景" disabled={busy||listening} onClick={()=>{live.pause();setScenePicker(v=>!v);}}>{position.sceneName} ▾</button>
         {settings.autoVisual?.enabled && autoProgress?.message && <small className="facing-glass facing-visual-status" role="status">{autoProgress.message}</small>}
       </div>
-      <div>
-        {facingParticipantIds(meeting).length===1&&<button type="button" className="facing-glass facing-icon" aria-label="进入剧情" disabled={busy||listening} onClick={()=>setStoryConfirm(true)}>剧情</button>}
-        <button type="button" className="facing-glass facing-icon" aria-label="世界地图" disabled={busy || listening} onClick={onMap}><MapIcon size={18} /></button>
+      <div className="facing-room-actions">
+        {facingParticipantIds(meeting).length===1&&<button type="button" className="facing-glass facing-icon" aria-label="进入剧情" disabled={busy||listening} onClick={()=>{live.pause();setStoryConfirm(true);}}>剧情</button>}
+        <button type="button" className="facing-glass facing-icon" aria-label="世界地图" disabled={busy || listening} onClick={()=>{live.stop();onMap();}}><MapIcon size={18} /></button>
         <button type="button" className="facing-glass facing-icon" aria-label={hidden ? "显示对话" : "隐藏对话"}
-          aria-pressed={hidden} onClick={() => { setHidden(value => !value); followLog.current = true; }}>
+          aria-pressed={hidden} onClick={() => { if(!hidden)live.pause();setHidden(value => !value); followLog.current = true; }}>
           {hidden ? <Eye size={18} /> : <EyeOff size={18} />}
         </button>
-        <button type="button" className="facing-glass facing-icon" aria-label={voiceOn ? "关闭角色语音" : "开启角色语音"}
-          aria-pressed={voiceOn} onClick={() => { unlockAudioPlayback(); onVoice(!voiceOn); }}>{voiceOn ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
-        <button type="button" className="facing-glass facing-icon" aria-label="设置" disabled={busy || listening} onClick={onSettings}><Settings2 size={19} /></button>
+        <button type="button" className="facing-glass facing-icon" aria-label={live.enabled ? "结束实时对话" : "开启实时对话"}
+          title={live.enabled ? "结束实时对话" : "开启实时对话"} disabled={!live.enabled && (busy || manualListening || storyConfirm || scenePicker || !!menuId)}
+          aria-pressed={live.enabled} onClick={() => {
+            if(live.enabled){stopGeneration();live.stop();speech.stop();return;}
+            unlockAudioPlayback();speech.stop();setError("");setHidden(false);setVoiceInput(false);live.start();
+          }}>{live.enabled ? <PhoneOff size={18} /> : <Phone size={18} />}</button>
+        <button type="button" className="facing-glass facing-icon" aria-label="设置" disabled={busy || listening} onClick={()=>{live.stop();onSettings();}}><Settings2 size={19} /></button>
       </div>
     </header>
-    {storyConfirm&&facingParticipantIds(meeting).length===1&&<div className="facing-overlay"><section className="facing-sheet" role="dialog" aria-label="前往剧情继续对话"><h2>前往剧情继续对话？</h2><p>新建一条剧情分线，带入当前角色、场景与已保存的对话；面对面原记录保留。</p><div className="facing-choices"><button type="button" disabled={storyBusy} onClick={()=>setStoryConfirm(false)}>取消</button><button type="button" disabled={storyBusy} onClick={()=>{setStoryBusy(true);void onStory().catch(e=>{setError(String(e));setStoryBusy(false);});}}>{storyBusy?"正在衔接…":"新建分线并前往"}</button></div></section></div>}
+    {storyConfirm&&facingParticipantIds(meeting).length===1&&<FacingStoryDialog onClose={()=>setStoryConfirm(false)} onConfirm={onStory} />}
     {scenePicker&&<div className="facing-scene-picker" role="dialog" aria-label="更换场景"><h3>更换场景</h3><div className="facing-list">{scenes.map(group=><button type="button" key={group.name} onClick={()=>void onScene(group.name).then(()=>setScenePicker(false)).catch(e=>setError(String(e)))}>{group.name}</button>)}</div>{!scenes.length&&<p>请先在场景素材中添加背景。</p>}<button type="button" onClick={()=>setScenePicker(false)}>取消</button></div>}
     {!hidden && <div className="facing-room-bottom">
       {multi && !speakerVisual.portrait && !speakerVisual.reference && <div className="facing-speaker-badge facing-glass" aria-label={`当前发言：${speaker.name}`}>
@@ -411,10 +434,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         }}>
         {meeting.turns.filter(turn => !queuedIds.includes(turn.id)).map(turn => <FacingMessage key={turn.id} turn={turn} characterName={turn.speakerName ?? character.name} busy={busy || listening}
           playing={speech.playingId === turn.id} onReplay={() => {
+            live.pause();
             if (speech.playingId === turn.id) speech.stop();
             else { unlockAudioPlayback(); setActiveTurnId(turn.id); stopReaction(); void speech.play(turn, meeting, undefined, true); }
           }}
-          onMenu={() => { setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => changeVersion(turn, index)} />)}
+          onMenu={() => { live.pause();setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => {live.pause();changeVersion(turn, index);}} />)}
         {interimText && <div className="facing-glass facing-message" data-role="user"><small>语音识别中</small><p>{interimText}</p></div>}
         {generating && <div className="facing-glass facing-message facing-log-status">{speech.playingId ? "正在说话…" : queuedIds.length ? "准备下一位回应…" : "正在回应…"}</div>}
         {stopped && <div className="facing-glass facing-message facing-log-status" role="status">已停止生成</div>}
@@ -423,6 +447,15 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           onClick={() => retryMessage(failedTurn)}>重试回复</button>}
       </div>}
       <div className="facing-controls facing-glass">
+        {live.enabled && <div className="facing-live-voice" data-phase={live.phase}>
+          <button type="button" className="facing-live-speak" disabled={live.phase === "transcribing" || live.phase === "replying" || busy || !!speech.playingId || storyConfirm || scenePicker || !!menuId}
+            aria-label={live.phase === "paused" ? "继续实时收音" : "说完了，立即发送"}
+            onClick={()=>{unlockAudioPlayback();if(live.phase === "paused"){setError("");live.start();}else live.finish();}}>
+            <span className="facing-live-mic"><Mic size={26} /></span>
+            <span><strong>{liveLabel}</strong><small>{live.transcript || (live.phase === "listening" ? "说完会自动发送，也可点此结束说话" : "自动收音 → 发送 → 回复 → 继续收音")}</small></span>
+          </button>
+          {live.phase !== "paused" && <button type="button" className="facing-live-pause" aria-label="暂停实时收音" onClick={live.pause}><Pause size={18}/></button>}
+        </div>}
         {(touches.length > 0 || photo) && <div className="facing-drafts">
           {touches.map(point => <button type="button" key={point.id} className="facing-touch-chip" aria-label={`移除${point.label}`}
             onClick={() => { touchTap.current = undefined; setTouches(items => items.filter(item => item.id !== point.id)); }}>
@@ -437,7 +470,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           if (file) setPhoto(file);
         }} />
         <form className="facing-composer-row" data-voice={showComposerAction ? undefined : "true"} onSubmit={submit}>
-          <button type="button" className="facing-glass facing-icon" aria-label="当面展示图片" disabled={busy || listening}
+          <button type="button" className="facing-glass facing-icon" aria-label="当面展示图片" disabled={busy || listening || live.enabled}
             onClick={() => { setVoiceInput(false); photoPicker.current?.click(); }}><ImagePlus size={20} /></button>
           <div className="facing-input">
             {voiceInput ? useCloudStt
@@ -447,8 +480,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
               : <button type="button" className="facing-hold" disabled={busy} onClick={toggleSpeechRecognition}>
                   {browserListening ? "说完了" : "开始说话"}
                 </button>
-              : <input value={draft} onChange={event => setDraft(event.target.value)} placeholder="和他说句话…" aria-label="对话内容" maxLength={4000} />}
-            <button type="button" className="facing-input-mic" disabled={listening}
+              : <input value={draft} disabled={live.enabled} onChange={event => setDraft(event.target.value)} placeholder={live.enabled ? "结束实时对话后可打字" : "和他说句话…"} aria-label="对话内容" maxLength={4000} />}
+            <button type="button" className="facing-input-mic" disabled={listening || live.enabled}
               aria-label={voiceInput ? "切换文字输入" : "切换语音输入"} onClick={() => {
                 if (!cloudAvailable && !browserAvailable) { setError("当前浏览器无法直接识别语音。可以配置云端语音识别，或使用文字输入。"); return; }
                 setVoiceInput(!voiceInput);
@@ -457,7 +490,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           </div>
           {showComposerAction && <button type={generating ? "button" : "submit"} className="facing-glass facing-icon facing-send"
             aria-label={generating ? "停止生成" : "发送"} onClick={generating ? stopGeneration : undefined}
-            disabled={!generating && (busy || (!draft.trim() && !photo && !touches.length))}>
+            disabled={!generating && (busy || live.enabled || (!draft.trim() && !photo && !touches.length))}>
             {generating ? <Square size={13} fill="currentColor" aria-hidden="true" /> : <ArrowUp size={19} />}
           </button>}
         </form>

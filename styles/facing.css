@@ -64,10 +64,12 @@
 
 .facing-room { position: absolute; inset: 0; background: #211d2e; color: #faf5ff; }
 .facing-room-top,.facing-room-bottom { position: absolute; inset-inline: 12px; display: flex; gap: 6px; pointer-events: none; }
-.facing-room-top { top: var(--page-header-safe-top,48px); justify-content: space-between; }
+.facing-room-top { top: var(--page-header-safe-top,48px); display: grid; grid-template-columns: 36px minmax(0,1fr) auto; align-items: start; gap: 4px; }
 .facing-room-top > div { display: flex; gap: 6px; }
-.facing-room-top > .facing-room-location { flex: 1; min-width: 0; position: relative; align-items: center; justify-content: center; }
-.facing-room-scene { align-self: center; min-width: 0; padding: 5px 10px; border-radius: 12px; text-overflow: ellipsis;
+.facing-room-top > .facing-room-location { min-width: 0; position: relative; align-items: start; }
+.facing-room-top > .facing-room-actions { gap: 4px; flex-wrap: nowrap; }
+.facing-room-top .facing-icon { width: 36px; height: 38px; padding: 0; border-radius: 12px; font-size: 12px; }
+.facing-room-scene { width: 100%; height: 38px; min-width: 0; padding: 5px 7px; border-radius: 12px; text-overflow: ellipsis;
   overflow: hidden; white-space: nowrap; font-size: calc(12px * var(--app-text-scale,1)); }
 .facing-visual-status { position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); text-align: center;
   width: max-content; max-width: min(230px, 65vw); padding: 4px 8px; border-radius: 9px; font-size: 11px; }
@@ -118,6 +120,14 @@
 .facing-controls .facing-send { background: #e1cbedba; color: #271d32; }
 .facing-controls .facing-hold { min-width: 0; min-height: 40px; border-radius: 11px; touch-action: none; user-select: none; }
 .facing-controls .facing-stt-mode { min-height: 34px; border-radius: 10px; font-size: calc(12px * var(--app-text-scale,1)); }
+.facing-live-voice { display: flex; align-items: center; gap: 6px; pointer-events: auto; padding: 5px; border-radius: 13px; background: #c4a5df25; }
+.facing-app .facing-live-speak { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; min-height: 82px; padding: 8px; text-align: left; border-radius: 12px; }
+.facing-live-mic { display: grid; place-items: center; flex: none; width: 52px; height: 52px; border-radius: 50%; background: #dfc2f63d; }
+.facing-live-speak > span:last-child { display: grid; gap: 5px; min-width: 0; }
+.facing-live-speak strong { font-size: 14px; font-weight: 600; }
+.facing-live-speak small { font-size: 11px; line-height: 1.5; opacity: .8; overflow-wrap: anywhere; max-height: 4.5em; overflow-y: auto; }
+.facing-app .facing-live-pause { display: grid; place-items: center; width: 40px; height: 44px; border-radius: 12px; background: #ffffff17; flex: none; }
+.facing-live-voice[data-phase=listening] .facing-live-mic { outline: 5px solid #dfc2f617; }
 .facing-drafts { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 3px; }
 .facing-app .facing-touch-chip { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; padding: 3px 8px;
   border-radius: 999px; background: #66517117; font-size: 12px; }
@@ -227,6 +237,14 @@
   display: grid; gap: 8px; padding: 6px 13px max(13px,env(safe-area-inset-bottom));
 }
 .facing-overlay-center .facing-sheet { border-radius: 16px; }
+.facing-story-overlay { z-index: 45; justify-items: center; padding: max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom)); backdrop-filter: blur(5px); }
+.facing-room .facing-story-dialog { width: min(100%,360px); max-height: 100%; gap: 14px; padding: 24px 20px 20px; border-radius: 22px; box-shadow: 0 16px 70px #0005; text-align: center; }
+.facing-story-emblem { display: grid; place-items: center; justify-self: center; width: 56px; height: 56px; border-radius: 18px; color: var(--facing-accent); background: var(--facing-soft); }
+.facing-room .facing-story-dialog h2 { font-size: 18px; }
+.facing-story-dialog p { font-size: 13px; line-height: 1.7; color: var(--facing-muted); }
+.facing-story-dialog p[role=alert] { color: #a62955; }
+.facing-story-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+.facing-story-actions button { min-height: 44px; }
 .facing-sheet header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 43px; }
 .facing-sheet h2 { font-size: calc(15px * var(--app-text-scale,1)); font-weight: 600; }
 .facing-sheet .facing-list { background: var(--facing-soft); }
