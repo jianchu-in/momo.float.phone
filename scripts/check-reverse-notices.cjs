@@ -1,0 +1,80 @@
+// Storage and component integration checks; no real API requests or financial services.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
+const ts = require('typescript');
+require('fake-indexeddb/auto');
+const { window } = require('linkedom').parseHTML('<html><body><div id="root"></div></body></html>');
+Object.assign(global, { window, document: window.document, HTMLElement: window.HTMLElement, Node: window.Node, Event: window.Event, CustomEvent: window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true });
+const local = new Map();
+global.localStorage = window.localStorage = { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key), key: i => [...local.keys()][i], get length() { return local.size; } };
+global.requestAnimationFrame = cb => setTimeout(cb, 0); global.cancelAnimationFrame = clearTimeout;
+global.ResizeObserver = class { observe() {} disconnect() {} };
+window.HTMLElement.prototype.scrollIntoView = function() {};
+window.HTMLElement.prototype.scrollTo = function(value) { this.scrollTop = value.top; };
+window.HTMLElement.prototype.getBoundingClientRect = function() {
+  const top = this.dataset.testTop ? Number(this.dataset.testTop) : 0;
+  const height = this.dataset.reverseSession ? 60 : 350;
+  return { x: 0, y: top, top, bottom: top + height, left: 0, right: 390, width: 390, height };
+};
+const project = path.resolve(__dirname, '..'), resolve = Module._resolveFilename;
+Module._resolveFilename = function(request, parent, ...rest) { return resolve.call(this, request.startsWith('@/') ? path.join(project, request.slice(2)) : request, parent, ...rest); };
+for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText, filename);
+require.extensions['.css'] = () => {};
+const load = name => require(path.join(project, name));
+function mock(name, exports) { const id = path.join(project, name); require.cache[id] = { id, filename: id, loaded: true, exports }; }
+global.fetch=()=>{throw new Error('No network in reverse notice tests');};
+let calls=0;
+const unexpected=async()=>{calls++;throw new Error('A notice / replay must not call a model');};
+mock('lib/chat-engine.ts',{sendLLMRequest:unexpected,sendLLMStreamRequest:unexpected});
+const React=require('react'),{act}=React,{createRoot}=require('react-dom/client');
+const tick=()=>new Promise(resolve=>setTimeout(resolve,20));
+async function main(){
+ const kv=load('lib/kv-db.ts');await kv.hydrateKvDb();await load('lib/settings-db.ts').hydrateSettingsDb();await load('lib/chat-storage.ts').hydrateChatStorage();
+ load('lib/settings-storage.ts').saveUserIdentities([{id:'user',name:'简初'},{id:'other',name:'另一身份'}]);
+ const characters=[{id:'a',name:'甲',persona:'',createdAt:'',updatedAt:''},{id:'b',name:'乙',persona:'',createdAt:'',updatedAt:''}];load('lib/character-storage.ts').saveCharacters(characters);
+ const storage=load('lib/reverse-phone-storage.ts'),scope=storage.reverseScope(),scopes=load('lib/chat-scope-storage.ts');
+ async function record(id,owner='a',extra={}){
+  const r={...storage.createReverseSession(characters.find(c=>c.id===owner),scope),id,origin:'stealth',accepted:true,status:'completed',createdAt:'2026-11-23T12:00:00.000Z',events:[{id:id+'-view',kind:'view',text:'我看了购物车。',at:''}],...extra};await storage.saveReverseSession(r);return storage.loadReverseSession(id);
+ }
+ const empty=await record('empty','a',{events:[],status:'paused'}),running=await record('running','a',{status:'running'}),manual=await record('manual','a',{origin:'manual'}),a1=await record('a1'),a2=await record('a2'),b1=await record('b1','b');
+ const otherScope={...scope,identityId:'other',userIdentityId:'other',userName:'另一身份',key:JSON.stringify([null,'other'])};
+ await record('another-user','a',{scope:otherScope});
+ assert.equal(storage.isReverseRecordUnread(empty),false);assert.equal(storage.isReverseRecordUnread(a1),true);
+ assert.deepEqual(new Set(storage.pendingStealthNotices(storage.loadReverseSessions(scope),'a').map(r=>r.id)),new Set(['a1','a2']),'only actual non-running stealth records for this character');
+ assert.ok(!storage.loadReverseSessions(scope).some(r=>r.id==='another-user'));
+ const screen=document.createElement('div');screen.dataset.ui='phone-screen';document.body.appendChild(screen);const host=document.getElementById('root');screen.appendChild(host);let root=createRoot(host);
+ const Notice=load('components/checkphone/reverse-phone-notice.tsx').ReversePhoneNotice,History=load('components/checkphone/reverse-phone-history.tsx').ReversePhoneHistory;
+ const mount=async element=>act(async()=>{root.render(element);for(let i=0;i<4;i++)await tick();});
+ const reset=async()=>{await act(async()=>{root.unmount();await tick();});root=createRoot(host);};
+ const click=async text=>act(async()=>{const button=[...screen.querySelectorAll('button')].find(b=>b.textContent===text);assert.ok(button,text);assert.equal(button.disabled,false);button.dispatchEvent(new window.Event('click',{bubbles:true}));for(let i=0;i<5;i++)await tick();});
+ const notice=()=>screen.querySelector('[aria-label="偷偷查岗提醒"]');let viewed;
+ await mount(React.createElement(Notice,{characterId:'a',blocked:true,onView:id=>viewed=id}));assert.equal(notice(),null);assert.equal(storage.pendingStealthNotices(storage.loadReverseSessions(scope),'a').length,2);
+ await mount(React.createElement(Notice,{characterId:'a',onView:id=>viewed=id}));assert.ok(notice());assert.equal(screen.querySelectorAll('[role="dialog"]').length,1);assert.equal(screen.querySelector('[data-reverse-phone-layer]').parentElement,screen);assert.match(notice().textContent,/甲 在/);assert.match(notice().textContent,/2 条/);assert.ok(notice().querySelector('time').dateTime||notice().querySelector('time').getAttribute('dateTime'));
+ await click('返回');assert.equal(notice(),null);assert.equal(storage.isReverseRecordUnread(a1),true);assert.equal(storage.isReverseRecordUnread(a2),true);assert.equal(storage.pendingStealthNotices(storage.loadReverseSessions(scope),'a').length,0);assert.equal(storage.pendingStealthNotices(storage.loadReverseSessions(scope),'b').length,1,'dismissal only acknowledges this character');
+ await reset();await mount(React.createElement(Notice,{characterId:'a',onView:id=>viewed=id}));assert.equal(notice(),null,'reopening chat does not repeat dismissed reminders');await reset();
+ await mount(React.createElement(History,{scope,onReplay:id=>viewed=id,onResume(){},onClose(){}}));const beforeDots=host.querySelectorAll('[aria-label="未查看"]').length;assert.equal(beforeDots,5,'all nonempty unread records have a dot; another user and empty slots do not');
+ const detail=[...host.querySelectorAll('details')].find(el=>el.textContent.includes('我看了购物车。')&&el.querySelector('summary').textContent.startsWith('甲'));
+ await act(async()=>{const props=detail[Object.keys(detail).find(k=>k.startsWith('__reactProps$'))];props.onToggle({currentTarget:{open:true}});for(let i=0;i<5;i++)await tick();});assert.equal(host.querySelectorAll('[aria-label="未查看"]').length,beforeDots-1,'opening the actual text record clears one dot');
+ await reset();await storage.markReverseRecordViewed(a1);await storage.saveReverseSession({...a1});assert.equal(storage.isReverseRecordUnread(storage.loadReverseSession(a1.id)),false,'a runner saving a stale session cannot erase a separate read receipt');
+ const progressed=storage.appendReverseEvent(storage.loadReverseSession(a1.id),'view','后来又看了浏览器。','new-view');await storage.saveReverseSession(progressed);assert.equal(storage.isReverseRecordUnread(progressed),true,'new activity becomes unread again');
+ assert.ok(storage.pendingStealthNotices(storage.loadReverseSessions(scope),'a').some(r=>r.id===a1.id));
+ const newest=await record('newest');await mount(React.createElement(Notice,{characterId:'a',onView:id=>viewed=id}));const expected=storage.pendingStealthNotices(storage.loadReverseSessions(scope),'a')[0].id;
+ await click('点击查看');assert.equal(viewed,expected);assert.equal(storage.isReverseRecordUnread(storage.loadReverseSession(viewed)),true,'the notice alone does not mark a record read before replay is actually opened');await reset();
+ const snapshot=JSON.stringify(storage.loadReverseSession(viewed)),App=load('components/checkphone/reverse-phone-app.tsx').ReversePhoneApp;let closed=0;
+ await mount(React.createElement(App,{initialCharacterId:'a',initialReplayId:viewed,initialPanel:'history',onClose:()=>closed++}));await act(async()=>{for(let i=0;i<8;i++)await tick();});assert.match(host.textContent,/历史回放/);assert.equal(storage.isReverseRecordUnread(storage.loadReverseSession(viewed)),false);assert.equal(JSON.stringify(storage.loadReverseSession(viewed)),snapshot,'read tracking never rewrites financial/chat actions or replay content');
+ await click('返回');assert.equal(host.querySelector('[aria-label="查岗记录角色"]').value,'a');await click('返回');assert.equal(closed,1,'replay returns through filtered history directly to chat');assert.equal(calls,0);await reset();
+ await mount(React.createElement(Notice,{characterId:'b',onView:id=>viewed=id}));assert.ok(notice());
+ await act(async()=>{scopes.saveChatScope({...scope,userIdentityId:'other'});await tick();});assert.equal(notice(),null,'switching identity cannot expose previous records');await assert.rejects(storage.markReverseRecordViewed(b1),/账号已切换/);
+ await act(async()=>{scopes.saveChatScope({...scope,userIdentityId:'user'});for(let i=0;i<4;i++)await tick();});assert.ok(notice());await click('返回');await reset();
+ await record('background-new','b');Object.defineProperty(document,'hidden',{configurable:true,value:true});await mount(React.createElement(Notice,{characterId:'b',onView:id=>viewed=id}));assert.equal(notice(),null,'do not show in a hidden tab');
+ await act(async()=>{Object.defineProperty(document,'hidden',{configurable:true,value:false});document.dispatchEvent(new window.Event('visibilitychange'));for(let i=0;i<4;i++)await tick();});assert.ok(notice(),'show the pending notice when the user returns');
+ await reset();assert.equal(screen.querySelector('[data-reverse-phone-layer]'),null);assert.equal(calls,0);
+ const keys=kv.kvKeysWithPrefix(storage.REVERSE_PREFIX+'receipt:');assert.ok(keys.length>=3);
+ const db=await new Promise((resolve,reject)=>{const request=indexedDB.open('AiPhoneKvDB');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+ const persisted=await new Promise((resolve,reject)=>{const request=db.transaction('entries','readonly').objectStore('entries').getAll();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});db.close();
+ for(const key of keys)assert.equal(persisted.find(entry=>entry.key===key)?.value,kv.kvGet(key),'read and dismissed receipts are actually durable in IndexedDB');
+ console.log('PASS reverse notices: actual scoped records, background/entry reminders, grouped dismissal vs read, persistent dots, text/replay read paths, stale-runner preservation, new activity, safe portal, identity/role isolation, replay/history/chat return and zero model calls.');
+}
+main().then(()=>process.exit(0)).catch(error=>{console.error(error.stack??error);process.exit(1);});

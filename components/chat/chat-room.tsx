@@ -21,6 +21,7 @@ import { loadReverseSession } from "@/lib/reverse-phone-storage";
 import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
 const ReversePhoneApp = dynamic(() => import("@/components/checkphone/reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
 const ReversePhoneInvitation = dynamic(() => import("@/components/checkphone/reverse-phone-invitation").then(module => module.ReversePhoneInvitation), { ssr: false });
+const ReversePhoneNotice = dynamic(() => import("@/components/checkphone/reverse-phone-notice").then(module => module.ReversePhoneNotice), { ssr: false });
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
 import { StickerSearchSuggest } from "./sticker-search-suggest";
 import { StateValuesPanel } from "./state-values-panel";
@@ -6881,7 +6882,8 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 wrapperRef.current.parentElement
             )}
 
-            {reversePhone && !inspection && <ReversePhoneLayer><ReversePhoneApp initialCharacterId={session.contactId} resumeSessionId={reversePhone.resumeId} autoContinue={reversePhone.autoContinue} initialReplayId={reversePhone.replayId} onClose={closeReversePhone} /></ReversePhoneLayer>}
+            {!inspection && !session.isGroup && <ReversePhoneNotice key={session.id} characterId={session.contactId} blocked={!!reversePhone || !!reverseInvitation || showSettings || showVoiceCall || showVideoCall || forcedStoryTransition} onView={id=>setReversePhone({replayId:id})} />}
+            {reversePhone && !inspection && <ReversePhoneLayer><ReversePhoneApp initialCharacterId={session.contactId} resumeSessionId={reversePhone.resumeId} autoContinue={reversePhone.autoContinue} initialReplayId={reversePhone.replayId} initialPanel={reversePhone.replayId?"history":undefined} onClose={closeReversePhone} /></ReversePhoneLayer>}
             {activeCustomChatPlus && activeCustomChatPlus.presentation === "none" && (
                 <div className="chat-custom-app-headless" aria-hidden="true">
                     <CustomAppRunner

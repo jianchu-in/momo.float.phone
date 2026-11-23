@@ -1,17 +1,18 @@
 "use client";
 
 import { bgSetTimeout } from "@/lib/bg-timer";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { BookOpen, Globe, LockKeyhole, MessageCircle, ShoppingBag, Settings, History, ChevronLeft } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import { loadShoppingState } from "@/lib/shopping-storage";
 import { loadBooks } from "@/lib/reading-storage";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
-import { appendReverseReplay, loadReverseSession, loadReverseSessions, loadReverseSettings, loadUserBrowser, resolveReversePermissions, reverseScope } from "@/lib/reverse-phone-storage";
+import { appendReverseReplay, loadReverseSession, loadReverseSettings, loadUserBrowser, resolveReversePermissions, reverseScope, isReverseRecordUnread } from "@/lib/reverse-phone-storage";
 import { REVERSE_APPS, type ReverseSession, type ReverseApp, type ReverseScope } from "@/lib/reverse-phone-types";
 import { ReversePhoneReplay, freezeReverseFrame } from "./reverse-phone-replay";
 import { ReversePhoneHistory } from "./reverse-phone-history";
+import { useReverseRecords } from "./use-reverse-records";
 import { ReversePhoneSettings } from "./reverse-phone-settings";
 import { UserBrowser } from "./user-browser";
 import { useReversePhone, type ReverseScreen } from "./use-reverse-phone";
@@ -68,7 +69,7 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
   const [theme] = useState(readThemeProfile), [assets, setAssets] = useState<Record<string, string>>({});
   const characters = loadCharacters(), character = characters.find(item => item.id === (run.running ? run.session?.characterId : run.characterId));
   const settings = loadReverseSettings(scope);
-  const records = useMemo(() => loadReverseSessions(scope), [scope, panel, run.session]);
+  const records = useReverseRecords(scope);
   useEffect(() => { let live = true; void getThemeAssetMap([theme.wallpaperAssetId, ...Object.values(theme.iconSkins)].filter((id): id is string => !!id)).then(value => { if (live) setAssets(value); }); return () => { live = false; }; }, [theme]);
   useEffect(() => { if (!run.toast) return; const timer = setTimeout(() => run.setToast(""), 2600); return () => clearTimeout(timer); }, [run.toast]);
   useEffect(()=>{
@@ -95,9 +96,9 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
   return <div className="rp-app" aria-label="我的手机 · 反查岗">
     {panel === "settings" ? <ReversePhoneSettings scope={scope} initialCharacterId={run.characterId} onHistory={()=>setPanel("history")} onClose={() => setPanel(null)} />
       : panel === "browser" ? <UserBrowser scope={scope} initialCharacterId={run.characterId} onClose={() => setPanel(null)} onSettings={() => setPanel("settings")} />
-        : panel === "history" ? <ReversePhoneHistory scope={scope} initialCharacterId={initialPanel==="history"?initialCharacterId:undefined} onClose={()=>setPanel(null)} onReplay={setReplayId} onResume={id=>{void run.restore(id);setPanel(null);}}/>
+        : panel === "history" ? <ReversePhoneHistory scope={scope} initialCharacterId={initialPanel==="history"?initialCharacterId:undefined} onClose={()=>{if(initialReplayId&&initialPanel==="history")onClose();else setPanel(null);}} onReplay={setReplayId} onResume={id=>{void run.restore(id);setPanel(null);}}/>
           : <>
-            <header className="rp-top"><button onClick={() => void close()} aria-label="关闭我的手机"><ChevronLeft size={20} /></button><span>{run.running ? `${character?.name ?? "Ta"}正在查岗` : "我的手机"}</span><div><button onClick={() => void openPanel("history")} aria-label="查手机记录"><History size={18} /></button><button onClick={() => void openPanel("settings")} aria-label="反查岗设置" title={run.running ? "结束查岗并打开设置" : "反查岗设置"}><Settings size={18} /></button></div></header>
+            <header className="rp-top"><button onClick={() => void close()} aria-label="关闭我的手机"><ChevronLeft size={20} /></button><span>{run.running ? `${character?.name ?? "Ta"}正在查岗` : "我的手机"}</span><div><button onClick={() => void openPanel("history")} aria-label="查手机记录" className="rp-history-entry"><History size={18} />{records.some(isReverseRecordUnread)&&<span className="rp-unread-dot" role="img" aria-label="有未查看的查岗记录"/>}</button><button onClick={() => void openPanel("settings")} aria-label="反查岗设置" title={run.running ? "结束查岗并打开设置" : "反查岗设置"}><Settings size={18} /></button></div></header>
             <div ref={host} className={`rp-stage ${run.screen.app === "desktop" ? "is-desktop" : ""}`}>
               <div className="rp-phone-content" inert={run.running || !!resumable}>
                 {run.screen.app === "desktop" ? <div className="rp-desktop">

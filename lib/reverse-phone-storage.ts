@@ -1,9 +1,11 @@
 import { loadChatScope, resolveChatScopeUserIdentity } from "./chat-scope-storage";
-import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, registerDynamicPrefix } from "./kv-db";
+import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, registerDynamicPrefix } from "./kv-db";
 import { importShortMemories, persistShortMemoryChanges } from "./short-term-memory-records";
 import { REVERSE_APPS, type BrowserEntry, type ReverseEvent, type ReverseOverride, type ReversePermissions, type ReverseScope, type ReverseSession, type ReverseSettings } from "./reverse-phone-types";
 
 export const REVERSE_PREFIX = "ai_phone_reverse_v1:";
+export const REVERSE_RECORDS_UPDATED_EVENT = "reverse-phone-records-updated";
+function announceRecords() { if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(REVERSE_RECORDS_UPDATED_EVENT)); }
 registerDynamicPrefix(REVERSE_PREFIX);
 export const reverseId = () => crypto.randomUUID();
 export function readReverseJson<T>(raw: string | null, fallback: T): T { try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
@@ -64,6 +66,34 @@ export async function saveReverseSession(session: ReverseSession) {
     const previous = readReverseJson<ReverseSession | null>(raw, null);
     return JSON.stringify({ ...session, replay: previous?.replay?.length ? previous.replay : session.replay, updatedAt: new Date().toISOString() });
   });
+  announceRecords();
+}
+// Receipts are stored separately: an in-flight runner cannot overwrite a viewed flag.
+type ReverseReceipt = { viewed?: string; notified?: string };
+const receiptKey = (record: ReverseSession) => REVERSE_PREFIX + "receipt:" + record.scope.key + ":" + record.id;
+export const reverseRecordRevision = (record: ReverseSession) => JSON.stringify([record.events.length, record.events.at(-1)?.id ?? "", record.status]);
+export function isReverseRecordUnread(record: ReverseSession) {
+  return !!(record.events.length || record.replay?.length) && readReverseJson<ReverseReceipt>(kvGet(receiptKey(record)), {}).viewed !== reverseRecordRevision(record);
+}
+export function pendingStealthNotices(records: ReverseSession[], characterId: string) {
+  return records.filter(record => record.characterId === characterId && record.origin === "stealth" && record.status !== "running" && isReverseRecordUnread(record)
+    && readReverseJson<ReverseReceipt>(kvGet(receiptKey(record)), {}).notified !== reverseRecordRevision(record));
+}
+export async function markReverseRecordViewed(record: ReverseSession) {
+  assertReverseScope(record.scope);
+  const revision = reverseRecordRevision(record);
+  await kvUpdatePersisted(receiptKey(record), raw => {
+    assertReverseScope(record.scope);
+    return JSON.stringify({ ...readReverseJson<ReverseReceipt>(raw, {}), viewed: revision, notified: revision });
+  });
+  announceRecords();
+}
+export async function acknowledgeReverseNotices(records: ReverseSession[]) {
+  const updates = Object.fromEntries(records.map(record => [receiptKey(record), (raw: string | null) => {
+    assertReverseScope(record.scope);
+    return JSON.stringify({ ...readReverseJson<ReverseReceipt>(raw, {}), notified: reverseRecordRevision(record) });
+  }]));
+  if (records.length) { await kvUpdatePersistedEntries(updates); announceRecords(); }
 }
 export async function appendReverseReplay(id: string, frame: NonNullable<ReverseSession["replay"]>[number]) {
   await kvUpdatePersisted(sessionKey(id), raw => {

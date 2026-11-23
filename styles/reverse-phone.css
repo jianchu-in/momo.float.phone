@@ -36,6 +36,17 @@
 .rp-target-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .rp-target-context > button { border: 1px solid #dce0e7; border-radius: 10px; background: #fff; padding: 9px 12px; color: inherit; }
 .rp-target-context > span { font-size: 12px; line-height: 1.6; color: var(--rp-muted); overflow-wrap: anywhere; }
+.rp-unread-dot { display: inline-block; flex: none; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #e85563; vertical-align: middle; }
+.rp-history-entry { position: relative; }
+.rp-history-entry .rp-unread-dot { position: absolute; top: 7px; right: 4px; margin: 0; }
+.rp-external-layer.rp-notice-layer,.rp-notice-layer > .rp-safe-frame { background: transparent; }
+.rp-notice-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom)); background: #22283970; backdrop-filter: blur(4px); }
+.rp-notice-dialog { width: min(100%,350px); max-height: 100%; overflow: auto; padding: 24px 20px 20px; border-radius: 22px; background: #fff; color: #373c43; text-align: center; box-shadow: 0 15px 65px #0003; overflow-wrap: anywhere; }
+.rp-notice-dialog h2 { margin: 15px 0 12px; font-size: 17px; }
+.rp-notice-dialog p { margin: 10px 0; font-size: 13px; line-height: 1.8; }
+.rp-notice-dialog p[role=alert] { color: #ae5d5d; }
+.rp-notice-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+.rp-notice-actions button { min-height: 44px; border: 1px solid #dce0e7; border-radius: 12px; background: #f1f3f6; color: inherit; font-size: 14px; }
 .rp-stage {
   /* The outer phone already reserves the status bar; embedded apps must not add it again. */
   --safe-area-top: 0px;
