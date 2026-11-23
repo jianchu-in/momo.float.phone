@@ -33,6 +33,9 @@
   height: auto;
   padding: 0;
 }
+.rp-target-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rp-target-context > button { border: 1px solid #dce0e7; border-radius: 10px; background: #fff; padding: 9px 12px; color: inherit; }
+.rp-target-context > span { font-size: 12px; line-height: 1.6; color: var(--rp-muted); overflow-wrap: anywhere; }
 .rp-stage {
   /* The outer phone already reserves the status bar; embedded apps must not add it again. */
   --safe-area-top: 0px;

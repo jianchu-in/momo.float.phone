@@ -34,24 +34,32 @@ export function ReversePhoneSettings({ scope, initialCharacterId, initialApp, in
         <option value="inherit">跟随统一（{enabled ? "开启" : "关闭"}）</option><option value="true">开启</option><option value="false">关闭</option>
       </select>}</label>;
   }
-  const defaultTargets = getCharacterWorldGroup(owner === "unified" ? initialCharacterId ?? characters[0]?.id : owner)?.memberIds ?? [];
+  const viewingCharacterId = owner === "unified" ? initialCharacterId ?? characters[0]?.id : owner;
+  const viewingCharacter = characters.find(character => character.id === viewingCharacterId);
+  const viewingWorld = viewingCharacterId ? getCharacterWorldGroup(viewingCharacterId) : null;
+  const viewingName = viewingCharacter?.name ?? "未选择角色";
+  const defaultTargets = viewingWorld?.memberIds ?? [];
   const targets = effective.chat.targets ?? defaultTargets;
   return <section className="rp-panel rp-settings" aria-label="反查岗设置">
     <header className="rp-header"><button onClick={onClose}>返回</button><h2>反查岗设置</h2></header>
     <main className="rp-scroll">
       {onHistory&&<button className="rp-card" onClick={onHistory}>查看查岗记录与回放</button>}
-      <label>设置范围<select value={owner} onChange={event => setOwner(event.target.value)}><option value="unified">统一设置</option>
+      <label>设置范围<select aria-label="反查岗设置范围" value={owner} onChange={event => setOwner(event.target.value)}><option value="unified">统一设置</option>
         {worlds.map(world => <optgroup key={world.id} label={world.name}>{characters.filter(character => world.memberIds.includes(character.id)).map(character => <option key={character.id} value={character.id}>{character.name} · 角色专属</option>)}</optgroup>)}
       </select></label>
-      <p className="rp-muted">角色专属设置优先；未单独设置的项目跟随统一规则。</p>
+      <p className="rp-muted">{owner === "unified" ? "当前修改统一规则：下方查看名单、操作权限和应用锁，对所有跟随统一设置的角色生效。" : `当前只为「${viewingName}」设置查看名单、操作权限和应用锁；未单独设置的项目跟随统一规则。`}</p>
       <ReverseAutomationSettings key={owner} character={owner!=="unified"} value={owner==="unified"?settings.automation:override.automation} unified={settings.automation} disabled={busy} onReset={()=>void save(current=>({...current,characters:{...current.characters,[owner]:{...current.characters[owner],automation:undefined}}}))} onChange={(key,value)=>{ if(owner==="unified")void save(current=>({...current,automation:{...current.automation,[key]:value} as import("@/lib/reverse-phone-types").ReverseAutomation}));else option("automation",key,value); }} />
       <nav className="rp-tabs">{(Object.keys(REVERSE_APPS) as ReverseApp[]).map(id => <button key={id} aria-pressed={app === id} onClick={() => setApp(id)}>{REVERSE_APPS[id]}</button>)}</nav>
       <fieldset disabled={busy}>
         {app === "chat" && <>
           <h3>允许查看的角色列表</h3>
+          <p className="rp-muted">{owner === "unified"
+            ? "勾选某个角色，表示允许查岗者查看你与这个角色的聊天。统一自定义名单由所有跟随者共用；使用同一世界时，各查岗角色自动使用自己的世界，下面仅预览当前角色。"
+            : `勾选下方角色，表示允许「${viewingName}」查看你与这些角色的聊天记录；未勾选的会话不可查看。这里不是选择谁来查岗。`}</p>
           {owner !== "unified" && <label className="rp-setting"><span>跟随统一角色列表</span><input type="checkbox" checked={override.chat?.targets === undefined} onChange={event => option("chat", "targets", event.target.checked ? undefined : targets)} /></label>}
-          <label>筛选角色<select value={worldId} onChange={event => setWorldId(event.target.value)}><option value="all">全部世界</option>{worlds.map(world => <option key={world.id} value={world.id}>{world.name}</option>)}</select></label>
-          <button onClick={() => option("chat", "targets", null)}>使用同一世界的角色</button>
+          <label>按世界筛选名单<select aria-label="筛选显示的世界" value={worldId} onChange={event => setWorldId(event.target.value)}><option value="all">全部世界</option>{worlds.map(world => <option key={world.id} value={world.id}>{world.name}</option>)}</select></label>
+          <p className="rp-muted">筛选只改变名单显示，不会自动勾选或取消角色。</p>
+          <div className="rp-target-context"><button onClick={() => option("chat", "targets", null)}>使用同一世界的角色</button><span role="note" aria-live="polite">{owner === "unified" ? "当前预览角色" : "当前查岗角色"}：{viewingName} · {viewingWorld?.name ?? "未分配世界"}</span></div>
           <div className="rp-targets">{characters.filter(character => worldId === "all" || worlds.find(world => world.id === worldId)?.memberIds.includes(character.id)).map(character =>
             <label key={character.id}><input type="checkbox" checked={targets.includes(character.id)} onChange={event => option("chat", "targets", event.target.checked ? [...new Set([...targets, character.id])] : targets.filter(id => id !== character.id))} />{character.name}</label>)}</div>
           {permission("chat", "reply", "允许操作回复")}{permission("chat", "remark", "允许修改备注")}

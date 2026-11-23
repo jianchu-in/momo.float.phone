@@ -230,6 +230,16 @@ async function main() {
   const change = async (element, value) => act(async () => { props(element).onChange({ target: { value } }); await tick(); });
   const Settings = load('components/checkphone/reverse-phone-settings.tsx').ReversePhoneSettings;
   await act(async () => { root.render(React.createElement(Settings, { scope, initialCharacterId: 'a', onClose() {} })); await tick(); });
+  assert.ok(host.textContent.includes('当前预览角色：角色a'));
+  assert.ok(host.textContent.includes('各查岗角色自动使用自己的世界'));
+  const targetsBefore=JSON.stringify(storage.loadReverseSettings(scope));
+  await change(host.querySelector('[aria-label="反查岗设置范围"]'),'b');
+  assert.ok(host.textContent.includes('当前查岗角色：角色b'));
+  assert.ok(host.textContent.includes('允许「角色b」查看你与这些角色的聊天记录'));
+  await change(host.querySelector('[aria-label="筛选显示的世界"]'),'all');
+  assert.equal(JSON.stringify(storage.loadReverseSettings(scope)),targetsBefore,'Changing the preview scope or display filter must not change permissions');
+  await change(host.querySelector('[aria-label="反查岗设置范围"]'),'unified');
+  assert.ok(host.textContent.includes('当前预览角色：角色a'));
   assert.ok(host.textContent.includes('允许他修改我的资产余额')); await click(button('浏览器'));
   assert.ok(host.textContent.includes('允许查看历史记录')); await change(host.querySelector('[aria-label="应用总控制"]'), 'locked');
   assert.equal(storage.resolveReversePermissions('a', scope).modes.browser, 'locked');
