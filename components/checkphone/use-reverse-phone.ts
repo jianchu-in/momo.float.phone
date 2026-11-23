@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { acquireReverseLease, resolveReverseAutomation, reverseAuthorizationActive, REVERSE_SETTINGS_EVENT } from "@/lib/reverse-phone-automation";
+import { bgDelay, bgSetInterval } from "@/lib/bg-timer";
 import { splitReverseReply } from "@/lib/reverse-phone-replies";
 import { abortableDelay, isAbortError, throwIfAborted } from "@/lib/abort-utils";
 import { loadCharacters } from "@/lib/character-storage";
@@ -16,8 +18,9 @@ import { allowedReverseApps, appendReverseEvent, assertReverseScope, createRever
 import { REVERSE_APPS, type ChatDecision, type ReverseApp, type ReverseChatControl, type ReverseResult, type ReverseScope, type ReverseSession, type ReverseTask } from "@/lib/reverse-phone-types";
 
 export type ReverseScreen = { app: "desktop" | ReverseApp; locked?: boolean; section?: string; itemId?: string; chat?: ReverseChatControl };
-type ReverseRunOptions = { invitationOnly?: boolean; autoContinue?: boolean; onAccepted?: (sessionId: string) => void };
+type ReverseRunOptions = { background?: boolean; invitationOnly?: boolean; autoContinue?: boolean; onAccepted?: (sessionId: string) => void };
 export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElement | null>, initialCharacterId?: string, inviteSessionId?: string, resumeSessionId?: string, options: ReverseRunOptions = {}) {
+  const delay = options.background ? bgDelay : abortableDelay;
   const [characterId, setCharacterId] = useState(initialCharacterId ?? loadCharacters()[0]?.id ?? "");
   const [session, setSession] = useState<ReverseSession | null>(() => resumeSessionId ? loadReverseSession(resumeSessionId) : null);
   const latest = useRef(session);
@@ -34,6 +37,11 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     window.addEventListener(CHAT_SCOPE_UPDATED_EVENT, changed);
     return () => { lifetime.current = false; controller.current?.abort(); window.removeEventListener(CHAT_SCOPE_UPDATED_EVENT, changed); };
   }, []);
+  useEffect(() => {
+    const check = () => { const record=latest.current;if(record?.origin==="stealth"&&!reverseAuthorizationActive(resolveReverseAutomation(record.characterId,scope),Date.now()))controller.current?.abort(); };
+    window.addEventListener(REVERSE_SETTINGS_EVENT,check);const cancel=bgSetInterval(check,15000);
+    return()=>{window.removeEventListener(REVERSE_SETTINGS_EVENT,check);cancel();};
+  },[scope.key]);
   async function persist(value: ReverseSession, remember = false) {
     latest.current = value; if (lifetime.current) setSession(value);
     await saveReverseSession(value);
@@ -47,11 +55,11 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     if (!text?.trim()) return;
     throwIfAborted(signal); setLoading(""); setSpeech(text);
     await event("speech", `我说：“${text}”`, key);
-    await abortableDelay(Math.max(1800, Math.min(9000, text.length * 105)), signal);
+    await delay(Math.max(1800, Math.min(9000, text.length * 105)), signal);
     setSpeech("");
   }
   const selector = (value: string) => value.replace(/["\\]/g, "\\$&");
-  async function settle(signal: AbortSignal) { await abortableDelay(180, signal); }
+  async function settle(signal: AbortSignal) { await delay(180, signal); }
   async function tap(target: string, signal: AbortSignal, sessionTarget = false) {
     throwIfAborted(signal);
     const element = host.current?.querySelector<HTMLElement>(sessionTarget ? `[data-reverse-session="${selector(target)}"]` : `[data-rp-target="${selector(target)}"], [data-reverse-target="${selector(target)}"]`);
@@ -62,18 +70,18 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       setTouch({ x: parent.width * .64, y: parent.height * .66, visible: true, pressed: true });
       element.scrollIntoView({ block: "center", behavior: "smooth" });
       setTouch({ x: parent.width * .64, y: parent.height * .35, visible: true, pressed: true });
-      await abortableDelay(450, signal); rect = element.getBoundingClientRect();
+      await delay(450, signal); rect = element.getBoundingClientRect();
     }
     setTouch({ x: (rect.left - parent.left + rect.width / 2) * ((host.current?.clientWidth || parent.width) / parent.width), y: (rect.top - parent.top + rect.height / 2) * ((host.current?.clientHeight || parent.height) / parent.height), visible: true, pressed: false });
-    await abortableDelay(350, signal); setTouch(value => ({ ...value, pressed: true }));
-    await abortableDelay(170, signal); setTouch(value => ({ ...value, pressed: false }));
-    await abortableDelay(120, signal);
+    await delay(350, signal); setTouch(value => ({ ...value, pressed: true }));
+    await delay(170, signal); setTouch(value => ({ ...value, pressed: false }));
+    await delay(120, signal);
   }
   async function scrollChat(messageIds: string[], signal: AbortSignal) {
     const scroll = host.current?.querySelector<HTMLElement>('[data-reverse-chat-scroll]');
     if (!scroll || !messageIds.length) return;
     const first = host.current?.querySelector<HTMLElement>(`[id="message-${selector(messageIds[0])}"]`);
-    if (first) { first.scrollIntoView({ block: "start", behavior: "smooth" }); await abortableDelay(450, signal); }
+    if (first) { first.scrollIntoView({ block: "start", behavior: "smooth" }); await delay(450, signal); }
     const end = scroll.scrollHeight - scroll.clientHeight;
     const start = scroll.scrollTop;
     for (let position = start; position < end; position += Math.max(80, scroll.clientHeight * .7)) {
@@ -82,7 +90,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       setTouch({ x: rect.width * .76, y: rect.height * .6, visible: true, pressed: true });
       scroll.scrollTo({ top: Math.min(end, position + Math.max(80, scroll.clientHeight * .7)), behavior: "smooth" });
       setTouch({ x: rect.width * .76, y: rect.height * .35, visible: true, pressed: true });
-      await abortableDelay(480, signal);
+      await delay(480, signal);
     }
     setTouch(value => ({ ...value, visible: false, pressed: false }));
   }
@@ -110,13 +118,14 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
         return allowed.filter(item => ids.includes(item.id));
       }
       if (!loadChatSessions().length) return [];
-      await abortableDelay(120, signal);
+      await delay(120, signal);
     }
     return [];
   }
   async function playTask(task: ReverseTask, signal: AbortSignal) {
     assertReverseScope(scope); throwIfAborted(signal);
     const character = actor(), p = permissions();
+    if(latest.current?.origin==="stealth"&&!reverseAuthorizationActive(resolveReverseAutomation(character.id,scope),Date.now()))throw new Error("自主查岗授权已关闭或到期。");
     currentTask.current = task;
     if (task.kind !== "desktop" && task.app && p.modes[task.app] === "hidden") { await taskState(task.id, "skipped"); return; }
     if (task.kind === "app") { setScreen({ app: "desktop" }); await settle(signal); }
@@ -138,7 +147,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       const target = reverseAllowedSessions(character.id, scope).find(item => item.id === task.targetId);
       if (!target) { await taskState(task.id, "skipped"); return; }
       setScreen({ app: "chat", chat: { page: "messages" } }); await settle(signal); await tap(target.id, signal, true);
-      setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id } }); await abortableDelay(350, signal);
+      setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id } }); await delay(350, signal);
       const messages = loadChatMessages(target.id).filter(message => ["user", "assistant"].includes(message.role) && !message.isRetracted && !["tool_call", "tool_result", "memory_write_request"].includes(message.mediaType ?? "")).slice(-20);
       const peer = loadCharacters().find(item => item.id === target.contactId)!;
       await scrollChat(messages.map(message => message.id), signal);
@@ -164,19 +173,19 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
           let message=loadChatMessages(target.id).find(item=>item.mediaData?.reversePhoneOperationId===operation);
           if(!message){
             setLoading("");setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:text,typing:true}});
-            await abortableDelay(600,signal);await tap("send",signal);
+            await delay(600,signal);await tap("send",signal);
             setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:text,sending:true}});
             message=await sendReverseMessage(character,scope,target.id,text,operation);
           }
           await event("action",`我替${scope.userName}给${peer.name}发送了：“${message.content}”`,index===0?`${task.id}:reply`:`${task.id}:reply:${index}`);
-          throwIfAborted(signal);setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:""}});await abortableDelay(450,signal);
+          throwIfAborted(signal);setScreen({app:"chat",chat:{page:"messages",sessionId:target.id,draft:""}});await delay(450,signal);
         }
       }
       if (remark) {
-        setLoading(`他正在修改你对${peer.name}的备注…`); await abortableDelay(900, signal);
+        setLoading(`他正在修改你对${peer.name}的备注…`); await delay(900, signal);
         const alias = await renameReverseContact(character.id, scope, target.id, decision.remark, `${latest.current!.id}:${task.id}:remark`);
         await event("action", `我把${scope.userName}给${peer.name}的备注改成了“${alias}”。`, `${task.id}:remark`);
-        setLoading(""); setToast(`备注已修改为：${alias}`); await abortableDelay(800, signal); setToast("");
+        setLoading(""); setToast(`备注已修改为：${alias}`); await delay(800, signal); setToast("");
       }
       await tap("back", signal); setScreen({ app: "chat", chat: { page: "messages" } }); await settle(signal);
     } else if (task.kind === "assets") {
@@ -235,7 +244,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
         else if (step.target.startsWith("entry:")) section = browser.find(item => item.id === step.target.slice(6))?.kind ?? section;
         setScreen({ app, section }); await settle(signal); await tap(step.target, signal);
         if (!step.target.startsWith("book:") && step.target.includes(":")) setScreen({ app, section, itemId: step.target });
-        await abortableDelay(2000, signal); await showSpeech(step.speech, signal, `${task.id}:step:${index}`);
+        await delay(2000, signal); await showSpeech(step.speech, signal, `${task.id}:step:${index}`);
         setScreen({ app, section });
       }
       if (app === "shopping" && result.payCartIds?.length) {
@@ -284,7 +293,11 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     if (busy.current || !latest.current) return;
     busy.current = true; const control = new AbortController(); controller.current = control;
     setRunning(true); setError("");
+    const leaseToken=reverseId(); let leased=false; let cancelHeartbeat:(()=>void)|undefined;
     try {
+      leased=await acquireReverseLease(scope,latest.current!.id,leaseToken);
+      if(!leased)throw new Error("手机正在由另一场查岗使用，请稍后继续。");
+      cancelHeartbeat=bgSetInterval(()=>{void acquireReverseLease(scope,latest.current!.id,leaseToken).then(ok=>{if(!ok)control.abort();}).catch(()=>control.abort());},30000);
       assertReverseScope(scope); await hydrateChatStorage();
       if (!options.invitationOnly) {
         await hydrateReadingStorage();
@@ -306,7 +319,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       await persist({ ...latest.current!, status: "completed" }, true); setScreen({ app: "desktop" });
     } catch (cause) {
       if (!control.signal.aborted && !isAbortError(cause)) { const message = cause instanceof Error ? cause.message : "查岗失败，请重试或跳过这部分。"; setError(message); await persist({ ...latest.current!, status: "paused", error: message }, true); }
-    } finally { controller.current = null; busy.current = false; if (lifetime.current) { setRunning(false); setLoading(""); setTouch(value => ({ ...value, visible: false, pressed: false })); } }
+    } finally { cancelHeartbeat?.(); if(leased)await acquireReverseLease(scope,latest.current!.id,leaseToken,true); controller.current = null; busy.current = false; if (lifetime.current) { setRunning(false); setLoading(""); setTouch(value => ({ ...value, visible: false, pressed: false })); } }
   }
   async function start(withInvite = false) {
     if (busy.current || preparing.current) return;
@@ -333,7 +346,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     controller.current?.abort(); setSpeech(""); setLoading("");
     if (!task || !latest.current) return;
     // Wait for the aborted request's finally block before starting its replacement.
-    while (busy.current) await abortableDelay(20);
+    while (busy.current) await delay(20);
     if (!lifetime.current || version !== interruption.current || latest.current.status === "stopped") return;
     for (const receipt of await recoverReversePayments(scope, latest.current.id)) await event("action", receipt.text, receipt.id);
     if (latest.current.inviteSessionId && latest.current.accepted !== true) { await stop(); return; }

@@ -1,5 +1,11 @@
 "use client";
 
+import { StoryAutomationSettings } from "./story-automation-settings";
+import { ReversePhoneApp } from "@/components/checkphone/reverse-phone-app";
+import { ReversePhoneSettings } from "@/components/checkphone/reverse-phone-settings";
+import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
+import { reverseScope } from "@/lib/reverse-phone-storage";
+import { resolveStoryAutomation } from "@/lib/chat-automation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
     CHAT_INITIAL_VISIBLE_MESSAGE_COUNT,
@@ -336,7 +342,8 @@ export function ChatSettingsPanel({
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
-    const [allowForcedOfflineStory, setAllowForcedOfflineStory] = useState(session.allowForcedOfflineStory === true);
+    const [automationPanel,setAutomationPanel]=useState<"story"|"reverse"|"reverse-history">();
+    const [,setAutomationRevision]=useState(0);
     // 仿真拉黑：拉黑期间用户发出的消息会被对方拒收（仿微信红色感叹号）
     const [isBlacklisted, setIsBlacklisted] = useState(session.isBlacklisted || false);
     // 自定义状态栏（状态区）
@@ -1076,6 +1083,9 @@ export function ChatSettingsPanel({
     const searchMode = submittedSearchQuery.trim().length > 0;
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
+    if(automationPanel==="story")return <ReversePhoneLayer><StoryAutomationSettings session={session} onClose={()=>setAutomationPanel(undefined)} onChange={value=>{updateSession({storyAutomation:value,allowForcedOfflineStory:undefined});Object.assign(session,{storyAutomation:value,allowForcedOfflineStory:undefined});setAutomationRevision(v=>v+1);}}/></ReversePhoneLayer>;
+    if(automationPanel==="reverse-history")return <ReversePhoneLayer><ReversePhoneApp initialPanel="history" initialCharacterId={session.contactId} onClose={()=>setAutomationPanel("reverse")}/></ReversePhoneLayer>;
+    if(automationPanel==="reverse")return <ReversePhoneLayer><ReversePhoneSettings scope={reverseScope()} initialCharacterId={session.contactId} initialOwner={session.contactId} onHistory={()=>setAutomationPanel("reverse-history")} onClose={()=>setAutomationPanel(undefined)}/></ReversePhoneLayer>;
     return (
         <PageShell title="聊天信息" onBack={onClose} className="absolute inset-0 z-[100]">
             <div className="page-menu chat-info-menu">
@@ -1332,18 +1342,10 @@ export function ChatSettingsPanel({
 
                 {/* Toggles */}
                 <div className="menu-group">
-                    {!session.isGroup && (
-                        <div className="menu-item">
-                            <ChatInfoIcon icon={Sparkles} color={CONTENT_APP_ACCENTS.story} />
-                            <div className="menu-label-group">
-                                <span className="menu-label">允许强制开启线下剧情</span>
-                                <span className="menu-desc">角色非常渴望见面、准备惊喜或主动推进见面时，可直接创建衔接记忆分线并进入剧情</span>
-                            </div>
-                            <div className="menu-right">
-                                <Toggle checked={allowForcedOfflineStory} onChange={c => { setAllowForcedOfflineStory(c); updateSession({ allowForcedOfflineStory: c }); }} />
-                            </div>
-                        </div>
-                    )}
+                    {!session.isGroup && <>
+                        <button className="menu-item" onClick={()=>setAutomationPanel("story")}><ChatInfoIcon icon={Sparkles} color={CONTENT_APP_ACCENTS.story}/><div className="menu-label-group"><span className="menu-label">自动进入剧情 · 细分设置</span><span className="menu-desc">主动带入／已见面检测 · {resolveStoryAutomation(session).intensity==="low"?"低":resolveStoryAutomation(session).intensity==="high"?"高":"中"}强度 · 角色设置优先</span></div><ChevronRight size={16}/></button>
+                        <button className="menu-item" onClick={()=>setAutomationPanel("reverse")}><ChatInfoIcon icon={Sparkles} color={CONTENT_APP_ACCENTS.story}/><div className="menu-label-group"><span className="menu-label">反查岗 · 触发与权限</span><span className="menu-desc">对话邀请、自主偷偷查岗、时间与应用权限</span></div><ChevronRight size={16}/></button>
+                    </>}
                     <div className="menu-item">
                         <ChatInfoIcon icon={Pin} color={BINDING_ACCENTS.preset} />
                         <div className="menu-label-group"><span className="menu-label">置顶聊天</span></div>

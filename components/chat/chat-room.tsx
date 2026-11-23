@@ -13,6 +13,9 @@ import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBloc
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import dynamic from "next/dynamic";
+import { chatAutomationPrompt, extractChatAutomation, resolveStoryAutomation, confirmedArrival, claimStoryEpisode, releaseStoryEpisode, rearmStoryAfterDeparture, createDialogueReverse, inferReverseIntent } from "@/lib/chat-automation";
+import { reversePhoneBusy } from "@/lib/reverse-phone-automation";
+import { reverseScope } from "@/lib/reverse-phone-storage";
 import { REVERSE_OPEN_EVENT, type ReverseChatControl } from "@/lib/reverse-phone-types";
 import { loadReverseSession } from "@/lib/reverse-phone-storage";
 import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
@@ -114,23 +117,8 @@ import {
 // Call messages are stored with user/assistant role for correct prompt alternation,
 // but should render as centered system notifications in the UI.
 const CALL_SYS_RE = /\[我(?:向.+)?(?:发起了|挂断了|拒绝了|取消了)(?:群?(?:语音|视频)通话)/;
-const FORCED_STORY_RE = /\[强制开启线下剧情\s*[:：]\s*([^\]]{1,500})\]/g;
-const FORCED_STORY_CAPABILITY_PROMPT = `【自主开启线下剧情能力】
-只有当你非常渴望立刻见到用户、决定亲自制造惊喜，或当前对话自然发展到必须立刻线下见面的程度时，才可以自主开启线下剧情。此能力必须克制使用，普通邀约仍使用原有邀请方式。
-决定直接进入线下剧情时，在本次回复最后额外输出且只输出一次：[强制开启线下剧情:用一句话描述见面地点、行动和衔接场景]
-该标记是隐藏控制指令，不要解释标记，也不要假装用户已经同意、替用户说话或替用户决定反应。`;
-
-function extractForcedStoryTrigger(text: string): { text: string; description?: string } {
-    let description = "";
-    const cleaned = text.replace(FORCED_STORY_RE, (_match, value: string) => {
-        if (!description) description = value.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
-        return "";
-    }).replace(/\n{3,}/g, "\n\n").trim();
-    return { text: cleaned, description: description || undefined };
-}
-
 function stripForcedStoryPreview(text: string): string {
-    return text.replace(/\[强制开启线下剧情[\s\S]*$/g, "").trimEnd();
+    return extractChatAutomation(text).text;
 }
 function isCallSysMsg(msg: ChatMessage): boolean {
     return CALL_SYS_RE.test(msg.content);
@@ -1131,15 +1119,15 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
 }));
 
 export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contactCallRequest, onContactCallHandled, inspection }: ChatRoomProps) {
-    const [reversePhone, setReversePhone] = useState<{ resumeId?: string; autoContinue?: boolean } | null>(null);
+    const [reversePhone, setReversePhone] = useState<{ resumeId?: string; autoContinue?: boolean; replayId?:string } | null>(null);
     const [reverseInvitation, setReverseInvitation] = useState<{ resumeId?: string } | null>(null);
     useEffect(() => {
         if (inspection) return;
-        const open = (event: Event) => { const detail = (event as CustomEvent<{ sessionId: string; resumeId?: string }>).detail;
+        const open = (event: Event) => { const detail = (event as CustomEvent<{ sessionId: string; resumeId?: string; replay?:boolean }>).detail;
             if (detail?.sessionId !== session.id || !detail.resumeId) return;
             const record = loadReverseSession(detail.resumeId);
             if (!record || record.inviteSessionId !== session.id) return;
-            if (record.accepted === true) setReversePhone({ resumeId: record.id });
+            if (record.accepted === true) setReversePhone({ resumeId: record.id, replayId:detail.replay?record.id:undefined });
             else if (record.status !== "stopped" && record.accepted !== false) setReverseInvitation({ resumeId: record.id }); };
         window.addEventListener(REVERSE_OPEN_EVENT, open);
         return () => window.removeEventListener(REVERSE_OPEN_EVENT, open);
@@ -1221,6 +1209,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     const [storyEntryMigrationOpen, setStoryEntryMigrationOpen] = useState(false);
     const [forcedStoryTransition, setForcedStoryTransition] = useState(false);
     const forcedStoryLaunchingRef = useRef(false);
+    const storyTransitionTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+    const pendingStoryRef=useRef<{description:string;source:string;kind:"proactive"|"arrival"}|undefined>(undefined);
+    useEffect(()=>()=>{if(storyTransitionTimer.current)clearTimeout(storyTransitionTimer.current);},[]);
     const [chatAppSettingsRevision, setChatAppSettingsRevision] = useState(0);
 
     // Rich media input modals
@@ -2939,40 +2930,59 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         }
     };
 
-    const launchForcedOfflineStory = async (description: string) => {
-        if (session.isGroup || forcedStoryLaunchingRef.current) return;
-        forcedStoryLaunchingRef.current = true;
-        setForcedStoryTransition(true);
+    const launchForcedOfflineStory = async (description: string, source:string, kind:"proactive"|"arrival"="proactive") => {
+        const latestSession=loadChatSessions().find(item=>item.id===session.id)??session;
+        if (inspection || session.isGroup || forcedStoryLaunchingRef.current || !resolveStoryAutomation(latestSession)[kind]) return;
+        const scope=reverseScope();
+        if((session.chatAccountId??null)!==scope.chatAccountId)return;
         try {
-            await hydrateStoryStorage();
-            const characterId = session.contactId;
-            const characterName = character?.name || "角色";
-            const mainSession = loadStorySessionsForOwner("single", characterId)
-                .find((item) => (item.branchId || "main") === "main")
-                || createOrGetStorySession(characterId, { ownerType: "single", ownerId: characterId, branchId: "main" });
-            const now = new Date();
-            const branchName = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-            const storySession = createOrGetStorySession(characterId, {
-                ownerType: "single",
-                ownerId: characterId,
-                participantIds: [characterId],
-                branchId: `forced_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-                branchName,
-                inheritRecentMemory: true,
-                independentStory: false,
-                baseSession: mainSession,
-            });
-            const requestedAt = new Date().toISOString();
-            const launchPrompt = `${characterName}在刚才的私聊中自主决定立刻与${userIdentity?.name || "用户"}进入线下剧情。衔接场景：${description}。请读取最近私聊与角色记忆，从当前对话自然衔接并由${characterName}主动开启现场剧情；不得替用户决定言行或反应。`;
-            updateStorySession(storySession.id, { autoStartPrompt: launchPrompt, autoStartRequestedAt: requestedAt });
-            saveStoryLaunchTarget({ ...storySession, autoStartPrompt: launchPrompt, autoStartRequestedAt: requestedAt });
-            await new Promise((resolve) => window.setTimeout(resolve, 700));
-            window.dispatchEvent(new CustomEvent("open-app", { detail: { appId: "story" } }));
-        } catch (error) {
-            setForcedStoryTransition(false);
-            forcedStoryLaunchingRef.current = false;
-            showChatToast(error instanceof Error ? error.message : "自主线下剧情创建失败，请稍后再试");
-        }
+            if(!(await claimStoryEpisode(session.id,source)))return;
+            forcedStoryLaunchingRef.current = true;
+            setForcedStoryTransition(true);
+            storyTransitionTimer.current=setTimeout(()=>{
+                storyTransitionTimer.current=undefined;
+                void (async()=>{
+                    try {
+                        if(reverseScope().key!==scope.key)throw new Error("当前身份已切换，已取消自动进入剧情。");
+                        await hydrateStoryStorage();
+                        if(!forcedStoryLaunchingRef.current)return;
+                        const characterId=session.contactId,characterName=character?.name||"角色";
+                        const mainSession=loadStorySessionsForOwner("single",characterId).find(item=>(item.branchId||"main")==="main")||createOrGetStorySession(characterId,{ownerType:"single",ownerId:characterId,branchId:"main"});
+                        const now=new Date(),branchId=`automatic_${session.id}_${source}`;
+                        const storySession=loadStorySessionsForOwner("single",characterId).find(item=>item.branchId===branchId)||createOrGetStorySession(characterId,{ownerType:"single",ownerId:characterId,participantIds:[characterId],branchId,branchName:`线下见面 · ${now.toLocaleString("zh-CN")}`,inheritRecentMemory:true,independentStory:false,baseSession:mainSession});
+                        const context=loadChatMessages(session.id).filter(m=>["user","assistant"].includes(m.role)&&!m.isRetracted).slice(-20).map(m=>`${m.role==="user"?scope.userName:characterName}：${m.content.slice(0,1500)}`).join("\n");
+                        const requestedAt=now.toISOString(),launchPrompt=`从刚才私聊自然承接本次线下见面，不重新开场。当前用户：${scope.userName}。${kind==="arrival"?"双方已确认见面":"角色主动开启现场互动"}。场景：${description}。不得替用户决定言行或反应。最近私聊：\n${context}`;
+                        updateStorySession(storySession.id,{autoStartPrompt:launchPrompt,autoStartRequestedAt:requestedAt,facingIdentity:userIdentity});
+                        saveStoryLaunchTarget({...storySession,autoStartPrompt:launchPrompt,autoStartRequestedAt:requestedAt,facingIdentity:userIdentity});
+                        window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));
+                    } catch(error) {
+                        await releaseStoryEpisode(session.id,source);showChatToast(error instanceof Error?error.message:"进入剧情失败，可稍后重试");
+                    } finally {forcedStoryLaunchingRef.current=false;setForcedStoryTransition(false);}
+                })();
+            },1800);
+        } catch(error){showChatToast(error instanceof Error?error.message:"自动进入设置读取失败");}
+    };
+    const processChatAutomation = async (actions:ReturnType<typeof extractChatAutomation>,source:string) => {
+        if(inspection||session.isGroup||offlineMode)return;
+        try {
+            const latestSession=loadChatSessions().find(item=>item.id===session.id)??session;
+            await rearmStoryAfterDeparture(session.id);
+            const storyOptions=resolveStoryAutomation(latestSession);
+            const arrival=storyOptions.arrival?confirmedArrival(session.id):undefined;
+            const story=actions.story&&storyOptions[actions.story.kind]?actions.story:arrival?{kind:"arrival" as const,description:arrival}:undefined;
+            const reverseIntent=actions.reverse??inferReverseIntent(session.id,actions.text);
+            if(reverseIntent&&!reversePhoneBusy(reverseScope())){
+                const record=await createDialogueReverse(latestSession,source,reverseIntent);
+                if(record){if(story)pendingStoryRef.current={...story,source};setReversePhone({resumeId:record.id,autoContinue:true});return;}
+            }
+            if(story&&!reversePhone&&!reverseInvitation&&!reversePhoneBusy(reverseScope()))await launchForcedOfflineStory(story.description,source,story.kind);
+        }catch(error){showChatToast(error instanceof Error?error.message:"自动操作未能启动，已保留聊天记录");}
+    };
+    const closeReversePhone = () => {
+        const record=reversePhone?.resumeId?loadReverseSession(reversePhone.resumeId):undefined;
+        setReversePhone(null);
+        const pending=pendingStoryRef.current;pendingStoryRef.current=undefined;
+        if(pending&&record?.status==="completed")void launchForcedOfflineStory(pending.description,pending.source,pending.kind);
     };
 
     // Helper: Split AI response by \n\n into multiple messages (online chat mode)
@@ -2990,15 +3000,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
     ): Promise<{ hasVisible: boolean; stateValues: StateValue[]; triggerCall?: "voice" | "video"; hasDecline?: boolean }> => {
         throwIfGenerationStopped(options);
         const responseBatchId = options?.responseBatchId || createResponseBatchId();
-        const forcedStoryEnabled = !session.isGroup
-            && loadChatSessions().find((item) => item.id === session.id)?.allowForcedOfflineStory === true;
-        const forcedStory = forcedStoryEnabled
-            ? extractForcedStoryTrigger(aiResponseText)
-            : { text: aiResponseText, description: undefined };
-        aiResponseText = forcedStory.text;
-        const rawResponseText = options?.rawResponseText
-            ? extractForcedStoryTrigger(options.rawResponseText).text
-            : aiResponseText;
+        const automaticActions=extractChatAutomation(aiResponseText);
+        aiResponseText=automaticActions.text;
+        const rawResponseText=options?.rawResponseText?extractChatAutomation(options.rawResponseText).text:aiResponseText;
         const previousState = session.isGroup
             ? getLatestStateValues(session.id)
             : getLatestCharacterStateValues(session.contactId);
@@ -3114,7 +3118,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 });
                 setMessages(prev => [...prev, aiMsg]);
             }
-            if (forcedStory.description) void launchForcedOfflineStory(forcedStory.description);
+            void processChatAutomation(automaticActions,responseBatchId);
             return { hasVisible: false, stateValues, triggerCall, hasDecline };
         }
 
@@ -3227,7 +3231,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
             await Promise.allSettled(imageReplacementTasks);
             throwIfGenerationStopped(options);
         }
-        if (forcedStory.description) void launchForcedOfflineStory(forcedStory.description);
+        void processChatAutomation(automaticActions,responseBatchId);
         return { hasVisible: true, stateValues, triggerCall, hasDecline };
     };
 
@@ -3481,12 +3485,12 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 }]
                 : history;
             const latestSession = loadChatSessions().find((item) => item.id === session.id);
-            if (!session.isGroup && latestSession?.allowForcedOfflineStory === true) {
+            if (!session.isGroup && latestSession) {
                 generationHistory = [...generationHistory, {
                     id: `_forced_story_capability_${Date.now()}`,
                     sessionId: session.id,
                     role: "system",
-                    content: FORCED_STORY_CAPABILITY_PROMPT,
+                    content: chatAutomationPrompt(latestSession),
                     status: "sent",
                     createdAt: new Date().toISOString(),
                 }];
@@ -3844,12 +3848,12 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         try {
             let latestMessages = loadChatMessages(session.id);
             const latestSession = loadChatSessions().find((item) => item.id === session.id);
-            if (!session.isGroup && latestSession?.allowForcedOfflineStory === true) {
+            if (!session.isGroup && latestSession) {
                 latestMessages = [...latestMessages, {
                     id: `_forced_story_capability_${Date.now()}`,
                     sessionId: session.id,
                     role: "system",
-                    content: FORCED_STORY_CAPABILITY_PROMPT,
+                    content: chatAutomationPrompt(latestSession),
                     status: "sent",
                     createdAt: new Date().toISOString(),
                 }];
@@ -6877,7 +6881,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 wrapperRef.current.parentElement
             )}
 
-            {reversePhone && !inspection && <ReversePhoneLayer><ReversePhoneApp initialCharacterId={session.contactId} resumeSessionId={reversePhone.resumeId} autoContinue={reversePhone.autoContinue} onClose={() => setReversePhone(null)} /></ReversePhoneLayer>}
+            {reversePhone && !inspection && <ReversePhoneLayer><ReversePhoneApp initialCharacterId={session.contactId} resumeSessionId={reversePhone.resumeId} autoContinue={reversePhone.autoContinue} initialReplayId={reversePhone.replayId} onClose={closeReversePhone} /></ReversePhoneLayer>}
             {activeCustomChatPlus && activeCustomChatPlus.presentation === "none" && (
                 <div className="chat-custom-app-headless" aria-hidden="true">
                     <CustomAppRunner
@@ -7091,8 +7095,9 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
                 <div className="modal-overlay" data-ui="modal" role="dialog" aria-modal="true" aria-label="正在进入线下剧情">
                     <div className="modal-dialog items-center text-center">
                         <Loader2 size={30} className="animate-spin text-[var(--c-accent)]" />
-                        <span className="modal-header-title">TA自主开启了线下剧情</span>
-                        <p className="menu-desc">正在创建衔接记忆分线并进入……</p>
+                        <span className="modal-header-title">正在自动进入剧情</span>
+                        <p className="menu-desc">承接当前见面，进入剧情 APP……</p>
+                        <button className="ui-btn ui-btn-ghost" onClick={()=>{if(storyTransitionTimer.current)clearTimeout(storyTransitionTimer.current);storyTransitionTimer.current=undefined;forcedStoryLaunchingRef.current=false;setForcedStoryTransition(false);}}>本次取消</button>
                     </div>
                 </div>
             )}

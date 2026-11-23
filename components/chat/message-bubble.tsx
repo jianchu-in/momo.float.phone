@@ -867,7 +867,7 @@ function AppCardBubble({ msg, characterId, characterName }: { msg: ChatMessage; 
     const openApp = () => {
         if (cardOpenDisabled) return;
         if (d?.appId === "reverse-phone") {
-            window.dispatchEvent(new CustomEvent("reverse-phone-open", { detail: { sessionId: msg.sessionId, resumeId: d.appSceneId } }));
+            window.dispatchEvent(new CustomEvent("reverse-phone-open", { detail: { sessionId: msg.sessionId, resumeId: d.appSceneId, replay: d.appName === "查岗记录" } }));
             return;
         }
         if (!d?.appId || typeof window === "undefined") return;

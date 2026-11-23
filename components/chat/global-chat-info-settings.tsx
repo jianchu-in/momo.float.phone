@@ -1,5 +1,7 @@
 "use client";
 
+import { StoryAutomationSettings } from "./story-automation-settings";
+import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
 import { useEffect, useId, useRef, useState } from "react";
 import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, ListOrdered, Play, RotateCcw, Sparkles, User, X } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
@@ -127,6 +129,7 @@ function ChatSoundsSection() {
 }
 
 export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
+    const [storyAutomationOpen,setStoryAutomationOpen]=useState(false);
     const initial = loadChatAppSettings();
     const [avatar, setAvatar] = useState(initial.globalChatUserAvatar || "");
     const [background, setBackground] = useState(initial.globalChatBackgroundImage || "");
@@ -345,11 +348,13 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
         );
     }
 
+    if(storyAutomationOpen)return <ReversePhoneLayer><StoryAutomationSettings onClose={()=>setStoryAutomationOpen(false)} onChange={value=>saveSettings({storyAutomation:value})}/></ReversePhoneLayer>;
     return (
         <PageShell title="全局聊天信息" onBack={onBack} className="absolute inset-0 z-[100]">
             <div className="page-menu chat-info-menu">
                 <div className="px-4 pb-2 ts-12 text-[var(--c-text)] opacity-65">单独会话设置优先于这里；这里只改变聊天室，不会修改主页用户资料。状态栏仍仅用于私聊。</div>
                 <div className="menu-group">
+                    <button className="menu-item" onClick={()=>setStoryAutomationOpen(true)}><Sparkles size={20}/><div className="menu-label-group"><span className="menu-label">自动进入剧情 · 全局设置</span><span className="menu-desc">允许角色主动带入、检测已见面、低中高强度</span></div><ChevronRight size={16}/></button>
                     <div className="menu-item">
                         <Play size={20} className="text-[var(--c-icon)]" />
                         <div className="menu-label-group"><span className="menu-label">剧情入口</span><span className="menu-desc">用剧情作为线下模式；旧线下记录进入时可选择迁移方式</span></div>

@@ -9,13 +9,21 @@ export type ReversePermissions = {
   shopping: { cart: boolean; orders: boolean };
   browser: { history: boolean; bookmarks: boolean };
 };
-export type ReverseOverride = { modes?: Partial<ReversePermissions["modes"]>; chat?: Partial<ReversePermissions["chat"]>; shopping?: Partial<ReversePermissions["shopping"]>; browser?: Partial<ReversePermissions["browser"]> };
-export type ReverseSettings = { unified: ReversePermissions; characters: Record<string, ReverseOverride>; showTouch: boolean };
+export type ReverseAutomation = {
+  invitation: boolean; proactive: boolean; stealth: boolean;
+  timing: "fixed" | "random"; intervalHours: number; minGapHours: number; weeklyLimit: number;
+  startsAt: string; endsAt: string;
+};
+export type ReverseOverride = { automation?: Partial<ReverseAutomation>; modes?: Partial<ReversePermissions["modes"]>; chat?: Partial<ReversePermissions["chat"]>; shopping?: Partial<ReversePermissions["shopping"]>; browser?: Partial<ReversePermissions["browser"]> };
+export type ReverseSettings = { automation?: ReverseAutomation; unified: ReversePermissions; characters: Record<string, ReverseOverride>; showTouch: boolean };
 export type ReverseScope = ChatScopeState & { identityId: string | null; userName: string; userAvatar?: string; key: string };
 export type BrowserEntry = { id: string; kind: "history" | "bookmarks"; title: string; url: string; description: string; updatedAt: string };
 export type ReverseTask = { id: string; kind: "desktop" | "app" | "conversation" | "assets"; app?: ReverseApp; targetId?: string; state: "pending" | "done" | "skipped"; result?: ReverseResult | ChatDecision };
 export type ReverseEvent = { id: string; at: string; kind: "view" | "speech" | "action" | "control"; text: string };
 export type ReverseSession = {
+  characterAvatar?: string;
+  origin?: "manual" | "dialogue" | "stealth";
+  replay?: { at: number; html: string; speech: string; loading: string; app: string; touch?: { x: number; y: number; visible: boolean; pressed: boolean } }[];
   id: string; characterId: string; characterName: string; scope: ReverseScope; createdAt: string; updatedAt: string;
   status: "running" | "paused" | "stopped" | "completed"; tasks: ReverseTask[]; events: ReverseEvent[];
   inviteMessageId?: string; inviteSessionId?: string; accepted?: boolean; invitation?: { accepted: boolean; reaction: string }; error?: string;

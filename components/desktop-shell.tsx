@@ -138,6 +138,7 @@ import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { installChatSoundListener, playChatSoundOnce, setMiniChatSoundSessionId, startChatSoundLoop } from "@/lib/chat-sound";
 import { setMascotContext } from "@/lib/mascot-context";
 import { DESKTOP_WIDGETS_CHANGED_EVENT } from "@/lib/mascot-events";
+import { ReversePhoneAutomation } from "@/components/checkphone/reverse-phone-automation";
 import { useWeixinBridge } from "@/lib/use-weixin-bridge";
 import { startWeixinCloudRealtimeSync } from "@/lib/weixin-cloud-sync";
 import { WeixinSyncToast } from "@/components/weixin-sync-toast";
@@ -4156,6 +4157,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
   return (
     <>
+      <ReversePhoneAutomation />
       <section
         className="phone-shell-wrap"
         style={{

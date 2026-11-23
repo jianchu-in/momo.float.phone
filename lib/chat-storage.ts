@@ -50,6 +50,7 @@ export type ChatSession = {
     isPinned: boolean;
     /** 允许该私聊角色在强烈希望见面时自主创建并进入线下剧情分线。默认关闭。 */
     allowForcedOfflineStory?: boolean;
+    storyAutomation?: Partial<import("./chat-automation").StoryAutomation>;
     backgroundImage?: string; // Add support for custom background
     /** 仅当前私聊里展示的用户头像；不修改用户身份、主页或其他会话 */
     userAvatarOverride?: string;
@@ -393,6 +394,7 @@ export type ChatAppSettings = {
     floatingDockEnabled?: boolean; // 悬浮球贴边半隐藏收拢模式（默认关）
     /** 用剧情 APP 取代聊天输入栏原“线下模式”入口。 */
     storyAsOfflineMode?: boolean;
+    storyAutomation?: Partial<import("./chat-automation").StoryAutomation>;
 };
 
 // ── 聊天提示音配置 ────────────────────────────────────────────────

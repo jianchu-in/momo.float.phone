@@ -20,7 +20,7 @@ export function defaultReversePermissions(): ReversePermissions {
 function settingsKey(scope: ReverseScope) { return REVERSE_PREFIX + "settings:" + scope.key; }
 function normalizeSettings(raw: string | null): ReverseSettings {
   const defaults = defaultReversePermissions(), data = readReverseJson<Partial<ReverseSettings>>(raw, {});
-  return { unified: { modes: { ...defaults.modes, ...data.unified?.modes }, chat: { ...defaults.chat, ...data.unified?.chat },
+  return { automation: data.automation, unified: { modes: { ...defaults.modes, ...data.unified?.modes }, chat: { ...defaults.chat, ...data.unified?.chat },
     shopping: { ...defaults.shopping, ...data.unified?.shopping }, browser: { ...defaults.browser, ...data.unified?.browser } }, characters: data.characters ?? {}, showTouch: data.showTouch !== false };
 }
 export function loadReverseSettings(scope = reverseScope()): ReverseSettings { return normalizeSettings(kvGet(settingsKey(scope))); }
@@ -31,7 +31,12 @@ export function resolveReversePermissions(characterId: string, scope = reverseSc
 }
 export async function updateReverseSettings(scope: ReverseScope, update: (settings: ReverseSettings) => ReverseSettings) {
   assertReverseScope(scope);
-  await kvUpdatePersisted(settingsKey(scope), raw => JSON.stringify(update(normalizeSettings(raw))));
+  await kvUpdatePersisted(settingsKey(scope), raw => {
+    const next=update(normalizeSettings(raw));
+    for(const options of [next.automation,...Object.values(next.characters).map(value=>({...next.automation,...value.automation}))])if(options?.startsAt&&options.endsAt&&Date.parse(options.endsAt)<=Date.parse(options.startsAt))throw new Error("授权结束时间必须晚于开始时间。");
+    return JSON.stringify(next);
+  });
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("reverse-phone-settings-updated"));
 }
 export function inheritReverseOption(override: ReverseOverride, section: keyof ReverseOverride, key: string, value: unknown): ReverseOverride {
   const next = structuredClone(override) as Record<string, Record<string, unknown>>;
@@ -55,7 +60,20 @@ export function loadReverseSessions(scope = reverseScope()) {
     .filter((item): item is ReverseSession => !!item && item.scope.key === scope.key).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 export async function saveReverseSession(session: ReverseSession) {
-  await kvUpdatePersisted(sessionKey(session.id), () => JSON.stringify({ ...session, updatedAt: new Date().toISOString() }));
+  await kvUpdatePersisted(sessionKey(session.id), raw => {
+    const previous = readReverseJson<ReverseSession | null>(raw, null);
+    return JSON.stringify({ ...session, replay: previous?.replay?.length ? previous.replay : session.replay, updatedAt: new Date().toISOString() });
+  });
+}
+export async function appendReverseReplay(id: string, frame: NonNullable<ReverseSession["replay"]>[number]) {
+  await kvUpdatePersisted(sessionKey(id), raw => {
+    const session = readReverseJson<ReverseSession | null>(raw, null);
+    if (!session) return raw ?? "null";
+    const frames = session.replay ?? [], previous = frames.at(-1);
+    const lastHtml=frames.slice().reverse().find(entry=>entry.html)?.html;
+    if ((previous && lastHtml === frame.html && previous.speech === frame.speech && previous.loading === frame.loading && JSON.stringify(previous.touch) === JSON.stringify(frame.touch))) return raw!;
+    return JSON.stringify({ ...session, replay: [...frames, {...frame,html:lastHtml===frame.html?"":frame.html}] });
+  });
 }
 export function reverseMemoryText(session: ReverseSession) {
   return `[查手机] 我查看了${session.scope.userName}的手机。\n` + session.events.map(event => event.text).join("\n");
@@ -75,9 +93,9 @@ export function appendReverseEvent(session: ReverseSession, kind: ReverseEvent["
   if (session.events.some(event => event.id === id)) return session;
   return { ...session, events: [...session.events, { id, kind, text, at: new Date().toISOString() }] };
 }
-export function createReverseSession(character: { id: string; name: string }, scope = reverseScope()): ReverseSession {
+export function createReverseSession(character: { id: string; name: string; avatar?: string|null }, scope = reverseScope()): ReverseSession {
   const now = new Date().toISOString();
-  return { id: reverseId(), characterId: character.id, characterName: character.name, scope, status: "paused", createdAt: now, updatedAt: now,
+  return { id: reverseId(), characterId: character.id, characterName: character.name, characterAvatar: character.avatar??undefined, scope, status: "paused", createdAt: now, updatedAt: now,
     tasks: [{ id: reverseId(), kind: "desktop", state: "pending" }], events: [] };
 }
 export function allowedReverseApps(characterId: string, scope: ReverseScope) { const permissions = resolveReversePermissions(characterId, scope); return (Object.keys(REVERSE_APPS) as Array<keyof typeof REVERSE_APPS>).filter(app => permissions.modes[app] !== "hidden"); }

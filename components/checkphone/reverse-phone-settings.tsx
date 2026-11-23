@@ -1,13 +1,14 @@
 "use client";
+import { ReverseAutomationSettings } from "./reverse-automation-settings";
 import { useState } from "react";
 import { loadCharacters } from "@/lib/character-storage";
 import { getCharacterWorldGroup, loadCharacterWorldGroups } from "@/lib/character-world-storage";
 import { inheritReverseOption, loadReverseSettings, resolveReversePermissions, updateReverseSettings } from "@/lib/reverse-phone-storage";
 import { REVERSE_APPS, type AccessMode, type ReverseApp, type ReverseOverride, type ReverseScope, type ReverseSettings } from "@/lib/reverse-phone-types";
 
-export function ReversePhoneSettings({ scope, initialCharacterId, initialApp, onClose }: { scope: ReverseScope; initialCharacterId?: string; initialApp?: ReverseApp; onClose: () => void }) {
+export function ReversePhoneSettings({ scope, initialCharacterId, initialApp, initialOwner, onHistory, onClose }: { scope: ReverseScope; onHistory?:()=>void; initialOwner?: string; initialCharacterId?: string; initialApp?: ReverseApp; onClose: () => void }) {
   const [settings, setSettings] = useState(() => loadReverseSettings(scope));
-  const [owner, setOwner] = useState("unified"), [app, setApp] = useState<ReverseApp>(initialApp ?? "chat");
+  const [owner, setOwner] = useState(initialOwner ?? "unified"), [app, setApp] = useState<ReverseApp>(initialApp ?? "chat");
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const characters = loadCharacters(), worlds = loadCharacterWorldGroups();
   const [worldId, setWorldId] = useState(getCharacterWorldGroup(initialCharacterId ?? characters[0]?.id)?.id ?? "all");
@@ -21,7 +22,7 @@ export function ReversePhoneSettings({ scope, initialCharacterId, initialApp, on
   }
   function option(section: keyof ReverseOverride, key: string, value: unknown) {
     void save(current => owner === "unified"
-      ? { ...current, unified: { ...current.unified, [section]: { ...current.unified[section], [key]: value } } }
+      ? section === "automation" ? { ...current, automation: { ...current.automation, [key]: value } as import("@/lib/reverse-phone-types").ReverseAutomation } : { ...current, unified: { ...current.unified, [section]: { ...current.unified[section], [key]: value } } }
       : { ...current, characters: { ...current.characters, [owner]: inheritReverseOption(current.characters[owner] ?? {}, section, key, value) } });
   }
   function permission(section: "chat" | "shopping" | "browser", key: string, title: string) {
@@ -38,10 +39,12 @@ export function ReversePhoneSettings({ scope, initialCharacterId, initialApp, on
   return <section className="rp-panel rp-settings" aria-label="反查岗设置">
     <header className="rp-header"><button onClick={onClose}>返回</button><h2>反查岗设置</h2></header>
     <main className="rp-scroll">
+      {onHistory&&<button className="rp-card" onClick={onHistory}>查看查岗记录与回放</button>}
       <label>设置范围<select value={owner} onChange={event => setOwner(event.target.value)}><option value="unified">统一设置</option>
         {worlds.map(world => <optgroup key={world.id} label={world.name}>{characters.filter(character => world.memberIds.includes(character.id)).map(character => <option key={character.id} value={character.id}>{character.name} · 角色专属</option>)}</optgroup>)}
       </select></label>
       <p className="rp-muted">角色专属设置优先；未单独设置的项目跟随统一规则。</p>
+      <ReverseAutomationSettings key={owner} character={owner!=="unified"} value={owner==="unified"?settings.automation:override.automation} unified={settings.automation} disabled={busy} onReset={()=>void save(current=>({...current,characters:{...current.characters,[owner]:{...current.characters[owner],automation:undefined}}}))} onChange={(key,value)=>{ if(owner==="unified")void save(current=>({...current,automation:{...current.automation,[key]:value} as import("@/lib/reverse-phone-types").ReverseAutomation}));else option("automation",key,value); }} />
       <nav className="rp-tabs">{(Object.keys(REVERSE_APPS) as ReverseApp[]).map(id => <button key={id} aria-pressed={app === id} onClick={() => setApp(id)}>{REVERSE_APPS[id]}</button>)}</nav>
       <fieldset disabled={busy}>
         {app === "chat" && <>
