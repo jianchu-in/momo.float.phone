@@ -9,6 +9,7 @@ import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat
 import { kvGet, kvSet } from "@/lib/kv-db";
 import { getMascotContext, subscribeMascotContext, type MascotPageContext } from "@/lib/mascot-context";
 import { OPEN_FLOATING_TOOL } from "@/lib/roleplay-discussion";
+import { focusWithoutScroll } from "@/lib/focus-without-scroll";
 
 const BALL_SIZE = 48;
 const EDGE_GAP = 12;
@@ -49,6 +50,7 @@ function useBallDrag(key: string, onActivate: () => void, onDragStart?: () => vo
     if (!ball || !(parent instanceof HTMLElement)) return;
     const rect = parent.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
+    if (event.pointerType === "touch") event.preventDefault();
     event.stopPropagation();
     suppressClick.current = false;
     gesture.current = {
@@ -188,7 +190,7 @@ export function FloatingTools() {
 
   function closeDiscussion() {
     setDiscussion(null);
-    window.requestAnimationFrame(() => launcher.current?.focus());
+    window.requestAnimationFrame(() => focusWithoutScroll(launcher.current));
   }
 
   return <>

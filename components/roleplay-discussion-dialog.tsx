@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useOverlayViewport } from "@/components/use-overlay-viewport";
+import { focusWithoutScroll } from "@/lib/focus-without-scroll";
 import { ArrowUp, ChevronDown, ChevronRight, Cpu, List, MessagesSquare, Plus, SlidersHorizontal, X } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { MascotPageContext } from "@/lib/mascot-context";
@@ -27,6 +29,8 @@ export function RoleplayDiscussionDialog({ context, onClose }: { context: Mascot
   const [active, setActive] = useState<DiscussionConversation | null>(() =>
     conversations.length ? null : newConversation(context));
   const dialog = useRef<HTMLElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const viewportStyle = useOverlayViewport(backdrop, true, true);
 
   useEffect(() => {
     const refresh = () => setConversations(loadDiscussionConversations());
@@ -34,9 +38,9 @@ export function RoleplayDiscussionDialog({ context, onClose }: { context: Mascot
     return () => window.removeEventListener(DISCUSSION_HISTORY_UPDATED, refresh);
   }, []);
 
-  useEffect(() => { dialog.current?.focus(); }, [active]);
+  useEffect(() => { focusWithoutScroll(dialog.current); }, [active]);
 
-  return <div className="roleplay-discussion-backdrop" onClick={onClose}>
+  return <div ref={backdrop} className="roleplay-discussion-backdrop" style={viewportStyle} onClick={onClose}>
     <section ref={dialog} role="dialog" aria-modal="true" aria-label="破壁聊天" tabIndex={-1}
       className="roleplay-discussion" onClick={event => event.stopPropagation()} onKeyDown={event => {
         if (event.key === "Escape" && !event.defaultPrevented) {
@@ -51,10 +55,10 @@ export function RoleplayDiscussionDialog({ context, onClose }: { context: Mascot
         const last = focusable.at(-1);
         if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
           event.preventDefault();
-          last?.focus();
+          focusWithoutScroll(last ?? null);
         } else if (!event.shiftKey && document.activeElement === last) {
           event.preventDefault();
-          first?.focus();
+          focusWithoutScroll(first ?? null);
         }
       }}>
       <header className="discussion-header">

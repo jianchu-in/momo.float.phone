@@ -117,6 +117,7 @@ import { MomentsFeed } from "@/components/chat/moments-feed";
 import { PhoneChatApp } from "@/components/chat/phone-chat-app";
 import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { StoryFloatingPhoneWindow } from "./story-floating-phone-window";
+import { useOverlayViewport } from "@/components/use-overlay-viewport";
 import { GiftPickerModal } from "@/components/chat/gift-picker-modal";
 import { TransferTargetModal } from "@/components/chat/transfer-target-modal";
 import { LocationInputModal, PhotoInputModal, RedPacketModal, VoiceRecordModal } from "@/components/chat/rich-input-modals";
@@ -621,7 +622,6 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [composerCatalogOpen, setComposerCatalogOpen] = useState(false);
   const [composerShortcutHeight, setComposerShortcutHeight] = useState(0);
   const [floatingPhoneOpen, setFloatingPhoneOpen] = useState(false);
-  const [floatingPhoneViewportStyle, setFloatingPhoneViewportStyle] = useState<CSSProperties | undefined>(undefined);
   const [floatingPhoneTab, setFloatingPhoneTab] = useState<FloatingPhoneTab>("chat");
   const [floatingPlusOpen, setFloatingPlusOpen] = useState(false);
   const [floatingRichKind, setFloatingRichKind] = useState<FloatingRichKind>(null);
@@ -871,54 +871,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     node.scrollTop = node.scrollHeight;
   }, [floatingChatGenerating, floatingChatVersion, floatingPhoneOpen]);
 
-  // 手机软键盘通常只缩小 visualViewport，不会改变外层剧情壳的布局高度。
-  // 把遮罩约束到当前真正可见的窗口区域，嵌入聊天页和独立剧情小手机的
-  // 底部输入栏就会一起抬到键盘上方，而不是继续停在布局视口底部。
-  useLayoutEffect(() => {
-    if (!floatingPhoneOpen || typeof window === "undefined") {
-      setFloatingPhoneViewportStyle(undefined);
-      return;
-    }
-    let frame = 0;
-    const update = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const shell = shellInnerRef.current;
-        const viewport = window.visualViewport;
-        if (!shell || !viewport) {
-          setFloatingPhoneViewportStyle(undefined);
-          return;
-        }
-        const rect = shell.getBoundingClientRect();
-        const scaleY = rect.height > 0 && shell.offsetHeight > 0 ? rect.height / shell.offsetHeight : 1;
-        const visibleTop = Math.max(rect.top, viewport.offsetTop);
-        const visibleBottom = Math.min(rect.bottom, viewport.offsetTop + viewport.height);
-        const localTop = Math.max(0, (visibleTop - rect.top) / scaleY);
-        const localHeight = Math.max(1, (visibleBottom - visibleTop) / scaleY);
-        setFloatingPhoneViewportStyle({ top: localTop, bottom: "auto", height: localHeight });
-
-        const active = document.activeElement;
-        if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) {
-          active.scrollIntoView({ block: "nearest", inline: "nearest" });
-        }
-      });
-    };
-    const observer = typeof ResizeObserver !== "undefined" && shellInnerRef.current
-      ? new ResizeObserver(update)
-      : null;
-    if (shellInnerRef.current && observer) observer.observe(shellInnerRef.current);
-    update();
-    window.addEventListener("resize", update);
-    window.visualViewport?.addEventListener("resize", update);
-    window.visualViewport?.addEventListener("scroll", update);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener("resize", update);
-      window.visualViewport?.removeEventListener("resize", update);
-      window.visualViewport?.removeEventListener("scroll", update);
-    };
-  }, [floatingPhoneOpen]);
+  const floatingPhoneViewportStyle = useOverlayViewport(shellInnerRef, floatingPhoneOpen);
 
   function activateStorySession(session: StorySession) {
     cancelStoryMultiSelect();

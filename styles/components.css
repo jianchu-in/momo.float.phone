@@ -6215,6 +6215,8 @@
 @media (prefers-reduced-motion: reduce) { .phone-tools-radial { transition: none; } }
 
 .roleplay-discussion-backdrop {
+  overflow: hidden;
+  contain: layout paint;
   position: absolute;
   z-index: 100003;
   inset: 0;
@@ -6230,6 +6232,8 @@
   display: flex;
   flex-direction: column;
   width: min(100%, 440px);
+  min-width: 0;
+  max-width: 100%;
   height: min(625px, 100%);
   min-height: 0;
   overflow: hidden;
@@ -6508,3 +6512,7 @@
 .discussion-history-row p { margin-top: 2px; color: var(--c-text-secondary, #625c74); font-size: 12px; }
 .discussion-history-row time, .discussion-history-row svg { flex: none; }
 .discussion-retry { align-self: flex-end; }
+
+@supports (-webkit-touch-callout:none) {
+  .roleplay-discussion :is(textarea,input,select) { font-size:16px; }
+}
