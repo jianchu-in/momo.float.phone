@@ -18,15 +18,18 @@ function load(file, deps, suffix = "", globals = {}) {
 
 async function main() {
   const characters = [{ id: "a", name: "角色甲", persona: "安静温和" }, { id: "b", name: "角色乙", persona: "开朗" }];
+  const images=load("lib/shown-image.ts", {});
+  let imageRecognition=true;
   const requests = [];
   const timelineReads = [];
   let onTimelineRead;
   const reply = "*他期待着见面。*\n\n**他记住了约定。**";
   const engine = load("lib/story-engine.ts", {
+    "./shown-image": {...images,loadShownImageDataUrl:async()=>"data:image/png;base64,cmVmZXJlbmNl"},
     "./character-storage": { loadCharacters: () => characters },
     "./settings-storage": { loadBindingConfig: () => ({ characterBindings: [] }), resolveBinding: () => ({ apiConfigId: "api" }),
-      loadApiConfigs: () => [{ id: "api", defaultModel: "test" }], loadPresets: () => [], loadRegexes: () => [], loadWorldBooks: () => [], resolveUserIdentity: () => ({ name: "简初" }) },
-    "./story-storage": { resolveActiveStorySchemes: () => ({}) },
+      loadApiConfigs: () => [{ id: "api", defaultModel: "test", enableImageRecognition:imageRecognition }], loadPresets: () => [], loadRegexes: () => [], loadWorldBooks: () => [], resolveUserIdentity: () => ({ name: "简初" }) },
+    "./story-storage": {loadStorySessions:()=>[], resolveActiveStorySchemes: () => ({}) },
     "./memory-storage": { loadMemoryConfig: () => ({}) },
     "./abort-utils": { throwIfAborted: signal => { if (signal?.aborted) throw new DOMException("Aborted", "AbortError"); } },
     "./memory-service": { retrieveMemoriesForPrompt: async () => [], retrieveCoreMemoriesForPrompt: async () => [] },
@@ -41,7 +44,7 @@ async function main() {
         truncatedHistory: history, wbActivationContext: "", unifiedRecentItems: [],
       }),
     },
-    "./llm-prompt-assembler": { assemblePromptPayload: () => [{ role: "system", content: "原有角色与预设" }] },
+    "./llm-prompt-assembler": { assemblePromptPayload: ({history}) => [{ role: "system", content: "原有角色与预设" },...history.map(message=>({role:message.role,content:message.content}))] },
     "./macro-engine": { MacroEngine: class {} },
     "./story-parser": { STORY_PARSER_VERSION: 1, parseStoryResponse: raw => ({ rawText: raw, renderedText: raw, summaryText: "" }) },
     "./chat-engine": { ChatEngineError: Error, previewMessagesForApi: (_api, _preset, messages) => messages,
@@ -80,6 +83,26 @@ async function main() {
   const beforeAbort = requests.length;
   await assert.rejects(engine.generateStoryCompletion("a", [], { signal: abort.signal }), { name: "AbortError" });
   assert.equal(requests.length, beforeAbort, "Stopping during timeline preparation skips the model request");
+
+  onTimelineRead=undefined;
+  const imageCases=["我拿出这件衣服，问你适不适合今晚穿。","我端来刚做好的草莓蛋糕。","这是我刚做好的饭，摆到桌上。","我举起手机，给你看相册里的这张照片。",""];
+  for(const text of imageCases){
+    const rawContent=images.formatStoryImageInput(text),history=[{id:"image-user",sessionId:"s",role:"user",rawContent,imageRef:"ref",createdAt:""}];
+    const before=requests.length;
+    await engine.generateStoryCompletion("a",history,{...options,participantIds:["a","b"]});
+    assert.equal(requests.length,before+1,"Reference images use the normal story request only");
+    const turn=requests.at(-1).find(message=>Array.isArray(message.content));
+    assert.equal(turn.role,"user");assert.equal(turn.content[1].type,"image_url");
+    assert.ok(turn.content[0].text.includes(images.STORY_REFERENCE_IMAGE_CONTEXT));
+    assert.ok(turn.content[0].text.endsWith(rawContent));assert.equal(rawContent,"（剧情参考图）"+(text?"\n"+text:""));
+  }
+  const old={id:"old",sessionId:"s",role:"user",rawContent:"（当面展示了一张图片）\n我端来一盘饭。",imageRef:"ref",createdAt:""};
+  await engine.generateStoryCompletion("a",[old,{id:"next",sessionId:"s",role:"user",rawContent:"尝尝看。",createdAt:""}],options);
+  assert.ok(requests.at(-1).some(message=>message.content==="（剧情参考图）\n我端来一盘饭。"));
+  assert.equal(old.rawContent,"（当面展示了一张图片）\n我端来一盘饭。","Old saved messages are not rewritten");
+  assert.ok(!requests.at(-1).some(message=>typeof message.content==="string"&&message.content.includes("当面展示了一张图片")));
+  imageRecognition=false;const beforeNoVision=requests.length;
+  await assert.rejects(engine.generateStoryCompletion("a",[old],options),/开启识图/);assert.equal(requests.length,beforeNoVision);imageRecognition=true;
 
   const { window } = require("linkedom").parseHTML('<html><body><div id="root"></div></body></html>');
   global.window = window; global.document = window.document; global.HTMLElement = window.HTMLElement; global.Node = window.Node;
@@ -120,6 +143,6 @@ async function main() {
   await click("应用"); await render();
   assert.equal(toggle("引导生成角色心声").checked, true); assert.equal(toggle("引导使用重点强调").checked, true);
   await act(async () => renderer.unmount());
-  console.log("✅ 剧情心声/重点引导：默认关闭与旧提示词一致、独立开关、预览/实际请求/多人流式一致、设置预设保存恢复；全程模拟 API");
+  console.log("✅ 剧情参考图/心声/重点引导：默认关闭与旧提示词一致、独立开关、预览/实际请求/多人流式一致、设置预设保存恢复；全程模拟 API");
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

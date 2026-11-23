@@ -1,4 +1,4 @@
-import { loadShownImageDataUrl, SHOWN_IMAGE_CONTEXT } from "./shown-image";
+import { loadShownImageDataUrl, STORY_REFERENCE_IMAGE_CONTEXT, formatStoryImageInput } from "./shown-image";
 import { loadCharacters } from "./character-storage";
 import {
   loadBindingConfig,
@@ -155,7 +155,7 @@ function toHistoryMessage(message: StoryMessage, contextExcludedTags?: string): 
     id: message.id,
     sessionId: message.sessionId,
     role: message.contextRole || message.role,
-    content: stripContextExcludedTags(message.rawContent, contextExcludedTags),
+    content: stripContextExcludedTags(message.imageRef && (message.contextRole || message.role) === "user" ? formatStoryImageInput(message.rawContent) : message.rawContent, contextExcludedTags),
     status: "sent",
     createdAt: message.createdAt,
   };
@@ -424,7 +424,7 @@ async function buildStoryPromptMessages(
     const previous = messages[index]?.content;
     const text = typeof previous === "string" ? previous : shownImage.rawContent;
     const turn: LLMMessage = { role: "user", content: [
-      { type: "text", text: `${SHOWN_IMAGE_CONTEXT}\n${text}` },
+      { type: "text", text: `${STORY_REFERENCE_IMAGE_CONTEXT}\n${formatStoryImageInput(text)}` },
       { type: "image_url", image_url: { url, detail: "auto" } },
     ] };
     if (index < 0) messages.push(turn);

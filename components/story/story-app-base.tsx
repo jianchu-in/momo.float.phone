@@ -1,7 +1,7 @@
 "use client";
 
 import { ShownImage } from "@/components/ui/shown-image";
-import { storeShownImage } from "@/lib/shown-image";
+import { storeShownImage, formatStoryImageInput } from "@/lib/shown-image";
 import { stripStoryIllustrationBlock } from "@/lib/story-illustration";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
@@ -471,7 +471,7 @@ const StoryComposer = memo(function StoryComposer({
 
   return (
     <div className="story-composer" data-quick-input={quickInputEnabled ? "true" : undefined}>
-      {photo && <div className="story-composer-photo"><ShownImage file={photo} /><button type="button" aria-label="移除图片"
+      {photo && <div className="story-composer-photo"><ShownImage file={photo} alt="剧情参考图预览" /><small className="story-reference-image-hint">可作为衣服、食物、物件或环境参考，具体用途由本轮文字和剧情决定。</small><button type="button" aria-label="移除图片"
         onClick={() => setPhoto(undefined)}><XMarkIcon width={15} height={15} /></button></div>}
       <input hidden ref={photoPicker} type="file" accept="image/*" onChange={event => {
         const file = event.currentTarget.files?.[0];
@@ -598,7 +598,7 @@ const StoryComposer = memo(function StoryComposer({
         <StoryShortcutSwitch label="时间感知" checked={shortcuts.timeAware} onToggle={shortcuts.onTimeAware} />
         <StoryShortcutSwitch label="状态栏" checked={!!shortcuts.statusId} disabled={!shortcuts.status.length && !shortcuts.statusId} onToggle={shortcuts.toggleStatus} />
         <StoryShortcutSwitch label="小剧场" checked={!!shortcuts.theaterId} disabled={!shortcuts.theater.length && !shortcuts.theaterId} onToggle={shortcuts.toggleTheater} />
-        <button type="button" onClick={() => photoPicker.current?.click()}>当面展示图片</button>
+        <button type="button" title="可参考衣服、食物、物件或环境；用途由本轮文字与剧情决定" onClick={() => photoPicker.current?.click()}>添加剧情参考图</button>
         <button type="button" onClick={() => { setShortcutsOpen(false); shortcuts.onCatalog(); }}>剧情目录</button>
         {!!shortcuts.statusId && <label>状态栏方案<select value={shortcuts.statusId} onChange={event => shortcuts.onStatus(event.target.value)}>
           {shortcuts.status.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
@@ -1734,7 +1734,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
     try {
       const imageRef = photo ? await storeShownImage(photo) : undefined;
       if (!isCurrentGeneration()) return;
-      const content = imageRef ? ["（当面展示了一张图片）", userText].filter(Boolean).join("\n") : userText;
+      const content = imageRef ? formatStoryImageInput(userText) : userText;
       const userMessage = pushStoryMessage({ sessionId, role: "user", rawContent: content, renderedContent: content, imageRef });
       if (activeSessionIdRef.current === sessionId) setMessages(prev => [...prev, userMessage]);
       setStorageVersion(value => value + 1);
@@ -2650,7 +2650,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                             </div>
                           ) : (
                             <>
-                            {message.imageRef && <ShownImage mediaRef={message.imageRef} className="story-shown-image" />}
+                            {message.imageRef && <ShownImage mediaRef={message.imageRef} className="story-shown-image" alt="剧情参考图" />}
                             <StoryHtmlRenderer
                               colorDialogue={!readingPanelVisible}
                               content={message.renderedContent || message.rawContent}
