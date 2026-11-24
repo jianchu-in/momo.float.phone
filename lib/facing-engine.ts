@@ -3,7 +3,7 @@ import { loadShownImageDataUrl, FACING_REFERENCE_IMAGE_CONTEXT } from "./shown-i
 import { loadCharacters } from "./character-storage";
 import { jsonrepair } from "jsonrepair";
 import { throwIfAborted } from "./abort-utils";
-import { splitVisibleCallActions } from "./call-action-text";
+import {facingReplyFormatInstruction,parseFacingReplyParts,type FacingSegment} from "./facing-reply-format";
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
@@ -19,7 +19,7 @@ import { cleanStreamText } from "./stream-preview";
 export const FACING_MODE_PROMPT = [
   "你和用户此刻在同一个场景里面对面交流。保持角色人设与你们的关系，用自然的即时短句回答。",
   "语音转写是用户当面说的话，触碰事件是用户在你面前做的动作。根据部位、当前心情与关系作出反应。",
-  "只输出 JSON 对象。dialogue 只写实际说出口的台词。action 写看得见的动作或表情，每段用中文括号（），例如（放下杯子，朝你笑了笑）。没有可见动作时填空字符串，不写心理活动。",
+  "只输出 JSON 对象。回复正文使用 segments 有序段落数组，每段区分可见动作 action 与实际台词 dialogue；段落顺序遵循本轮生成格式要求，不写心理活动。",
   "scene_id 是已抵达的可选场景 ID 或 null，reaction_id 是所在场景的反应 ID 或 null。",
   "仅当本轮对话明确表示双方已经转移到另一个地点时填写 scene_id。提到地点、邀请、计划或回忆时保持当前场景。切换时自然衔接对话。",
   "有对应反应素材时可同时填写 reaction_id。允许安静时只做动作，也允许说话时保持默认画面。",
@@ -93,7 +93,7 @@ function toPromptHistory(meeting: FacingMeeting): ChatMessage[] {
   }));
 }
 
-export type FacingReply = { speakerId: string; speakerName: string; dialogue: string; action?: string; reaction?: FacingAsset; nextScene?: FacingSceneGroup; visualContinues?: boolean; visualDescription?: string; visualRating?: string };
+export type FacingReply = { speakerId: string; speakerName: string; dialogue: string; action?: string; segments?: FacingSegment[]; reaction?: FacingAsset; nextScene?: FacingSceneGroup; visualContinues?: boolean; visualDescription?: string; visualRating?: string };
 
 export function chooseFacingSpeakers(ids: string[]): string[] {
   const order = [...new Set(ids)];
@@ -180,12 +180,12 @@ export async function generateFacingReply(options: {
   const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
   const mode: LLMMessage = {
     role: "system",
-    content: [FACING_MODE_PROMPT, mapContextPrompt,
+    content: [FACING_MODE_PROMPT, facingReplyFormatInstruction(settings.replyFormat), mapContextPrompt,
       resolvePromptTimeAware() && `当前现实时间：${formatPromptTimestamp(new Date().toISOString())}。结合消息时间理解间隔，不把历史中的时间当成现在。`,
       settings.extraPrompt?.trim() && `【用户的生成要求】\n${settings.extraPrompt.trim()}`,
       options.illustrate && settings.autoVisual?.extraPrompt?.trim() && `【本轮CG画面额外要求】${settings.autoVisual.extraPrompt.trim()}`,
       options.illustrate && "本轮需要生成一张新的完整补图，不复用素材。请在JSON对象最外层附加 image_description（详细描述本轮结束时当前场所、最后发言角色的外貌、衣着、情绪、姿态、用户视点和光线，供生图使用），以及 image_rating（safe/nsfw/uncertain，仅判断要画的当前画面）。这两个字段不要写进角色台词。背景和人物取自参考图，保持剧情连续，不把计划当已发生。",
-      multi && `这是多人当面互动，像群聊一样自然接话，每人保持独立人设。只有指定的角色本轮发言，其余人可以安静在场。不要替用户说话。一次请求返回完整 JSON 对象 {"scene_id":null,"replies":[{"speaker_id":"角色ID","dialogue":"只含该角色台词","action":"（可见动作）","reaction_id":null}]}。每位角色各一项，不将多人的台词混写进同一项。严格按这个名单和顺序输出：${JSON.stringify(speakingIds)}。角色资料：${JSON.stringify(roster)}`,
+      multi && `这是多人当面互动，像群聊一样自然接话，每人保持独立人设。只有指定的角色本轮发言，其余人可以安静在场。不要替用户说话。一次请求返回完整 JSON 对象 {"scene_id":null,"replies":[{"speaker_id":"角色ID","dialogue":"只含该角色台词","action":"（可见动作）","segments":[{"type":"action","text":"（可见动作）"},{"type":"dialogue","text":"实际台词"}],"reaction_id":null}]}。每位角色各一项，不将多人的台词混写进同一项。严格按这个名单和顺序输出：${JSON.stringify(speakingIds)}。角色资料：${JSON.stringify(roster)}`,
       options.speakerId && `本次只重试 ${options.speakerId} 的回应，保持其他人的原回复。`,
       options.deferVisual && "本轮画面由独立流程处理。scene_id 和 reaction_id 一律填写 null，仍要自然描写剧情中发生的动作与地点。",
       options.visualActivity && `另加一个后台 JSON 字段 visual_continues。紧接本轮动作后，「${options.visualActivity}」确定仍在继续时填 true，已经结束、换场或不确定时填 false。不要在台词或动作中提到画面处理。`,
@@ -223,7 +223,7 @@ export async function generateFacingReply(options: {
   const output = await sendLLMRequest(api, preset, messages, [], { characterName: character.name, userName: identity?.name }, { appId: "facing", appTags: ["facing"], signal });
   const text = cleanStreamText(output, { stripXmlTags: ["think", "thinking", "analysis", "reasoning"] }).trim();
   const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/gi, "");
-  let parsed: { dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown; visual_continues?: unknown; replies?: unknown; image_description?: unknown; image_rating?: unknown };
+  let parsed: { segments?: unknown; dialogue?: unknown; action?: unknown; reaction_id?: unknown; scene_id?: unknown; visual_continues?: unknown; replies?: unknown; image_description?: unknown; image_rating?: unknown };
   try { parsed = unfenced.startsWith("{") ? JSON.parse(jsonrepair(unfenced)) : { dialogue: multi ? "" : unfenced }; }
   catch { throw new Error("角色回应格式有误，可以重试。"); }
   const nextScene = destinations.find(group => group.name === parsed.scene_id);
@@ -233,13 +233,11 @@ export async function generateFacingReply(options: {
     const item = items.find(value => value && typeof value === "object" && value.speaker_id === speakerId);
     if (!item) continue;
     const speaker = cast.find(value => value.id === speakerId) ?? character;
-    const line = splitVisibleCallActions(typeof item.dialogue === "string" ? item.dialogue.trim() : "");
-    const movement = splitVisibleCallActions(typeof item.action === "string" ? item.action.trim() : "");
-    const action = [...new Set([...movement.actions, ...(movement.speech ? [`（${movement.speech}）`] : []), ...line.actions])].join(" ");
+    const {dialogue,action,segments}=parseFacingReplyParts(item,settings.replyFormat);
     const ownScene = (speakerId === character.id ? scenes : groupFacingScenes(loadFacingUsableAssets(speakerId))).find(group => group.name === (nextScene?.name ?? scene));
     const reaction = options.deferVisual ? undefined : ownScene?.reactions.find(asset => asset.id === item.reaction_id || asset.name === item.reaction_id);
-    if (line.speech || action || reaction || nextScene) replies.push({ speakerId, speakerName: speaker.name,
-      dialogue: line.speech, action: action || undefined, reaction, nextScene, visualContinues: item.visual_continues === true && !nextScene });
+    if (dialogue || action || reaction || nextScene) replies.push({ speakerId, speakerName: speaker.name,
+      dialogue, action, segments, reaction, nextScene, visualContinues: item.visual_continues === true && !nextScene });
   }
   if (!replies.length) throw new Error("这一轮没有可显示的回应，可以重试。");
   if (options.illustrate) {

@@ -22,6 +22,7 @@ import { createFacingVoiceSession } from "@/lib/facing-voice-input";
 import { FacingStoryDialog } from "./facing-story-dialog";
 import { useFacingViewportInset } from "./use-facing-viewport-inset";
 import { ShownImage } from "@/components/ui/shown-image";
+import {facingVisibleSegments,parseFacingReplyParts} from "@/lib/facing-reply-format";
 import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
@@ -205,7 +206,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (run.signal.aborted) return false;
       const responses: FacingTurn[] = result.replies.map(reply => ({
         ...(reply.nextScene ? facingScenePosition(reply.nextScene) : { sceneName: user.sceneName, sceneId: user.sceneId, portraitId: user.portraitId }),
-        id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action,
+        id: facingId(), role: "assistant", kind: "reply", text: reply.dialogue, action: reply.action, segments: reply.segments,
         speakerId: reply.speakerId, speakerName: reply.speakerName,
         at: new Date().toISOString(), replyTo: user.id, reactionId: reply.reaction?.id, reactionName: reply.reaction?.name,
         visualDescription: reply.visualDescription, visualRating: reply.visualRating,
@@ -398,7 +399,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       if (turn.id !== selectedMessage.id) return turn;
       const action = splitVisibleCallActions(actionDraft);
       const visibleAction = [...action.actions, ...(action.speech ? [`（${action.speech}）`] : [])].join(" ");
-      const updated = { ...turn, audioRef: undefined, text: messageDraft.trim(), action: turn.role === "assistant" ? visibleAction || undefined : turn.action };
+      const ordered=turn.role==="assistant"&&turn.segments?.length?parseFacingReplyParts({dialogue:messageDraft}):undefined;
+      const updated = { ...turn, audioRef: undefined, text: ordered?.dialogue??messageDraft.trim(), action: ordered?ordered.action:turn.role === "assistant" ? visibleAction || undefined : turn.action, segments: ordered?.segments };
       const versions = turn.versions?.map((version, index) => index === (turn.versionIndex ?? 0) ? facingReplyVersion(updated) : version);
       return { ...updated, versions };
     }));
@@ -533,15 +535,16 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         <header><h2>{messageDialog === "edit" ? "编辑消息" : messageDialog === "instruction" ? "指令重试" : messageDialog === "delete" ? "删除这条消息？" : "消息操作"}</h2>
           <button type="button" className="facing-icon" aria-label="关闭消息操作" onClick={closeMenu}><X size={18} /></button></header>
         {messageDialog ? <>
+          {messageDialog==="edit"&&!!selectedMessage.segments?.length&&<p>按展示顺序编辑：括号内为动作，括号外为台词。</p>}
           {messageDialog !== "delete" && <textarea className="facing-message-editor" aria-label={messageDialog === "edit" ? "消息内容" : "重试指令"}
-            value={messageDraft} rows={4} maxLength={4000} onChange={event => setMessageDraft(event.target.value)} />}
-          {messageDialog === "edit" && selectedMessage.role === "assistant" && <textarea className="facing-message-editor" aria-label="动作描述"
+            value={messageDraft} rows={4} maxLength={14000} onChange={event => setMessageDraft(event.target.value)} />}
+          {messageDialog === "edit" && selectedMessage.role === "assistant" && !selectedMessage.segments?.length && <textarea className="facing-message-editor" aria-label="动作描述"
             placeholder="（动作描述）" value={actionDraft} rows={2} maxLength={2000} onChange={event => setActionDraft(event.target.value)} />}
           <button type="button" className="facing-primary" onClick={applyMessageDialog}
             disabled={messageDialog === "instruction" && !messageDraft.trim()}>{messageDialog === "delete" ? "确认删除" : messageDialog === "edit" ? "保存" : "重新生成"}</button>
         </> : <div className="facing-list">
           <button type="button" onClick={() => { closeMenu(); retryMessage(selectedMessage); }}>重试</button>
-          <button type="button" onClick={() => { setMessageDraft(selectedMessage.text); setActionDraft(selectedMessage.action ?? ""); setMessageDialog("edit"); }}>编辑</button>
+          <button type="button" onClick={() => { setMessageDraft(selectedMessage.segments?.length?facingVisibleSegments(selectedMessage).map(part=>part.text).join("\n"):selectedMessage.text); setActionDraft(selectedMessage.action ?? ""); setMessageDialog("edit"); }}>编辑</button>
           <button type="button" onClick={() => { setMessageDraft(""); setMessageDialog("instruction"); }}>指令重试</button>
           <button type="button" className="facing-delete" onClick={() => setMessageDialog("delete")}>删除</button>
         </div>}

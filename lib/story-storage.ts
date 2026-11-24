@@ -1,3 +1,4 @@
+import {facingVisibleSegments} from "./facing-reply-format";
 import Dexie from "dexie";
 import { formatChatTimestamp } from "./llm-prompt-assembler";
 import { hydrateKvDb, kvGet, kvSet, registerKvMigration } from "./kv-db";
@@ -1275,7 +1276,7 @@ export async function continueFacingInStory(meeting: import("./facing-storage").
       facingSourceKey:snapshotKey,facingIdentity:identity,sourceFacingMeetingId:meeting.id};
     const description=`【从面对面继续】当前场景：${meeting.scene?.sceneName??"默认场景"}。继续这段已经发生的对话，不重新开场。用户：${identity?.name??"用户"}。`;
     copied=[{id:`${id}:scene`,sessionId:id,role:"system",rawContent:description,createdAt:new Date(Math.max(Date.now(),Date.parse(meeting.turns.at(-1)?.at??meeting.createdAt)||0)+1).toISOString()},...meeting.turns.map(turn=>({
-      id:`${id}:facing:${turn.id}`,sessionId:id,role:turn.role,rawContent:`【${turn.sceneName}】${turn.role==="assistant"?turn.speakerName||"角色":identity?.name||"用户"}：${[turn.text,turn.action].filter(Boolean).join("\n")}`,
+      id:`${id}:facing:${turn.id}`,sessionId:id,role:turn.role,rawContent:`【${turn.sceneName}】${turn.role==="assistant"?turn.speakerName||"角色":identity?.name||"用户"}：${turn.segments?.length?facingVisibleSegments(turn).map(part=>part.text).join("\n"):[turn.text,turn.action].filter(Boolean).join("\n")}`,
       imageRef:turn.imageRef,createdAt:turn.at,
     }))];
     const last=copied.at(-1);saved={...saved,lastMessageId:last?.id,lastMessagePreview:last?.rawContent.slice(0,200),lastMessageAt:last?.createdAt,completedRounds:meeting.completedRounds??0};

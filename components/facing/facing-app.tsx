@@ -1,5 +1,6 @@
 "use client";
 
+import {FACING_REPLY_FORMATS,facingVisibleSegments} from "@/lib/facing-reply-format";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, Settings2, UserRound, X } from "lucide-react";
 import { FacingMapApp } from "./facing-map-app";
@@ -61,8 +62,7 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
           <small>{turn.role === "assistant" ? turn.speakerName ?? character.name : "你"} · {turn.sceneName}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
           {turn.imageRef && <ShownImage mediaRef={turn.imageRef} className="facing-message-photo" />}
           {!!turn.touches?.length && <p className="facing-action">{turn.touches.map(part => `（触碰了${part}）`).join(" ")}</p>}
-          {turn.action && <p className="facing-action">{turn.action}</p>}
-          {turn.text && <p>{turn.kind === "touch" ? `触碰了${turn.text}` : turn.text}</p>}
+          {facingVisibleSegments(turn).map((part,index)=><p key={index} className={part.type==="action"?"facing-action":undefined}>{turn.kind==="touch"&&part.type==="dialogue"?`触碰了${part.text}`:part.text}</p>)}
           {turn.reactionName && <em>{turn.reactionName}</em>}
         </li>)}
       </ol>
@@ -309,6 +309,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
         </section>
         <h2 className="facing-record-title">生成要求</h2>
         <div className="facing-list facing-settings-list">
+          <label>生成格式<select aria-label="生成格式" value={current.replyFormat??"alternating"} onChange={e=>commitSetting({replyFormat:e.target.value as FacingCharacterSettings["replyFormat"]})}>{Object.entries(FACING_REPLY_FORMATS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
           <label>额外提示词<textarea key={`reply-prompt:${character.id}`} defaultValue={current.extraPrompt??""} placeholder="统一文风、人称、避免的套话等，每次生成回复时带入" onBlur={e=>commitSetting({extraPrompt:e.target.value})}/></label>
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}

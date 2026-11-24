@@ -1,3 +1,4 @@
+import {facingVisibleSegments,type FacingReplyFormat,type FacingSegment} from "./facing-reply-format";
 import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, registerKvMigration } from "./kv-db";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 import type { VnAssetLayout } from "./vn-asset-storage";
@@ -126,6 +127,7 @@ export type FacingCharacterSettings = {
   length?: keyof typeof FACING_REPLY_LENGTHS | "custom";
   customReplyLength?: number;
   extraPrompt?: string;
+  replyFormat?: FacingReplyFormat;
   voice?: boolean;
   speechInput?: "browser" | "cloud";
   touch?: boolean;
@@ -206,6 +208,7 @@ export type FacingTurn = {
   speakerName?: string;
   audioRef?: string;
   action?: string;
+  segments?: FacingSegment[];
   imageRef?: string;
   touches?: string[];
   at: string;
@@ -223,16 +226,17 @@ export type FacingTurn = {
   versionIndex?: number;
 };
 
-export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "speakerId" | "speakerName" | "audioRef">;
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "segments" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "speakerId" | "speakerName" | "audioRef">;
 
 export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
-  const { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef } = turn;
-  return { text, action, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef };
+  const { text, action, segments, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef } = turn;
+  return { text, action, segments, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef };
 }
 
 export function facingTurnText(turn: FacingTurn): string {
-  return [turn.speakerName ? `【${turn.speakerName}】` : "", turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text,
-    ...(turn.touches ?? []).map(part => `（触碰了${part}）`), turn.imageRef ? "（场景参考图）" : "", turn.action,
+  const parts=turn.segments?.length?facingVisibleSegments(turn).map(part=>part.text).join("\n"):undefined;
+  return [turn.speakerName ? `【${turn.speakerName}】` : "", parts ?? (turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text),
+    ...(turn.touches ?? []).map(part => `（触碰了${part}）`), turn.imageRef ? "（场景参考图）" : "", parts ? undefined : turn.action,
     turn.reactionName && !turn.text && !turn.action ? `（${turn.reactionName}）` : ""].filter(Boolean).join("\n");
 }
 
@@ -422,7 +426,7 @@ export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, 
   if (meeting.deletedAt || (revision !== undefined && (meeting.sceneRevision ?? 0) !== revision)) return false;
   const index = meeting.turns.findIndex(turn => turn.id === anchor.id);
   const original = meeting.turns[index];
-  if (!original || original.versionIndex !== anchor.versionIndex || original.text !== anchor.text || original.action !== anchor.action) return false;
+  if (!original || original.versionIndex !== anchor.versionIndex || original.text !== anchor.text || original.action !== anchor.action || JSON.stringify(original.segments) !== JSON.stringify(anchor.segments)) return false;
   const position = facingMeetingPosition(meeting);
   return position.sceneName === anchor.sceneName && position.sceneId === anchor.sceneId
     && meeting.turns.slice(index).every(turn => turn.sceneName === anchor.sceneName && turn.sceneId === anchor.sceneId);
@@ -463,9 +467,9 @@ export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: 
     const positionChanged=last?.sceneName!==previousLast?.sceneName||last?.sceneId!==previousLast?.sceneId||last?.portraitId!==previousLast?.portraitId;
     const scene = last?.id === previousLast?.id && !positionChanged ? current.scene : last ? facingReplyVersion(last) : current.scene;
     const previous = current.turns.at(-1);
-    const visual = last?.id === previous?.id && last?.action === previous?.action && last?.text === previous?.text && last?.versionIndex === previous?.versionIndex
+    const visual = last?.id === previous?.id && last?.action === previous?.action && last?.text === previous?.text && last?.versionIndex === previous?.versionIndex && JSON.stringify(last?.segments) === JSON.stringify(previous?.segments)
       ? current.visual : undefined;
-    const contentChanged=turns.length!==current.turns.length||turns.some((turn,index)=>{const old=current.turns[index];return !old||turn.id!==old.id||turn.text!==old.text||turn.action!==old.action||turn.sceneName!==old.sceneName||turn.sceneId!==old.sceneId||turn.versionIndex!==old.versionIndex;});
+    const contentChanged=turns.length!==current.turns.length||turns.some((turn,index)=>{const old=current.turns[index];return !old||turn.id!==old.id||turn.text!==old.text||turn.action!==old.action||turn.sceneName!==old.sceneName||turn.sceneId!==old.sceneId||turn.versionIndex!==old.versionIndex||(turn.segments!==old.segments&&JSON.stringify(turn.segments)!==JSON.stringify(old.segments));});
     saved = { ...current, turns, sceneRevision: (current.sceneRevision ?? 0) + (contentChanged?1:0), completedRounds: facingCompletedRounds(current), visual,
       scene: scene && { sceneName: scene.sceneName, portraitId: scene.portraitId, sceneId: scene.sceneId } };
     return JSON.stringify(saved);

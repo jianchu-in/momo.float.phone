@@ -411,7 +411,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           </button>;
         })}
         <div className="facing-choices">
-          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("place-life")}>地点设置</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("place-life")}>家的归属与氛围音</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={()=>{setSceneMatchPlaceId(selected.id);setSheet("scene-match");}}>设置地点场景</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void interior()}>进入内部地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>套用场所模板</button>
