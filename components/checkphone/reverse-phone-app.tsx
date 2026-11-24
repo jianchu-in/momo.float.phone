@@ -1,7 +1,8 @@
 "use client";
 
+import { isAbortError } from "@/lib/abort-utils";
 import { bgSetTimeout } from "@/lib/bg-timer";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { BookOpen, Globe, LockKeyhole, MessageCircle, ShoppingBag, Settings, History, ChevronLeft } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
@@ -74,21 +75,23 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
   useEffect(() => { if (!run.toast) return; const timer = setTimeout(() => run.setToast(""), 2600); return () => clearTimeout(timer); }, [run.toast]);
   useEffect(()=>{
     if(run.running)started.current=true;
-    if(started.current&&!run.running&&run.session&&!finished.current){finished.current=true;onFinished?.(loadReverseSession(run.session.id)??run.session);}
+    if(started.current&&!run.running&&run.session&&!finished.current){finished.current=true;onFinished?.(loadReverseSession(run.session.id, false)??run.session);}
   },[run.running,run.session,onFinished]);
   useEffect(()=>{
-    if(!run.session||!run.running||!host.current)return;
+    if(!run.session||!run.running||!host.current||panel||replayId)return;
+    const capture=new AbortController();
     const id=run.session.id,at=Date.now()-Date.parse(run.session.createdAt);
     const cancel=bgSetTimeout(()=>{
       const content=host.current?.querySelector('.rp-phone-content');if(!content)return;
       const copy=content.cloneNode(true) as HTMLElement;
       const source=[...content.querySelectorAll<HTMLElement>('*')],targets=[...copy.querySelectorAll<HTMLElement>('*')];
       source.forEach((el,i)=>{if(el.scrollTop)targets[i]?.setAttribute('data-rp-scroll-top',String(el.scrollTop));});
-      void freezeReverseFrame(copy.innerHTML).then(html=>appendReverseReplay(id,{at,html,speech:run.speech,loading:run.loading,app:run.screen.app,touch:run.touch})).catch(error=>console.warn("查岗回放画面保存失败，文字记录仍保留",error));
+      void freezeReverseFrame(copy.innerHTML,capture.signal).then(html=>appendReverseReplay(id,{at,html,speech:run.speech,loading:run.loading,app:run.screen.app,touch:run.touch})).catch(error=>{if(!isAbortError(error))console.warn("查岗回放画面保存失败，文字记录仍保留",error);});
     },100);
-    return cancel;
-  },[run.screen,run.speech,run.loading,run.touch,run.running,run.session?.id]);
-  if(replayId){const record=loadReverseSession(replayId);if(record?.scope.key===scope.key)return <ReversePhoneReplay record={record} onClose={()=>setReplayId(undefined)}/>;}
+    return ()=>{cancel();capture.abort();};
+  },[run.screen,run.speech,run.loading,run.touch,run.running,run.session?.id,panel,replayId]);
+  const replayRecord = useMemo(() => replayId ? loadReverseSession(replayId) : null, [replayId]);
+  if(replayRecord?.scope.key===scope.key)return <ReversePhoneReplay record={replayRecord} onClose={()=>setReplayId(undefined)}/>;
   async function close() { await run.stop(); onClose(); }
   async function openPanel(value: "settings" | "history") { if (run.running) await run.stop(); setPanel(value); }
   const back = () => run.setScreen({ app: "desktop" });
@@ -103,7 +106,7 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
               <div className="rp-phone-content" inert={run.running || !!resumable}>
                 {run.screen.app === "desktop" ? <div className="rp-desktop">
                   {theme.wallpaperAssetId && assets[theme.wallpaperAssetId] && <div className="rp-wallpaper" style={{ backgroundImage: `url(${assets[theme.wallpaperAssetId]})`, backgroundPosition: `${theme.wallpaperX}% ${theme.wallpaperY}%`, backgroundSize: "cover", transform: `scale(${theme.wallpaperScale / 100})`, filter: `blur(${theme.wallpaperBlur}px)`, opacity: theme.wallpaperOpacity }} />}
-                  <div className="rp-owner"><Avatar src={scope.userAvatar} name={scope.userName} /><h2>{scope.userName}的手机</h2><p>{run.running ? "正在共享屏幕" : "邀请角色来看看你的手机"}</p></div>
+                  <div className="rp-owner"><Avatar src={scope.userAvatar} name={scope.userName} /><h2>{scope.userName}的手机</h2><p>{run.running ? run.session?.origin === "stealth" ? "角色正在自主查看" : "正在共享屏幕" : "邀请角色来看看你的手机"}</p></div>
                   <div className="rp-app-grid">{(Object.keys(REVERSE_APPS) as ReverseApp[]).map(app => { const Icon = ICONS[app], skin = app === "browser" ? undefined : theme.iconSkins[app]; return <button className={`rp-app-icon rp-icon-${app}`} data-rp-target={`app:${app}`} key={app} onClick={() => app === "browser" ? setPanel("browser") : run.setToast("选择角色后，点击下方开始查岗。浏览器可以直接进入编辑。") }><span>{skin && assets[skin] ? <img src={assets[skin]} alt="" /> : <Icon size={29} strokeWidth={1.7} />}</span><b>{REVERSE_APPS[app]}</b></button>; })}</div>
                   {!run.running && <p className="rp-desktop-tip">应用权限在右上角设置中配置</p>}
                 </div> : <InspectionPage scope={scope} characterId={run.session?.characterId ?? run.characterId} screen={run.screen} onScreen={run.setScreen} onBack={back} />}

@@ -16,9 +16,9 @@ export function ReverseAutomationSettings({ value, unified, character, disabled,
     <label>时间安排<select aria-label="查岗时间安排" value={effective.timing} onChange={e=>onChange("timing",e.target.value)}><option value="random">随机时间</option><option value="fixed">固定间隔</option></select></label>
     {effective.timing==="fixed"&&<label>固定间隔（小时）<input aria-label="固定间隔小时" type="number" min={1} max={720} value={effective.intervalHours} onChange={e=>onChange("intervalHours",Number(e.target.value))}/></label>}
     <label>两次至少间隔（小时）<input aria-label="查岗最短间隔" type="number" min={1} max={168} value={effective.minGapHours} onChange={e=>onChange("minGapHours",Number(e.target.value))}/></label>
-    <label>连续七天最多自主查岗几次<input aria-label="七天查岗上限" type="number" min={1} max={30} value={effective.weeklyLimit} onChange={e=>onChange("weeklyLimit",Number(e.target.value))}/></label>
+    <label>每个角色连续七天最多自主查岗几次<input aria-label="七天查岗上限" type="number" min={1} max={30} value={effective.weeklyLimit} onChange={e=>onChange("weeklyLimit",Number(e.target.value))}/></label>
     {(["startsAt","endsAt"] as const).map(key=><label key={key}>{key==="startsAt"?"授权开始（留空立即）":"授权结束（留空长期）"}<input aria-label={key==="startsAt"?"授权开始":"授权结束"} type="datetime-local" value={effective[key] ? new Date(Date.parse(effective[key])-new Date(effective[key]).getTimezoneOffset()*60000).toISOString().slice(0,16) : ""} onChange={e=>onChange(key,e.target.value?new Date(e.target.value).toISOString():"")}/></label>)}
     {character&&<button onClick={onReset}>触发与时间恢复跟随统一</button>}
-    <p className="rp-muted">七天次数只限制自主查岗，手动和对话邀请不占次数。随机时间会保存，刷新不重抽；次数是上限，不保证查满。应用运行或后台保活期间执行，关闭网页或系统清理后无法保证；重开不集中补查。查看与真实操作均遵守下方应用权限。</p>
+    <p className="rp-muted">每个角色分别计次，同一用户身份和聊天账号下滚动七天计算；统一设置只统一规则，不共用次数。七天次数只限制自主查岗，手动和对话邀请不占次数。随机时间会保存，刷新不重抽；次数是上限，不保证查满。应用运行或后台保活期间执行，关闭网页或系统清理后无法保证；重开不集中补查。查看与真实操作均遵守下方应用权限。</p>
   </fieldset></details>;
 }

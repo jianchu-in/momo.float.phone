@@ -22,6 +22,7 @@ export type ReverseTask = { id: string; kind: "desktop" | "app" | "conversation"
 export type ReverseEvent = { id: string; at: string; kind: "view" | "speech" | "action" | "control"; text: string };
 export type ReverseSession = {
   characterAvatar?: string;
+  replayFrameCount?: number;
   origin?: "manual" | "dialogue" | "stealth";
   replay?: { at: number; html: string; speech: string; loading: string; app: string; touch?: { x: number; y: number; visible: boolean; pressed: boolean } }[];
   id: string; characterId: string; characterName: string; scope: ReverseScope; createdAt: string; updatedAt: string;

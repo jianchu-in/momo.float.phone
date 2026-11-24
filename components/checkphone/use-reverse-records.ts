@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { CHAT_SCOPE_UPDATED_EVENT } from "@/lib/chat-scope-storage";
-import { loadReverseSessions, REVERSE_RECORDS_UPDATED_EVENT, reverseScope } from "@/lib/reverse-phone-storage";
+import { loadReverseSessionSummaries, REVERSE_RECORDS_UPDATED_EVENT, reverseScope } from "@/lib/reverse-phone-storage";
 import type { ReverseScope } from "@/lib/reverse-phone-types";
 
 export function useReverseRecords(scope: ReverseScope) {
-  const [records, setRecords] = useState(() => loadReverseSessions(scope));
+  const [records, setRecords] = useState(() => loadReverseSessionSummaries(scope));
   useEffect(() => {
     let alive = true;
-    const refresh = () => { if (alive) setRecords(reverseScope().key === scope.key ? loadReverseSessions(scope) : []); };
+    const refresh = () => { if (alive) setRecords(reverseScope().key === scope.key ? loadReverseSessionSummaries(scope) : []); };
     refresh();
     void hydrateKvDb().then(refresh).catch(error => console.warn("查岗记录读取失败", error));
     window.addEventListener(REVERSE_RECORDS_UPDATED_EVENT, refresh);

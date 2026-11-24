@@ -22,7 +22,7 @@ type ReverseRunOptions = { background?: boolean; invitationOnly?: boolean; autoC
 export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElement | null>, initialCharacterId?: string, inviteSessionId?: string, resumeSessionId?: string, options: ReverseRunOptions = {}) {
   const delay = options.background ? bgDelay : abortableDelay;
   const [characterId, setCharacterId] = useState(initialCharacterId ?? loadCharacters()[0]?.id ?? "");
-  const [session, setSession] = useState<ReverseSession | null>(() => resumeSessionId ? loadReverseSession(resumeSessionId) : null);
+  const [session, setSession] = useState<ReverseSession | null>(() => resumeSessionId ? loadReverseSession(resumeSessionId, false) : null);
   const latest = useRef(session);
   const [screen, setScreen] = useState<ReverseScreen>({ app: "desktop" });
   const [running, setRunning] = useState(false), [loading, setLoading] = useState(""), [speech, setSpeech] = useState("");
@@ -102,7 +102,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
   async function section(character: Character, task: ReverseTask, kind: string, data: unknown, signal: AbortSignal) {
     if (task.result) return task.result as ReverseResult;
     setLoading("Ta正在查看…"); setSpeech(""); setTouch(value => ({ ...value, visible: false }));
-    const result = await requestReverseSection(character, scope, kind, data, signal);
+    const result = await requestReverseSection(character, scope, kind, data, signal, { origin: latest.current?.origin });
     await taskState(task.id, "pending", result);
     if (result.farewell) farewell.current = result.farewell;
     return result;
@@ -157,7 +157,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       if (!decision) {
         decision = await requestReverseChat(character, scope, { 联系人: peer.name, 备注: target.alias || peer.name, 是否自己的会话: peer.id === character.id,
           权限: { 允许回复: p.chat.reply, 允许修改备注: p.chat.remark }, 最近20条: messages.map(message => ({ role: message.role, text: getChatMessagePreview(message).slice(0, 2000) })) }, signal,
-        preview => { if (p.chat.reply && ["reply", "both"].includes(preview.action)) { setLoading(""); setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id, draft: preview.reply, typing: true } }); } });
+        preview => { if (p.chat.reply && ["reply", "both"].includes(preview.action)) { setLoading(""); setScreen({ app: "chat", chat: { page: "messages", sessionId: target.id, draft: preview.reply, typing: true } }); } }, { origin: latest.current?.origin });
         await taskState(task.id, "pending", decision);
       }
       const reply = ["reply", "both"].includes(decision.action), remark = ["remark", "both"].includes(decision.action);
@@ -315,7 +315,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
         const task = latest.current!.tasks.find(task => task.state === "pending")!;
         await playTask(task, control.signal);
       }
-      await showSpeech(farewell.current || "看完了，手机还给你。", control.signal, latest.current!.id + ":farewell");
+      await showSpeech(farewell.current || (latest.current?.origin === "stealth" ? "看完了，先退出手机。" : "看完了，手机还给你。"), control.signal, latest.current!.id + ":farewell");
       await persist({ ...latest.current!, status: "completed" }, true); setScreen({ app: "desktop" });
     } catch (cause) {
       if (!control.signal.aborted && !isAbortError(cause)) { const message = cause instanceof Error ? cause.message : "查岗失败，请重试或跳过这部分。"; setError(message); await persist({ ...latest.current!, status: "paused", error: message }, true); }
@@ -357,7 +357,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     if (block) {
       const control = new AbortController(); controller.current = control; busy.current = true; setRunning(true); setLoading("…");
       let failed = false;
-      try { const result = await requestReverseSection(actor(), scope, "blocked", { 用户说: "不要看这个" }, control.signal); await showSpeech(result.reaction, control.signal, task.id + ":blocked"); }
+      try { const result = await requestReverseSection(actor(), scope, "blocked", { 用户说: "不要看这个" }, control.signal, { origin: latest.current?.origin, userIntervened: true }); await showSpeech(result.reaction, control.signal, task.id + ":blocked"); }
       catch (cause) { if (!isAbortError(cause)) { failed = true; const message = cause instanceof Error ? cause.message : "回应失败。"; setError(message); await persist({ ...latest.current!, status: "paused", error: message }, true); } }
       finally { controller.current = null; busy.current = false; setRunning(false); setLoading(""); }
       if (failed || control.signal.aborted || !lifetime.current) return;
@@ -365,7 +365,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     setScreen({ app: "desktop" }); await execute();
   }
   async function restore(id: string) {
-    const value = loadReverseSession(id);
+    const value = loadReverseSession(id, false);
     if (!value || value.scope.key !== scope.key) { setError("找不到当前账号的查岗记录。"); return; }
     latest.current = value; currentTask.current = value.tasks.find(item => item.state === "pending") ?? null; setSession(value); setCharacterId(value.characterId); setError(value.error ?? "");
   }

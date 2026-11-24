@@ -44,7 +44,7 @@ export function ReversePhoneAutomation() {
   },[]);
   async function finished(value:ReverseSession) {
     try {
-      const saved=loadReverseSession(value.id)??value;
+      const saved=loadReverseSession(value.id, false)??value;
       const target=loadChatSessions().find(s=>s.id===saved.inviteSessionId);
       if(target&&!loadChatMessages(target.id).some(m=>m.mediaData?.reversePhoneOperationId===saved.id+":notice")) {
         const message=pushChatMessage({role:"assistant",sessionId:target.id,senderName:saved.characterName,content:"查岗记录",mediaType:"app_card",mediaData:{appId:"reverse-phone",appName:"查岗记录",appCardTitle:"偷偷查岗记录",appCardBody:saved.status==="completed"?"已完成 · 点击回放":"已暂停 · 点击查看已发生的过程",appSceneId:saved.id,reversePhoneOperationId:saved.id+":notice"}});

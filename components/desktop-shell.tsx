@@ -4192,6 +4192,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               } as React.CSSProperties}
             >
               <div className="phone-wallpaper" style={wallpaperStyle} />
+              <div className="phone-safe-top" aria-hidden="true" />
 
               <header className="phone-status-bar">
                 <StatusClock />

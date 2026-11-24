@@ -66,7 +66,7 @@ import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismi
 import { cancelBailoutKey } from "@/lib/push-bailout-client";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AlertCircle, Blocks, Bookmark, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, PhoneCall, X } from "lucide-react";
+import { AlertCircle, Blocks, Bookmark, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MessageCircle, MoreHorizontal, PhoneCall, X } from "lucide-react";
 import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
@@ -107,6 +107,8 @@ import { CHAT_PLUGIN_TOAST_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin
 import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
 import { addChatFavorite } from "@/lib/favorites-storage";
 import "@/styles/imessage-composer-polish.css";
+import "@/styles/chat-composer.css";
+import { useChatComposerViewport } from "./use-chat-composer-viewport";
 import { resolveChatUiStyle, resolveChatBeautyPreset } from "@/lib/chat-beauty-preset";
 import { useChatAppearance } from "./use-chat-appearance";
 import { useGlassContrast } from "./use-glass-contrast";
@@ -716,6 +718,8 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     isIMessage,
 }, ref) {
     const [inputText, setInputText] = useState("");
+    const composerRef = useRef<HTMLDivElement | null>(null);
+    useChatComposerViewport(composerRef, isIMessage === true);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     // 表情包搜索联想：ESC/失焦置 true 隐藏，输入变化重新开启
     const [suggestClosed, setSuggestClosed] = useState(false);
@@ -740,10 +744,10 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
             const ta = textareaRef.current;
             if (!ta) return;
             ta.style.height = "auto";
-            ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+            ta.style.height = Math.min(ta.scrollHeight, isIMessage ? 72 : 120) + "px";
             if (options?.focus !== false) ta.focus();
         });
-    }, []);
+    }, [isIMessage]);
 
     useImperativeHandle(ref, () => ({
         appendText,
@@ -774,6 +778,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     );
     const suggestEnabled = !inputLocked && !panelOpen && !suggestClosed && inputText.trim().length > 0;
     const plusMenuItems = [
+        ...(isIMessage ? [{icon:<MessageCircle size={22}/>, label:storyEntryEnabled ? "剧情入口" : "线下模式", onClick:onToggleOfflineMode}] : []),
         ...(!isGroup ? [{ icon: <PhoneCall size={22} />, label: "他来查岗", onClick: onReversePhone }] : []),
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>, label: "照片墙", onClick: () => onOpenRichModal("photo") },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="7" y1="8" x2="17" y2="8" /><line x1="7" y1="12" x2="14" y2="12" /><line x1="7" y1="16" x2="11" y2="16" /></svg>, label: "文字图片", onClick: () => onOpenRichModal("text_photo") },
@@ -796,8 +801,13 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         })),
     ];
 
+    const Entry = isIMessage ? "div" : Fragment;
+    const Panels = isIMessage ? "section" : Fragment;
     return (
         <div
+            ref={composerRef}
+            data-compact-composer={isIMessage ? "" : undefined}
+            data-panel-open={showPlusMenu || showEmojiPanel || showStickerPanel || undefined}
             className="chat-input-bar chat-room-main-pane flex flex-col"
             onFocusCapture={() => setInputFocused(true)}
             onBlurCapture={e => {
@@ -846,37 +856,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     onClose={() => setSuggestClosed(true)}
                 />
             )}
-            {isIMessage && (
-                <div className="imessage-composer-subject">
-                    <span className="imessage-composer-subject-label">{isSpectator ? "导演旁白" : "主题"}</span>
-                    <div className="imessage-composer-shortcuts">
-                        <button
-                            type="button"
-                            onClick={onToggleEmojiPanel}
-                            disabled={inputLocked}
-                            className="imessage-composer-shortcut imessage-composer-emoji"
-                            aria-label="表情"
-                            title="表情"
-                            aria-pressed={showEmojiPanel}
-                            {...(showEmojiPanel ? { "data-active": "" } : {})}
-                        >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8.5 14s1.25 1.75 3.5 1.75S15.5 14 15.5 14" /><path d="M9 9.25h.01M15 9.25h.01" /></svg>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={onToggleStickerPanel}
-                            disabled={inputLocked}
-                            className="imessage-composer-shortcut imessage-composer-sticker"
-                            aria-label="贴纸"
-                            title="贴纸"
-                            aria-pressed={showStickerPanel}
-                            {...(showStickerPanel ? { "data-active": "" } : {})}
-                        >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15.5 3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h8.5L21 14.5V8.5Z" /><path d="M14.5 21v-4a2.5 2.5 0 0 1 2.5-2.5h4" /></svg>
-                        </button>
-                    </div>
-                </div>
-            )}
+            <Entry {...(isIMessage ? {className:"chat-composer-entry"} : {})}>
             <textarea
                 ref={textareaRef}
                 rows={1}
@@ -885,7 +865,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     setInputText(e.target.value);
                     setSuggestClosed(false);
                     e.target.style.height = "auto";
-                    e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+                    e.target.style.height = Math.min(e.target.scrollHeight, isIMessage ? 72 : 120) + "px";
                 }}
                 onFocus={(e) => {
                     setInputFocused(true);
@@ -945,11 +925,11 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     onMouseDown={e => {
                         if (!inputText.trim()) e.preventDefault();
                     }}
-                    disabled={!isGenerating && (inputLocked || (!!inputText.trim()))}
+                    disabled={!isGenerating && (inputLocked || !inputText.trim())}
                     style={inputLocked && !isGenerating ? { opacity: 0.35 } : undefined}
                     className={`ui-bare-btn text-[var(--c-text)] ${isIMessage ? "chat-send-btn" : ""}`}
-                    aria-label={isGenerating ? "停止本轮生成" : (!inputText.trim() ? "触发回复" : "发送")}
-                    title={isGenerating ? "停止本轮生成" : (!inputText.trim() ? "触发回复" : "发送")}
+                    aria-label={isGenerating ? "停止本轮生成" : "发送"}
+                    title={isGenerating ? "停止本轮生成" : "发送"}
                     {...(isGenerating ? { "data-generating": "" } : {})}
                 >
                     {isGenerating ? (
@@ -999,22 +979,29 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 )}
             </div>
 
+            </Entry>
+            {(showPlusMenu || showEmojiPanel || showStickerPanel) && <Panels {...(isIMessage ? {className:"chat-composer-panels", "aria-label":"聊天功能面板"} : {})}>
+                {isIMessage && <nav className="chat-composer-tabs" aria-label="功能分类">
+                    <button type="button" aria-pressed={showPlusMenu} onClick={() => {if (!showPlusMenu) onTogglePlusMenu();}}>功能</button>
+                    <button type="button" aria-pressed={showEmojiPanel} onClick={() => {if (!showEmojiPanel) onToggleEmojiPanel();}}>表情</button>
+                    <button type="button" aria-pressed={showStickerPanel} onClick={() => {if (!showStickerPanel) onToggleStickerPanel();}}>贴纸</button>
+                    <button type="button" className="chat-composer-close" onClick={onClosePanels} aria-label="收起功能面板">收起</button>
+                </nav>}
+            {isIMessage && showPlusMenu && <ChatPluginSlot name="chat.inputToolbar" slotProps={{ isGroup }} className="chat-plugin-input-toolbar" />}
             {showPlusMenu && (
                 <div className="chat-plus-menu">
                     {plusMenuItems.map((item, i) => (
-                        <div key={`${item.label}-${i}`} onClick={item.onClick} className="chat-plus-menu-item flex flex-col items-center gap-1.5 cursor-pointer" {...(item.active ? { "data-active": "" } : {})}>
+                        <button type="button" key={`${item.label}-${i}`} onClick={item.onClick} aria-label={item.label} title={item.label} className="chat-plus-menu-item flex flex-col items-center gap-1.5 cursor-pointer" {...(item.active ? { "data-active": "" } : {})}>
                             <div className="chat-plus-icon-box">
                                 {item.icon}
                             </div>
-                            <span className="ts-11 text-[var(--c-text)]">{item.label}</span>
-                        </div>
+                            <span className="chat-plus-menu-label ts-11 text-[var(--c-text)]">{item.label}</span>
+                        </button>
                     ))}
                 </div>
             )}
-            {showPlusMenu && (
-                <ChatPluginSlot name="chat.inputToolbar" slotProps={{ isGroup }} className="chat-plugin-input-toolbar" />
-            )}
 
+            {!isIMessage && showPlusMenu && <ChatPluginSlot name="chat.inputToolbar" slotProps={{ isGroup }} className="chat-plugin-input-toolbar" />}
             {showEmojiPanel && (
                 <div className="chat-emoji-panel-wrap">
                     <EmojiPanel
@@ -1037,6 +1024,8 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     />
                 </div>
             )}
+            </Panels>}
+
         </div>
     );
 }));
@@ -1207,7 +1196,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         if (inspection) return;
         const open = (event: Event) => { const detail = (event as CustomEvent<{ sessionId: string; resumeId?: string; replay?:boolean }>).detail;
             if (detail?.sessionId !== session.id || !detail.resumeId) return;
-            const record = loadReverseSession(detail.resumeId);
+            const record = loadReverseSession(detail.resumeId, false);
             if (!record || record.inviteSessionId !== session.id) return;
             if (record.accepted === true) setReversePhone({ resumeId: record.id, replayId:detail.replay?record.id:undefined });
             else if (record.status !== "stopped" && record.accepted !== false) setReverseInvitation({ resumeId: record.id }); };
@@ -3073,7 +3062,7 @@ export function ChatRoom({ session, onBack, onDeleted, onUserMessageSent, contac
         }catch(error){showChatToast(error instanceof Error?error.message:"自动操作未能启动，已保留聊天记录");}
     };
     const closeReversePhone = () => {
-        const record=reversePhone?.resumeId?loadReverseSession(reversePhone.resumeId):undefined;
+        const record=reversePhone?.resumeId?loadReverseSession(reversePhone.resumeId, false):undefined;
         setReversePhone(null);
         const pending=pendingStoryRef.current;pendingStoryRef.current=undefined;
         if(pending&&record?.status==="completed")void launchForcedOfflineStory(pending.description,pending.source,pending.kind);
