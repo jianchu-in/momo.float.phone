@@ -1,11 +1,12 @@
 "use client";
+import { formatChatUiTime } from "@/lib/chat-time";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Volume2, Square } from "lucide-react";
 import { ShownImage } from "@/components/ui/shown-image";
 import type { FacingTurn } from "@/lib/facing-storage";
 
-export function FacingMessage({ turn, characterName, busy, onMenu, onVersion, playing, onReplay }: {
+export const FacingMessage = memo(function FacingMessage({ turn, characterName, busy, onMenu, onVersion, playing, onReplay }: {
   playing?: boolean; onReplay?: () => void;
   turn: FacingTurn; characterName: string; busy: boolean; onMenu: () => void; onVersion: (index: number) => void;
 }) {
@@ -35,6 +36,7 @@ export function FacingMessage({ turn, characterName, busy, onMenu, onVersion, pl
     {turn.text && <p>{turn.kind === "touch" && !turn.touches?.length ? `（触碰了${turn.text}）` : turn.text}</p>}
     {!turn.action && !turn.text && !turn.imageRef && !turn.touches?.length &&
       <p className="facing-action">{turn.reactionName ? `（${turn.reactionName}）` : `来到${turn.sceneName}`}</p>}
+    <time className="facing-message-time" dateTime={turn.at}>{formatChatUiTime(turn.at)}</time>
     {turn.role === "assistant" && <div className="facing-audio-nav"><button type="button" aria-label={playing ? "停止播放语音" : "回放语音"}
       title={turn.audioRef ? "播放已保存的语音" : "本条未保存语音"} disabled={!turn.audioRef || busy} onClick={onReplay}>
       {playing ? <Square size={13} /> : <Volume2 size={15} />}
@@ -45,4 +47,4 @@ export function FacingMessage({ turn, characterName, busy, onMenu, onVersion, pl
       <button type="button" aria-label="下一版回复" disabled={busy || version >= count - 1} onClick={() => onVersion(version + 1)}><ChevronRight size={15} /></button>
     </div>}
   </article>;
-}
+});

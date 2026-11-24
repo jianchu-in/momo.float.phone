@@ -179,9 +179,11 @@ async function characterMemory(character: Character) {
     近期记忆: recent.unifiedRecentItems, 核心记忆: core ? formatCoreMemories(core) : "", 长期记忆: long ? formatLongTermMemories(long) : "" };
 }
 export async function refreshMapActivities(lead: Character, atlas: FacingAtlas, characters: Character[], signal: AbortSignal): Promise<MapSnapshot> {
-  const members = characters.filter(character => mapResidentIds(atlas).includes(character.id));
+  const residents=new Set(mapResidentIds(atlas));
+  const members = characters.filter(character => residents.has(character.id));
   if (!members.length) return { id: facingId(), createdAt: new Date().toISOString(), entries: [] };
-  const memory = await Promise.all(members.map(characterMemory));
+  const memory: Awaited<ReturnType<typeof characterMemory>>[] = [];
+  for(let index=0;index<members.length;index+=4){throwIfAborted(signal);memory.push(...await Promise.all(members.slice(index,index+4).map(characterMemory)));await new Promise<void>(resolve=>setTimeout(resolve,0));}
   throwIfAborted(signal);
   const createdAt = new Date().toISOString();
   const input = { 当前时间: createdAt, 角色资料与记忆: memory, 上次动向: atlas.snapshots.at(-1),

@@ -1,3 +1,4 @@
+import { formatPromptTimestamp, resolvePromptTimeAware } from "./prompt-time";
 import { loadShownImageDataUrl, FACING_REFERENCE_IMAGE_CONTEXT } from "./shown-image";
 import { loadCharacters } from "./character-storage";
 import { jsonrepair } from "jsonrepair";
@@ -180,6 +181,9 @@ export async function generateFacingReply(options: {
   const mode: LLMMessage = {
     role: "system",
     content: [FACING_MODE_PROMPT, mapContextPrompt,
+      resolvePromptTimeAware() && `当前现实时间：${formatPromptTimestamp(new Date().toISOString())}。结合消息时间理解间隔，不把历史中的时间当成现在。`,
+      settings.extraPrompt?.trim() && `【用户的生成要求】\n${settings.extraPrompt.trim()}`,
+      options.illustrate && settings.autoVisual?.extraPrompt?.trim() && `【本轮CG画面额外要求】${settings.autoVisual.extraPrompt.trim()}`,
       options.illustrate && "本轮需要生成一张新的完整补图，不复用素材。请在JSON对象最外层附加 image_description（详细描述本轮结束时当前场所、最后发言角色的外貌、衣着、情绪、姿态、用户视点和光线，供生图使用），以及 image_rating（safe/nsfw/uncertain，仅判断要画的当前画面）。这两个字段不要写进角色台词。背景和人物取自参考图，保持剧情连续，不把计划当已发生。",
       multi && `这是多人当面互动，像群聊一样自然接话，每人保持独立人设。只有指定的角色本轮发言，其余人可以安静在场。不要替用户说话。一次请求返回完整 JSON 对象 {"scene_id":null,"replies":[{"speaker_id":"角色ID","dialogue":"只含该角色台词","action":"（可见动作）","reaction_id":null}]}。每位角色各一项，不将多人的台词混写进同一项。严格按这个名单和顺序输出：${JSON.stringify(speakingIds)}。角色资料：${JSON.stringify(roster)}`,
       options.speakerId && `本次只重试 ${options.speakerId} 的回应，保持其他人的原回复。`,
@@ -194,7 +198,7 @@ export async function generateFacingReply(options: {
   };
   if (!hasLatest) {
     messages.push(mode);
-    if (latest) messages.push({ role: "user", content: latest.content });
+    if (latest) messages.push({ role: "user", content: [resolvePromptTimeAware() ? formatPromptTimestamp(latest.createdAt) : "", latest.content].filter(Boolean).join("\n") });
   } else {
     messages.splice(lastUser, 0, mode);
   }

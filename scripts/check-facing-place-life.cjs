@@ -78,6 +78,30 @@ async function main(){
  await click('播放氛围音');assert.equal(audioInstances[1].paused,false);
  await act(async()=>root.unmount());assert.equal(audioInstances[1].paused,true);root=createRoot(host);
  rejectAutoplay=true;await mount(React.createElement(Ambience,{track,location:'公寓'}));assert.ok(host.textContent.includes('播放氛围音'));rejectAutoplay=false;await click('播放氛围音');await act(async()=>root.unmount());root=createRoot(host);
+ // Public locations inherit their own default backdrop, with detail overrides and scoped saves.
+ const scenes=load('lib/facing-map-scenes.ts');
+ const parkBg=await storage.saveFacingAsset({id:'park-default',characterId:storage.FACING_SHARED_CHARACTER_ID,category:'scene',name:'商场全景',use:'scene',durationMs:1},new Blob(['park'],{type:'image/png'}),'image/png');
+ const shopBg=await storage.saveFacingAsset({id:'shop-detail',characterId:storage.FACING_SHARED_CHARACTER_ID,category:'scene',name:'商店',use:'scene',durationMs:1},new Blob(['shop'],{type:'image/png'}),'image/png');
+ atlas=await maps.createMapInterior(atlas.id,mall);let mallPage=atlas.pages.find(page=>page.parentPlaceId==='mall');
+ atlas=await maps.saveMapPage(atlas.id,{...mallPage,places:[{id:'shop',name:'商店',description:'',x:1,y:1},{id:'food',name:'餐饮区',description:'',x:2,y:2}]});
+ assert.deepEqual(scenes.mapSceneScope(atlas,'mall').map(place=>place.id),['mall','shop','food']);
+ const matcher=load('components/facing/facing-map-scene-matcher.tsx').MapSceneMatcher;let savedAtlas;
+ await mount(React.createElement(matcher,{atlas,page:atlas.pages[0],placeId:'mall',characters:chars,initialCharacterId:'a',onClose(){},onSave:value=>savedAtlas=value}));
+ assert.ok(host.querySelector('[aria-label="商店的场景"]'));assert.equal(host.querySelector('[aria-label="厨房的场景"]'),null,'matching a building never lists other buildings or their rooms');
+ const props=element=>element[Object.keys(element).find(key=>key.startsWith('__reactProps$'))];
+ await act(async()=>{props(host.querySelector('[aria-label="大地点默认背景"]')).onChange({target:{value:storage.FACING_SHARED_CHARACTER_ID+'|'+parkBg.id}});await tick();});
+ assert.equal(maps.mapPlace(maps.loadFacingAtlas(atlas.id),'mall').place.sceneBinding,undefined,'draft selection has no effect until saved');
+ await click('扫描未配置的细分地点');await click('保存场景匹配');assert.ok(savedAtlas);atlas=savedAtlas;
+ assert.equal(scenes.sceneForMapPlace(atlas,'shop','a').sceneId,shopBg.id);assert.equal(scenes.sceneForMapPlace(atlas,'food','a').sceneId,parkBg.id);assert.equal(scenes.sceneForMapPlace(atlas,'food','a').portraitId,portrait.id);
+ const oldHome=maps.mapPlace(atlas,'home').place.sceneBinding;
+ atlas=await scenes.saveScopedMapScenes(atlas.id,'mall',[{...home,sceneBinding:{source:'default'}}]);assert.deepEqual(maps.mapPlace(atlas,'home').place.sceneBinding,oldHome,'scope validation prevents sibling writes');
+ assert.equal(scenes.scanMapScenes([{...home,sceneBinding:{source:'shared',characterId:storage.FACING_SHARED_CHARACTER_ID,sceneId:parkBg.id}}],'b')[0].sceneBinding.sceneId,parkBg.id,'rescans preserve explicit bindings');
+ const location=load('lib/facing-location.ts');
+ assert.equal(location.resolveFacingLocation({...storage.createFacingMeeting('b',null,'main'),scene:{sceneName:'厨房'}}),undefined,'duplicate homes require an explicit location instead of guessing');
+ await maps.deleteFacingAtlas(imported.atlas.id);
+ assert.equal(location.resolveFacingLocation({...storage.createFacingMeeting('b',null,'main'),scene:{sceneName:'厨房'}}).place.id,'kitchen','direct home dialogue resolves its actual room');
+ assert.equal(location.resolveFacingLocation({...storage.createFacingMeeting('a',null,'main'),scene:{sceneName:'商场',sceneId:parkBg.id}}).place.id,'mall','public scenes resolve without home ownership');
+ await act(async()=>root.unmount());
  console.log('PASS place life: inherited ambience, independent pause/mute/autoplay/ducking/cleanup, home scene ownership and audio export/import.');
 }
 main().then(()=>process.exit(0)).catch(e=>{console.error(e instanceof Error?e.stack:String(e));process.exit(1);});

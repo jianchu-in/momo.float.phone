@@ -92,3 +92,9 @@
 .fmap-sheet .fmap-operation-fields { display: grid; gap: 12px; border: 0; padding: 0; max-height: none; overflow: visible; min-width: 0; }
 /* Keep the long plan editor in normal sheet flow after save/copy focus changes. */
 .fmap-sheet .fmap-operation-fields{flex:0 0 auto;min-height:min-content;overflow:visible;max-height:none;overflow-anchor:none}
+
+/* Keep map actions visibly distinct from explanatory text. */
+.fmap-sheet .facing-delete { border: 1px solid currentColor; background: #fff4f3; min-height: 44px; padding: 9px 12px; border-radius: 11px; }
+.fmap-sheet .fmap-outline { border: 1px solid #b9c6b5; background: #f0f4ed; min-height: 44px; }
+.fmap-history-scroll { flex: 0 1 auto; min-height: 0; max-height: 65dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 12px; }
+.fmap-history-scroll > * { flex-shrink: 0; }

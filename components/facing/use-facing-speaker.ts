@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { Character } from "@/lib/character-types";
 import { groupFacingScenes, loadFacingUsableAssets, loadFacingSettings, type FacingAsset } from "@/lib/facing-storage";
@@ -7,12 +7,9 @@ import { loadShownImageDataUrl } from "@/lib/shown-image";
 
 /** Selecting a speaker uses local media and never starts image generation. */
 export function useFacingSpeaker(character: Character, location: string, multi: boolean, reactionId?: string) {
-  const settings = loadFacingSettings().characters[character.id] ?? {};
-  const assets = loadFacingUsableAssets(character.id);
-  const groups = groupFacingScenes(assets, settings.portraitId);
+  const {settings,assets,groups,config} = useMemo(()=>{const settings=loadFacingSettings().characters[character.id]??{};const assets=loadFacingUsableAssets(character.id);return {settings,assets,groups:groupFacingScenes(assets,settings.portraitId),config:resolveConfiguredImageGenerationSettings(character.id,"facing")};},[character.id,location,reactionId,multi]);
   const group = groups.find(item => item.name === location) ?? groups.find(item => item.name === location.split(" · ").at(-1));
   const portrait = group?.portrait;
-  const config = resolveConfiguredImageGenerationSettings(character.id, "facing");
   const reference = config.characterReferences?.[character.id];
   const upload = settings.autoVisual?.referenceMediaRef;
   const refId = reference?.enabled !== false ? reference?.assetId : undefined;

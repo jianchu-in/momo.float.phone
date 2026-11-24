@@ -125,6 +125,7 @@ export type FacingCharacterSettings = {
   useScene?: boolean;
   length?: keyof typeof FACING_REPLY_LENGTHS | "custom";
   customReplyLength?: number;
+  extraPrompt?: string;
   voice?: boolean;
   speechInput?: "browser" | "cloud";
   touch?: boolean;
@@ -149,6 +150,8 @@ export type FacingAutoVisualSettings = {
   skipNsfw?: boolean;
   referenceSource?: "character" | "avatar" | "upload";
   referenceMediaRef?: string;
+  extraPrompt?: string;
+  displayRounds?: number;
 };
 
 export const FACING_VISUAL_INTERVAL = 5;
@@ -157,6 +160,38 @@ export function shouldCheckFacingVisual(round: number, settings?: FacingAutoVisu
   const interval = settings?.interval;
   const step = interval && Number.isSafeInteger(interval) && interval > 0 ? interval : FACING_VISUAL_INTERVAL;
   return settings?.enabled === true && round > 0 && round % step === 0;
+}
+
+export function facingCgDisplayRounds(settings?: FacingAutoVisualSettings) {
+  const interval = Number.isSafeInteger(settings?.interval) && settings!.interval! > 0 ? settings!.interval! : FACING_VISUAL_INTERVAL;
+  const value = Number.isSafeInteger(settings?.displayRounds) ? settings!.displayRounds! : 2;
+  return Math.max(0, Math.min(interval - 1, value));
+}
+export function isFacingCgVisible(meeting: FacingMeeting, settings?: FacingAutoVisualSettings) {
+  const visual = meeting.visual;
+  if (!visual?.replacement || (!visual.manual && visual.sceneName !== facingMeetingPosition(meeting).sceneName) || visual.hidden) return false;
+  return visual.manual === true || settings?.enabled === true && facingCgDisplayRounds(settings)>0 && (visual.displayStarted === false || facingCompletedRounds(meeting) - (visual.shownAtRound ?? visual.round ?? 0) < facingCgDisplayRounds(settings));
+}
+export async function markFacingCgShown(meetingId:string,assetId:string):Promise<FacingMeeting|undefined>{
+  let saved:FacingMeeting|undefined;
+  await kvUpdatePersisted(FACING_MEETING_PREFIX+meetingId,raw=>{
+    const current=readJson<FacingMeeting|null>(raw,null);
+    if(!current||current.deletedAt||current.visual?.assetId!==assetId||current.visual.displayStarted!==false)return raw??"null";
+    saved={...current,visual:{...current.visual,displayStarted:true,shownAtRound:facingCompletedRounds(current)}};
+    return JSON.stringify(saved);
+  });
+  return saved;
+}
+export async function toggleFacingCg(meetingId: string, show: boolean): Promise<FacingMeeting> {
+  let saved!: FacingMeeting;
+  await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
+    const current = readJson<FacingMeeting | null>(raw, null);
+    if (!current || current.deletedAt) throw new Error("见面记录不存在。");
+    const cg=current.visual?.replacement?current.visual:current.lastCg;
+    saved = {...current, visual: cg ? {...cg, manual: show, hidden: !show} : undefined};
+    return JSON.stringify(saved);
+  });
+  return saved;
 }
 
 export type FacingSettings = { characterId?: string; participantIds?: string[]; characters: Record<string, FacingCharacterSettings> };
@@ -215,11 +250,13 @@ export type FacingMeeting = {
   scene?: FacingScenePosition;
   turns: FacingTurn[];
   completedRounds?: number;
+  sceneRevision?: number;
   pausedAt?: string;
   deletedAt?: string;
   mergedFrom?: string[];
-  mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string };
-  visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number; replacement?: boolean; round?: number };
+  mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string; sceneName?: string };
+  lastCg?: FacingMeeting["visual"];
+  visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number; replacement?: boolean; round?: number; shownAtRound?: number; manual?: boolean; hidden?: boolean; displayStarted?: boolean; characterId?: string };
 };
 
 export function facingCompletedRounds(meeting: FacingMeeting) {
@@ -381,19 +418,22 @@ export function loadFacingMeeting(id: string): FacingMeeting | null {
   return record?.deletedAt ? null : record;
 }
 
-export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, activityId: string) {
-  const latest = meeting.turns.at(-1);
-  return latest?.role === "assistant" && latest.sceneName === anchor.sceneName && (
-    (latest.id === anchor.id && latest.versionIndex === anchor.versionIndex && latest.text === anchor.text && latest.action === anchor.action)
-    || latest.visualContinuityId === activityId);
+export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, activityId: string, revision?: number) {
+  if (meeting.deletedAt || (revision !== undefined && (meeting.sceneRevision ?? 0) !== revision)) return false;
+  const index = meeting.turns.findIndex(turn => turn.id === anchor.id);
+  const original = meeting.turns[index];
+  if (!original || original.versionIndex !== anchor.versionIndex || original.text !== anchor.text || original.action !== anchor.action) return false;
+  const position = facingMeetingPosition(meeting);
+  return position.sceneName === anchor.sceneName && position.sceneId === anchor.sceneId
+    && meeting.turns.slice(index).every(turn => turn.sceneName === anchor.sceneName && turn.sceneId === anchor.sceneId);
 }
 
 export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, activityId: string, location: string,
-  asset: FacingAsset, mode: "scene" | "hold" | "brief" | "replacement"): Promise<FacingMeeting | undefined> {
+  asset: FacingAsset, mode: "scene" | "hold" | "brief" | "replacement", revision?: number, generationRound?: number): Promise<FacingMeeting | undefined> {
   let saved: FacingMeeting | undefined;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
     const meeting = readJson<FacingMeeting | null>(raw, null);
-    if (!meeting || !facingVisualMatches(meeting, anchor, activityId)) return raw ?? "null";
+    if (!meeting || !facingVisualMatches(meeting, anchor, activityId, revision) || generationRound !== undefined && (meeting.visual?.round ?? -1) > generationRound) return raw ?? "null";
     const assets = loadFacingAssets(anchor.speakerId ?? meeting.characterId);
     if (!assets.some(item => item.id === asset.id)) return raw!;
     if (mode === "scene") {
@@ -405,8 +445,9 @@ export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, a
       saved = { ...meeting, turns, scene, visual: undefined };
     } else if (location === anchor.sceneName) {
       saved = { ...meeting, visual: { assetId: asset.id, activityId, sceneName: location,
-        replacement: mode === "replacement", round: facingCompletedRounds(meeting), expiresAt: mode === "brief" ? Date.now() + asset.durationMs : undefined } };
+        replacement: mode === "replacement", displayStarted: mode === "replacement" ? false : undefined, characterId: asset.characterId, shownAtRound: facingCompletedRounds(meeting), round: generationRound ?? facingCompletedRounds(meeting), expiresAt: mode === "brief" ? Date.now() + asset.durationMs : undefined } };
     }
+    if(saved?.visual?.replacement)saved.lastCg=saved.visual;
     return saved ? JSON.stringify(saved) : raw!;
   });
   return saved;
@@ -424,7 +465,8 @@ export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: 
     const previous = current.turns.at(-1);
     const visual = last?.id === previous?.id && last?.action === previous?.action && last?.text === previous?.text && last?.versionIndex === previous?.versionIndex
       ? current.visual : undefined;
-    saved = { ...current, turns, completedRounds: facingCompletedRounds(current), visual,
+    const contentChanged=turns.length!==current.turns.length||turns.some((turn,index)=>{const old=current.turns[index];return !old||turn.id!==old.id||turn.text!==old.text||turn.action!==old.action||turn.sceneName!==old.sceneName||turn.sceneId!==old.sceneId||turn.versionIndex!==old.versionIndex;});
+    saved = { ...current, turns, sceneRevision: (current.sceneRevision ?? 0) + (contentChanged?1:0), completedRounds: facingCompletedRounds(current), visual,
       scene: scene && { sceneName: scene.sceneName, portraitId: scene.portraitId, sceneId: scene.sceneId } };
     return JSON.stringify(saved);
   });
@@ -484,6 +526,7 @@ export async function appendFacingTurns(meeting: FacingMeeting, incoming: Facing
       || (!current.visual.replacement && current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
     saved = { ...current, title: current.title || incoming[0]?.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
       visual, completedRounds: facingCompletedRounds(current) + addedRounds,
+      sceneRevision: (current.sceneRevision ?? 0) + (current.scene && (current.scene.sceneName !== last.sceneName || current.scene.sceneId !== last.sceneId) ? 1 : 0),
       scene: { sceneName: last.sceneName, sceneId: last.sceneId, portraitId: last.portraitId } };
     return JSON.stringify(saved);
   });
@@ -506,7 +549,7 @@ export async function changeFacingScene(meetingId: string, scene: FacingScenePos
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
     const current = readJson<FacingMeeting | null>(raw, null);
     if (!current || current.deletedAt) throw new Error("见面记录不存在。");
-    saved = { ...current, scene, visual: undefined, updatedAt: new Date().toISOString() };
+    saved = { ...current, lastCg: current.visual?.replacement ? current.visual : current.lastCg, scene, sceneRevision: (current.sceneRevision ?? 0) + 1, visual: undefined, updatedAt: new Date().toISOString() };
     return JSON.stringify(saved);
   });
   return saved;

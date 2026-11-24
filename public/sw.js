@@ -1,4 +1,4 @@
-const CACHE_VERSION = "ai-phone-pwa-v12";
+const CACHE_VERSION = "ai-phone-pwa-v13";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -46,7 +46,12 @@ async function networkFirst(request) {
   const cache = await caches.open(RUNTIME_CACHE);
   try {
     const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
+    if (response.ok) {
+      try {
+        await cache.put(request, response.clone());
+        if(request.mode === "navigate" && new URL(request.url).pathname === "/") await (await caches.open(STATIC_CACHE)).put("/", response.clone());
+      } catch { /* Cache quota failures must not replace a fresh online page with an old shell. */ }
+    }
     return response;
   } catch (error) {
     const cached = await cache.match(request);

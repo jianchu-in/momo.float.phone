@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { copyTextPreservingView } from "@/lib/clipboard-view";
 import { kvGet, kvSet, registerDynamicPrefix } from "@/lib/kv-db";
 import { ChevronLeft, History, Map as MapIcon, Plus, RefreshCw, Settings2, X } from "lucide-react";
@@ -43,8 +43,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
   const worldId = mapCharacterResidence(character.id) ?? getCharacterWorldGroup(character.id)?.id ?? character.id;
   const world = loadCharacterWorldGroups().find(item => item.id === worldId);
   const [atlas, setAtlas] = useState<FacingAtlas | undefined>(() => loadFacingAtlases(worldId)[0]);
-  const members = characters.filter(item => atlas ? mapResidentIds(atlas).includes(item.id) : (world?.memberIds.includes(item.id) ?? item.id === character.id) && (!mapCharacterResidence(item.id) || mapCharacterResidence(item.id) === worldId));
+  const residents=useMemo(()=>atlas?new Set(mapResidentIds(atlas)):undefined,[atlas]);
+  const members = characters.filter(item => atlas ? residents!.has(item.id) : (world?.memberIds.includes(item.id) ?? item.id === character.id) && (!mapCharacterResidence(item.id) || mapCharacterResidence(item.id) === worldId));
   const [pageId, setPageId] = useState(atlas?.pages[0]?.id);
+  const [sceneMatchPlaceId,setSceneMatchPlaceId]=useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
   const [sheet, setSheet] = useState<Sheet>(atlas ? null : "create");
   const [settings, setSettings] = useState(loadMapPreferences);
@@ -108,7 +110,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     lock.current = true;
     const control = new AbortController(); controller.current = control;
     setBusy(label); setError("");
-    try { await action(control.signal); }
+    try { await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))); if(!control.signal.aborted)await action(control.signal); }
     catch (cause) { if (!control.signal.aborted) setError(cause instanceof Error ? cause.message : "操作失败，请重试。"); }
     finally { lock.current = false; controller.current = null; setBusy(""); }
   }
@@ -409,8 +411,8 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           </button>;
         })}
         <div className="facing-choices">
-          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("place-life")}>家的归属与氛围音</button>
-          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("scene-match")}>设置地点场景</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("place-life")}>地点设置</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>{setSceneMatchPlaceId(selected.id);setSheet("scene-match");}}>设置地点场景</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => void interior()}>进入内部地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>套用场所模板</button>
           <button type="button" className="facing-primary" disabled={!!busy} onClick={() => prepareTrip()}>前往这里</button>
@@ -434,11 +436,11 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("templates")}>详细场所模板</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => openGenerate()}>生成地图</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={editSources}>生活角色 · {members.length}</button>
-          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>setSheet("scene-match")}>匹配场景素材</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={()=>{setSceneMatchPlaceId(page.parentPlaceId);setSheet("scene-match");}}>匹配场景素材</button>
           {page.parentPlaceId&&<button type="button" className="facing-small" disabled={!!busy} onClick={()=>{setSelectedId(undefined);setSheet("place-life");}}>本大地点的家与氛围音</button>}
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("tiles")}>图块与扩展</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("transfer")}>导入 / 导出</button>
-          <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>前往动画</button>
+          <button type="button" className="facing-small" disabled={!!busy} onClick={() => { setSettings(loadMapPreferences()); setSheet("animation"); }}>移动动画</button>
           <button type="button" className="facing-small" disabled={!!busy || !page.places.length} onClick={() => void refresh()}><RefreshCw size={13} />刷新动向 · 文字API</button>
           <button type="button" className="facing-small" disabled={!!busy} onClick={() => setSheet("history")}><History size={13} />历史</button>
         </div>
@@ -488,8 +490,8 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <p className="fmap-note">生活角色决定这个世界的居民、地图动向与同行名单；先从原世界移除，才能加入另一个世界。生成地图时可以另选参考世界书。</p>
       <button type="button" className="facing-primary" disabled={!!busy} onClick={() => void (sheet === "create" ? create() : saveSources())}>{sheet === "create" ? "创建并打开" : "保存生活角色"}</button>
     </MapSheet>}
-    {sheet === "scene-match" && atlas && page && <MapSceneMatcher atlas={atlas} page={page} characters={characters} initialCharacterId={character.id} onClose={closeSheet} onSave={setAtlas}/>}
-    {sheet === "place-life" && atlas && (selected||page?.parentPlaceId) && <FacingPlaceSettings atlas={atlas} placeId={selected?.id||page!.parentPlaceId!} characters={members} onSave={setAtlas} onClose={closeSheet} onMatch={(current,id)=>void run("打开家的场景匹配",async()=>{const saved=await createMapInterior(current.id,mapPlace(current,id)!.place);setAtlas(saved);setPageId(saved.pages.find(item=>item.parentPlaceId===id)!.id);setSelectedId(undefined);setSheet("scene-match");})}/>}
+    {sheet === "scene-match" && atlas && page && <MapSceneMatcher atlas={atlas} page={page} placeId={sceneMatchPlaceId} characters={characters} initialCharacterId={character.id} onClose={closeSheet} onSave={setAtlas}/>}
+    {sheet === "place-life" && atlas && (selected||page?.parentPlaceId) && <FacingPlaceSettings atlas={atlas} placeId={selected?.id||page!.parentPlaceId!} characters={members} onSave={setAtlas} onClose={closeSheet} onMatch={(current,id)=>{setAtlas(current);setSceneMatchPlaceId(id);setSheet("scene-match");}}/>}
     {sheet === "generate" && <MapSheet title={replacement ? "升级图块与重新生图" : extension ? "扩展地图" : "生成地图"} onClose={closeSheet}>
       <fieldset ref={planEditor} className="fmap-operation-fields" disabled={!!busy}>
       <details><summary>生成参考资料 · 角色与记忆</summary>
@@ -571,7 +573,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
         const places = await calibrateFacingMap(character, page, signal);
         setAtlas(await saveMapPage(atlas.id, { ...page, places })); setSheet(null);
       })} onClose={closeSheet} />}
-    {sheet === "animation" && <MapSheet title="前往动画" onClose={closeSheet}>
+    {sheet === "animation" && <MapSheet title="移动动画" onClose={closeSheet}>
       <label>动画方式<select value={settings.animation} onChange={event => setSettings({ ...settings, animation: event.target.value as MapPreferences["animation"] })}>
         <option value="car">地图虚化 · 前往过场</option><option value="route">头像沿直线移动</option></select></label>
       <p className="fmap-note">头像从当前位置沿直线前往目的地，无需设置道路。跨地图时自动衔接各地图的入口。</p>
@@ -583,6 +585,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       })}>保存动画设置</button>
     </MapSheet>}
     {sheet === "history" && atlas && <MapSheet title="地图记录" onClose={closeSheet}>
+      <div className="fmap-history-scroll" role="region" aria-label="地图历史记录" tabIndex={0}>
       <h3>角色动向</h3>
       <button type="button" className="facing-small" onClick={() => { setSnapshotId(undefined); setSheet(null); }}>查看最新动向</button>
       {[...atlas.snapshots].reverse().map(item => <button type="button" key={item.id} className="facing-soft" onClick={() => { setSnapshotId(item.id); setSheet(null); }}>
@@ -592,6 +595,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       <h3>邀请记录</h3>{[...atlas.invitations].reverse().filter(item => item.identityId === identityId).map(item => <button key={item.id} type="button" className="facing-soft"
         onClick={() => { setInvitationId(item.id); setSheet("invitations"); }}>
         {mapPlacePath(atlas, item.placeId)} · {new Date(item.createdAt).toLocaleString("zh-CN")}</button>)}
+      </div>
     </MapSheet>}
     {sheet === "travel" && selected && atlas && <MapSheet title={companions.length ? "确认结伴前往" : "确认前往"} onClose={closeSheet}>
       <p>前往「{mapPlacePath(atlas, selected.id)}」？</p>

@@ -4,6 +4,7 @@ import { useMascotScene } from "@/components/mascot/use-mascot-scene";
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { reverseScope } from "@/lib/reverse-phone-storage";
+import { ReversePhoneBoundary } from "./reverse-phone-boundary";
 import { ReversePhoneLayer } from "./reverse-phone-layer";
 const ReversePhoneApp = dynamic(() => import("./reverse-phone-app").then(module => module.ReversePhoneApp), { ssr: false });
 import {
@@ -683,7 +684,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   });
 
   // STAGE 2: PURE FULLSCREEN IMMERSIVE SIMULATOR
-  if (ownPhone) return <ReversePhoneLayer><ReversePhoneApp onClose={() => setOwnPhone(false)} /></ReversePhoneLayer>;
+  if (ownPhone) return <ReversePhoneLayer><ReversePhoneBoundary onClose={()=>setOwnPhone(false)}><ReversePhoneApp onClose={() => setOwnPhone(false)} /></ReversePhoneBoundary></ReversePhoneLayer>;
   if (activeCharacter) {
     return (
       <div className="cp-fullscreen-simulator">
@@ -692,9 +693,11 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
           {!isEmbeddedAppOpen && (
             <div className="cp-floating-controls">
               <div className="cp-floating-settings" ref={settingsPanelRef}>
-                <button className="cp-float-back" onClick={handleBack} aria-label="Back to Archive">
+                <button className="cp-float-back" title="返回角色列表，打开我的手机查岗" onClick={handleBack} aria-label="返回角色列表">
                   <ChevronLeft size={22} strokeWidth={2.5} />
                 </button>
+                <button className="cp-float-back" aria-label="打开我的手机" title="我的手机 · 反查岗" onClick={()=>setOwnPhone(true)}><PhoneCall size={20}/></button>
+
                 <button
                   className={`cp-float-settings ${settingsOpen ? "is-active" : ""}`}
                   onClick={() => setSettingsOpen((open) => !open)}
@@ -1199,7 +1202,7 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
           </div>
 
           <div className="cp-roster-grid">
-            <button className="cp-roster-card" style={{ textAlign: "left", padding: 18, display: "flex", gap: 14, alignItems: "center" }} onClick={() => setOwnPhone(true)}>
+            <button aria-label="打开我的手机" className="cp-roster-card" style={{ textAlign: "left", padding: 18, display: "flex", gap: 14, alignItems: "center" }} onClick={() => setOwnPhone(true)}>
               {reverseScope().userAvatar ? <img src={reverseScope().userAvatar} alt="我的头像" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} /> : <span style={{ width: 48, height: 48, borderRadius: "50%", display: "grid", placeItems: "center", background: "#e4e8ed" }}>{reverseScope().userName.slice(0, 1)}</span>}
               <span><strong>我的手机</strong><small style={{ display: "block", marginTop: 6, opacity: .6 }}>邀请角色反查岗 · 权限与查看记录</small></span>
             </button>

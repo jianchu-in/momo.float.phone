@@ -278,3 +278,11 @@
 .facing-room[data-full-conversation] .facing-room-log { flex: 1; max-height: none; border-radius: 15px; background: #17121d55; }
 .facing-room[data-full-conversation] .facing-room-actions { gap: 2px; }
 .facing-room[data-full-conversation] .facing-room-top .facing-icon { width: 32px; }
+
+.facing-message-time { display:block; margin-top:5px; font-size:.72em; opacity:.68; text-align:right; }
+.facing-tools-panel { display:flex; flex-wrap:wrap; gap:9px; padding:12px; max-height:45dvh; overflow-y:auto; overscroll-behavior:contain; }
+.facing-room .facing-tools-panel .facing-small { border:1px solid #ffffff45; background:#ffffff15; min-height:44px; color:inherit; }
+.facing-tools-panel p { flex-basis:100%; font-size:12px; }
+.facing-settings-list textarea { min-height:90px; width:100%; padding:10px; border:1px solid var(--facing-line); border-radius:10px; background:var(--facing-card); resize:vertical; }
+.facing-settings-list label:has(>textarea) { flex-direction:column; align-items:stretch; }
+.facing-scene-picker select { width:100%; min-height:44px; color:#2f3833; }

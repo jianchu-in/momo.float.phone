@@ -12,6 +12,7 @@ type Progress = { message?: string; activity?: { id: string; label: string; scen
 
 export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => void, onAssets: (characterId: string, assets: FacingAsset[]) => void) {
   const jobs = useRef(new Map<string, Job>());
+  const failed=useRef(new Map<string,Check>());
   const startedRounds = useRef(new Set<string>());
   const [progress, setProgress] = useState<Record<string, Progress>>({});
   useEffect(() => () => { for (const job of jobs.current.values()) job.controller.abort(); }, []);
@@ -33,30 +34,30 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
     const own = loadFacingSettings().characters[character.id];
     const primary = loadFacingSettings().characters[meeting.characterId];
     const settings = { ...own, autoVisual: { ...primary?.autoVisual, ...own?.autoVisual, enabled: primary?.autoVisual?.enabled } };
-    if (!anchor || !current || !settings?.autoVisual?.enabled || !facingVisualMatches(current, anchor, "")) return;
+    if (!anchor || !current || !settings?.autoVisual?.enabled || !facingVisualMatches(current, anchor, "", meeting.sceneRevision ?? 0)) return;
     const job: Job = { controller: new AbortController() };
     jobs.current.set(meeting.id, job);
     const { signal } = job.controller;
     let notice: string | undefined;
     try {
       const screenedMeeting = loadFacingMeeting(meeting.id);
-      if (signal.aborted || !screenedMeeting || !facingVisualMatches(screenedMeeting, anchor, "")) return;
+      if (signal.aborted || !screenedMeeting || !facingVisualMatches(screenedMeeting, anchor, "", meeting.sceneRevision ?? 0)) return;
       const assets = loadFacingUsableAssets(character.id);
       const groups = groupFacingScenes(assets, settings.portraitId);
       const plan = await planFacingVisual(character, meeting, groups, signal);
       const latest = loadFacingMeeting(meeting.id);
-      if (!plan || signal.aborted || !latest || !facingVisualMatches(latest, anchor, "")) return;
+      if (!plan || signal.aborted || !latest || !facingVisualMatches(latest, anchor, "", meeting.sceneRevision ?? 0)) return;
       const options = { ...loadFacingSettings().characters[meeting.characterId]?.autoVisual, ...loadFacingSettings().characters[character.id]?.autoVisual,
         enabled: loadFacingSettings().characters[meeting.characterId]?.autoVisual?.enabled };
       if (!options?.enabled) return;
       const activityId = facingId();
       const currentAssets = loadFacingUsableAssets(character.id);
-      const group = groups.find(item => item.name === anchor.sceneName);
+      const group = groups.find(item => item.name === anchor.sceneName || item.backdrop?.id === anchor.sceneId);
       const sharedGroup = groupFacingScenes(loadFacingUsableAssets(meeting.characterId)).find(item => item.name === anchor.sceneName);
       const recorded = [...currentAssets, ...loadFacingUsableAssets(meeting.characterId)].find(item => item.id === anchor.sceneId && item.category === "scene");
       const base = recorded ?? group?.backdrop ?? sharedGroup?.backdrop
         ?? (group?.portrait?.composition === "full" ? group.portrait : sharedGroup?.portrait?.composition === "full" ? sharedGroup.portrait : undefined);
-      update(meeting.id, { message: "正在生成本轮新画面…" });
+      update(meeting.id, { message: "正在生成 CG 图…" });
       const result = await renderFacingVisual(plan, base, character, options, signal);
       if (signal.aborted) return;
       if (!result) throw new Error("请检查面对面的生图配置。");
@@ -66,14 +67,16 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
       if (signal.aborted) return;
       onAssets(character.id, loadFacingUsableAssets(character.id));
       if (!loadFacingSettings().characters[meeting.characterId]?.autoVisual?.enabled) return;
-      const saved = await applyFacingVisual(meeting.id, anchor, activityId, plan.location, asset, plan.mode);
+      const saved = await applyFacingVisual(meeting.id, anchor, activityId, plan.location, asset, plan.mode, meeting.sceneRevision ?? 0, facingCompletedRounds(meeting));
       if (saved && !signal.aborted) onMeeting(saved);
     } catch (cause) {
       const error = cause instanceof Error ? cause.message : "";
       const displayable = /^(?:请先为面对面启用生图配置|请检查面对面的生图配置|自动补图需要支持参考图的生图配置|请先给当前场景添加基础图|请在自动补图设置里选择一张角色参考图|场景图或角色参考图读取失败)。$/;
-      notice = displayable.test(error) ? error : "本轮画面生成未完成";
+      notice = displayable.test(error) ? error : "本轮 CG 生成未完成，可重试";
     } finally {
       jobs.current.delete(meeting.id);
+      if(notice)failed.current.set(meeting.id,check);else failed.current.delete(meeting.id);
+      if (notice) startedRounds.current.delete(`${meeting.id}:${facingCompletedRounds(meeting)}`);
       if (!signal.aborted) {
         update(meeting.id, notice ? { message: notice } : undefined);
         if (job.next) void run(job.next);
@@ -92,5 +95,5 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
     else void run(next);
   }
 
-  return { check, progress };
+  return { check, progress, retry:(id:string)=>{const prior=failed.current.get(id);if(prior&&!jobs.current.has(id))void run(prior);} };
 }

@@ -33,7 +33,7 @@ export async function planFacingVisual(character: Character, meeting: FacingMeet
   if (!turn?.sceneName) return;
   const settings = (await import("./facing-storage")).loadFacingSettings().characters[meeting.characterId]?.autoVisual;
   if (settings?.skipNsfw && turn.visualRating !== "safe") return;
-  return { location: turn.sceneName, name: `${turn.sceneName} · 补图`, mode: "replacement",
+  return { location: turn.sceneName, name: `${turn.sceneName} · CG`, mode: "replacement",
     description: turn.visualDescription?.trim() || `${character.name}，在「${turn.sceneName}」。${meeting.turns.slice(-4).map(facingTurnText).join("\n")}` };
 }
 
@@ -109,6 +109,7 @@ export async function renderFacingVisual(plan: ScenePlan, base: FacingAsset | un
     SCENE_IMAGE_ORIENTATION_GUIDANCE,
     "视点为用户眼睛的位置，服装按剧情保持连续。",
     plan.description,
+    options.extraPrompt?.trim() ? `用户的CG生图额外要求：${options.extraPrompt.trim()}` : "",
   ].join("\n");
   return generateImageFromConfiguredApi({ description, characterId: character.id, appId: "facing", settings: config,
     explicitReferenceImages: [{ dataUrl: sceneImage, label: "场景基础图" }, { dataUrl: roleImage, label: "角色外貌参考" }],

@@ -14,6 +14,7 @@ for (const ext of ['.ts','.tsx']) require.extensions[ext] = (module,filename) =>
 const React = require('react'), { act } = React, { createRoot } = require('react-dom/client');
 const load = name => require(path.join(project,name));
 function mock(name,exports) { const id=path.join(project,name); require.cache[id]={id,filename:id,loaded:true,exports}; }
+global.requestAnimationFrame=callback=>setTimeout(callback,0);
 const delay = (ms=20) => new Promise(resolve => setTimeout(resolve,ms));
 const deferred = () => { let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject}; };
 const cloud = load('lib/stt-cloud.ts');
@@ -98,13 +99,14 @@ async function roomChecks(){
  const storage=load('lib/facing-storage.ts');let original=await storage.saveFacingMeetingStart(storage.createFacingMeeting('a','user','main'),{sceneName:'很长的公寓名称·开放式餐厨岛台'});
  const Room=load('components/facing/facing-room.tsx').FacingRoom;
  let current;
- function Harness({multi=false}){const [meeting,setMeeting]=React.useState(original);current=meeting;return React.createElement('div',{className:'facing-app'},React.createElement(Room,{character:chars[0],meeting:multi?{...meeting,participantIds:['a','b']}:meeting,settings:{voice:false},position:meeting.scene,scenes:[],initialDraft:'保留草稿',onMeeting:setMeeting,onCompleted(){},onSettings(){},onMap(){},onEnd(){},onVoice(){},onSpeechInput(){},onScene:async()=>{},onEditPortrait(){},onPortraitLayout:async()=>{},onStory:async()=>{storyAttempts++;throw new Error('模拟跳转失败');}}));}
+ function Harness({multi=false}){const [meeting,setMeeting]=React.useState(original);const [music,setMusic]=React.useState(false);current=meeting;return React.createElement('div',{className:'facing-app'},React.createElement(Room,{character:chars[0],meeting:multi?{...meeting,participantIds:['a','b']}:meeting,settings:{voice:false},ambience:{playing:music,ready:true,configured:true,location:'游乐园',error:'',toggle:()=>setMusic(value=>!value)},position:meeting.scene,scenes:[],initialDraft:'保留草稿',onMeeting:setMeeting,onCompleted(){},onSettings(){},onMap(){},onEnd(){},onVoice(){},onSpeechInput(){},onScene:async()=>{},onEditPortrait(){},onPortraitLayout:async()=>{},onStory:async()=>{storyAttempts++;throw new Error('模拟跳转失败');}}));}
  const host=document.getElementById('root');let root=createRoot(host);
- const click=async label=>act(async()=>{const b=host.querySelector(`button[aria-label="${label}"]`)??[...host.querySelectorAll('button')].find(b=>b.textContent===label);assert.ok(b,label);assert.equal(b.disabled,false,label);b.dispatchEvent(new window.Event('click',{bubbles:true}));await delay(50);});
+ const click=async label=>{if(["开启实时对话","结束实时对话"].includes(label)&&!host.querySelector(`button[aria-label="${label}"]`)){await act(async()=>{host.querySelector('[aria-label="展开对话功能"]').dispatchEvent(new window.Event("click",{bubbles:true}));await delay();});}return act(async()=>{const b=host.querySelector(`button[aria-label="${label}"]`)??[...host.querySelectorAll('button')].find(b=>b.textContent===label);assert.ok(b,label);assert.equal(b.disabled,false,label);b.dispatchEvent(new window.Event('click',{bubbles:true}));await delay(50);});};
  await act(async()=>{root.render(React.createElement(Harness));await delay();});
+ await click('展开对话功能');await click('播放氛围音 · 游乐园');assert.ok([...host.querySelectorAll('button')].some(button=>button.textContent==='暂停氛围音 · 游乐园'));await click('暂停氛围音 · 游乐园');assert.equal(requests.length,0,'music controls never generate replies');
  assert.equal(host.querySelector('[aria-label="关闭角色语音"]'),null);await click('开启实时对话');assert.ok(host.querySelector('.facing-live-speak'));assert.equal(host.querySelector('[aria-label="对话内容"]').value,'保留草稿');
  const first=sessions.at(-1);await act(async()=>{first.callbacks.onFinal('你好');first.callbacks.onEnd();await delay(200);});
- assert.equal(requests.length,1);assert.equal(plays.length,1,'live mode speaks even when saved voice toggle was off');assert.equal(current.turns.filter(t=>t.role==='user').length,1);assert.ok(current.turns.find(t=>t.role==='assistant').audioRef,'real audio ref saved');
+ assert.ok(host.querySelectorAll('time').length>=2,'facing user and role replies show timestamps');assert.equal(requests.length,1);assert.equal(plays.length,1,'live mode speaks even when saved voice toggle was off');assert.equal(current.turns.filter(t=>t.role==='user').length,1);assert.ok(current.turns.find(t=>t.role==='assistant').audioRef,'real audio ref saved');
  await act(async()=>{await delay(650);});assert.equal(sessions.length,1,'no mic while actual FacingSpeech playback is unresolved');
  await act(async()=>{playback.resolve();await delay(650);});assert.equal(sessions.length,2);
  failReply=true;await act(async()=>{sessions.at(-1).callbacks.onFinal('第二句');await delay(150);});assert.equal(requests.length,2);assert.equal(requests[1].meeting.turns.length,3,'second turn reads the updated saved conversation');assert.match(host.textContent,/模拟回复失败/);assert.ok(host.querySelector('[aria-label="继续实时收音"]'));assert.equal(current.turns.filter(t=>t.role==='user').length,2);

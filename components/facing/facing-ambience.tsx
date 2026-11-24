@@ -3,7 +3,8 @@ import {useEffect,useRef,useState} from "react";
 import {loadMediaObjectUrl} from "@/lib/media-cache-storage";
 import {loadMapPreferences,saveMapPreferences,type MapAmbience} from "@/lib/facing-map-storage";
 export const FACING_SPEECH_EVENT="facing-voice-playback";
-export function FacingAmbience({track,location}:{track?:MapAmbience;location?:string}){
+export type FacingAmbienceControl = {playing:boolean;ready:boolean;location?:string;error:string;configured:boolean;toggle:()=>void};
+export function FacingAmbience({track,location,embedded=false,onControl}:{track?:MapAmbience;location?:string;embedded?:boolean;onControl?:(control:FacingAmbienceControl)=>void}){
  const player=useRef<HTMLAudioElement|null>(null),muted=useRef(loadMapPreferences().ambienceMuted===true),ducked=useRef(false),microphone=useRef(false),volume=useRef(track?.volume??.25);
  const audibleVolume=()=>microphone.current?0:volume.current*(ducked.current ? 0.2 : 1);
  const [playing,setPlaying]=useState(false),[ready,setReady]=useState(false),[error,setError]=useState("");volume.current=Math.max(0,Math.min(1,track?.volume??.25));
@@ -19,6 +20,8 @@ export function FacingAmbience({track,location}:{track?:MapAmbience;location?:st
  },[track?.mediaRef]);
  useEffect(()=>{if(player.current)player.current.volume=audibleVolume();},[track?.volume]);
  useEffect(()=>{const change=(event:Event)=>{ducked.current=(event as CustomEvent).detail===true;if(player.current)player.current.volume=audibleVolume();};const mic=(event:Event)=>{microphone.current=(event as CustomEvent).detail===true;if(player.current)player.current.volume=audibleVolume();};window.addEventListener(FACING_SPEECH_EVENT,change);window.addEventListener("facing-live-microphone",mic);return()=>{window.removeEventListener(FACING_SPEECH_EVENT,change);window.removeEventListener("facing-live-microphone",mic);};},[]);
- if(!track)return null;
- return <div className="facing-ambience"><button type="button" disabled={!ready} aria-label={playing?"暂停氛围音":"播放氛围音"} onClick={()=>{const audio=player.current;if(!audio)return;if(playing){muted.current=true;audio.pause();void saveMapPreferences({ambienceMuted:true}).catch(()=>setError("静音设置保存失败"));}else{muted.current=false;void saveMapPreferences({ambienceMuted:false}).catch(()=>{});void audio.play().catch(()=>setError("暂时无法播放，请重试或更换音频。"));}}}>{!ready&&!error?"正在读取氛围音…":playing?"♫ 暂停氛围音":"♫ 播放氛围音"}</button><small>{location}</small>{error&&<small role="alert">{error}</small>}</div>;
+ function toggle(){const audio=player.current;if(!audio)return;if(playing){muted.current=true;audio.pause();void saveMapPreferences({ambienceMuted:true}).catch(()=>setError("静音设置保存失败"));}else{muted.current=false;void saveMapPreferences({ambienceMuted:false}).catch(()=>{});void audio.play().catch(()=>setError("暂时无法播放，请重试或更换音频。"));}}
+ useEffect(()=>{onControl?.({playing,ready,location,error,configured:!!track?.mediaRef,toggle});},[playing,ready,location,error,track?.mediaRef,onControl]);
+ if(!track||embedded)return null;
+ return <div className="facing-ambience"><button type="button" disabled={!ready} aria-label={playing?"暂停氛围音":"播放氛围音"} onClick={toggle}>{!ready&&!error?"正在读取氛围音…":playing?"♫ 暂停氛围音":"♫ 播放氛围音"}</button><small>{location}</small>{error&&<small role="alert">{error}</small>}</div>;
 }

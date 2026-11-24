@@ -6,11 +6,12 @@ import { FacingMapApp } from "./facing-map-app";
 import { FacingMapSettings } from "./facing-map-panels";
 import { loadFacingAtlas, mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
 import {bigMapPlace} from "@/lib/facing-place-life";
-import {FacingAmbience} from "./facing-ambience";
+import {resolveFacingLocation,bindFacingLocation,facingLocationCandidates} from "@/lib/facing-location";
+import {FacingAmbience,type FacingAmbienceControl} from "./facing-ambience";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { createFacingMeeting, deleteFacingAssets, loadFacingUsableAssets, changeFacingScene, manageFacingMeetings, mergeFacingMeetings, FACING_SHARED_CHARACTER_ID, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
-  type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
+  facingCgDisplayRounds, loadFacingAssets as loadCgAssets, type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
 import { sceneForMapPlace } from "@/lib/facing-map-scenes";
 import { continueFacingInStory } from "@/lib/story-storage";
 import { loadUserIdentities, resolveUserIdentity } from "@/lib/settings-storage";
@@ -93,9 +94,17 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const [recordRevision,setRecordRevision]=useState(0), [recordSelection,setRecordSelection]=useState<string[]>([]),[recordName,setRecordName]=useState("");
   const [confirmRecordDelete,setConfirmRecordDelete]=useState(false),[removeMergedSources,setRemoveMergedSources]=useState(false),[recordBusy,setRecordBusy]=useState(false);
   const [meeting, setMeeting] = useState<FacingMeeting>();
+  useEffect(()=>{
+    if(page!=="room"||!meeting)return;
+    const location=resolveFacingLocation(meeting);
+    const next=location?{atlasId:location.atlas.id,placeId:location.place.id}:undefined;
+    setAudioLocation(old=>old?.atlasId===next?.atlasId&&old?.placeId===next?.placeId?old:next);
+    if(location&&(meeting.mapContext?.atlasId!==location.atlas.id||meeting.mapContext?.placeId!==location.place.id))void bindFacingLocation(meeting,next).then(saved=>setMeeting(current=>current?.id===saved.id?saved:current)).catch(()=>setError("地点关联保存失败。"));
+  },[page,meeting?.id,meeting?.scene?.sceneName,meeting?.scene?.sceneId]);
   const roomDrafts=useRef(new Map<string,{text:string;photo?:File}>());
+  const [ambience,setAmbience]=useState<FacingAmbienceControl>();
   const [audioLocation,setAudioLocation]=useState<{atlasId:string;placeId:string}>();
-  const audioAtlas=audioLocation?loadFacingAtlas(audioLocation.atlasId):undefined;
+  const audioAtlas=useMemo(()=>audioLocation?loadFacingAtlas(audioLocation.atlasId):undefined,[audioLocation,page]);
   const audioPlace=audioAtlas?bigMapPlace(audioAtlas,audioLocation?.placeId):undefined;
   useEffect(()=>{if(page==="home"||page==="records"||page==="record")setAudioLocation(undefined);},[page]);
   const [draftMeeting, setDraftMeeting] = useState<FacingMeeting>();
@@ -112,10 +121,10 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   );
   const current = character ? preferences.characters[character.id] ?? {} : {};
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
-  const groups = groupFacingScenes(assets, current.portraitId);
+  const groups = useMemo(()=>groupFacingScenes(assets, current.portraitId),[assets,current.portraitId]);
   const castKey = [...participantIds].sort().join("|");
   const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId, true)
-    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey) : [], [character, identityId, meeting, castKey, recordRevision]);
+    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey) : [], [character, identityId, page, castKey, recordRevision]);
   const latest = meetings[0];
   const initialAsset = assets.find(item => item.id === (current.useScene === false ? current.fullPortraitId ?? current.portraitId : current.sceneId ?? current.portraitId));
   const initialGroup = groups.find(group => group.name === (initialAsset ? facingAssetLocation(initialAsset) : undefined)) ?? groups[0];
@@ -148,7 +157,9 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
 
   function openRoom(item: FacingMeeting) {
     unlockAudioPlayback();
-    setAudioLocation(item.mapContext?{atlasId:item.mapContext.atlasId,placeId:item.mapContext.placeId}:undefined);
+    const location=resolveFacingLocation(item);
+    setAudioLocation(location?{atlasId:location.atlas.id,placeId:location.place.id}:undefined);
+    if(location&&(!item.mapContext||item.mapContext.placeId!==location.place.id))void bindFacingLocation(item,{atlasId:location.atlas.id,placeId:location.place.id}).then(saved=>setMeeting(current=>current?.id===saved.id?saved:current)).catch(()=>setError("地点关联保存失败，可在场景菜单重新选择。"));
     setMeeting(loadFacingMeeting(item.id) ?? item);
     if (item.characterId !== character?.id || [...facingParticipantIds(item)].sort().join("|")!==castKey) {
       setAssets(loadFacingUsableAssets(item.characterId));
@@ -211,7 +222,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
 
   useEffect(()=>{if(!initialMeetingId)return;const saved=loadFacingMeeting(initialMeetingId);if(saved)openRoom(saved);else setError("原面对面记录已移除，可以从见面记录选择其他对话。");onLaunchConsumed?.();},[initialMeetingId]);
   return <div ref={appRef} className="facing-app" style={{ paddingBottom: pageInset }}>
-    <FacingAmbience track={audioPlace?.ambience} location={audioPlace?.name}/>
+    <FacingAmbience track={audioPlace?.ambience} location={audioPlace?.name} embedded={page==="room"} onControl={setAmbience}/>
     {page === "home" && <>
       <Header title="面对面" onBack={onClose}>
         {character && <button type="button" className="facing-icon" onClick={() => { setMapOrigin("home"); setPage("map"); }} aria-label="世界地图"><MapIcon size={20} /></button>}
@@ -238,9 +249,9 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
       initialDraft={roomDrafts.current.get(meeting.id)?.text} initialPhoto={roomDrafts.current.get(meeting.id)?.photo} onDraft={(text,photo)=>roomDrafts.current.set(meeting.id,{text,photo})}
-      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting}
-      autoAsset={assets.find(asset => asset.id === meeting.visual?.assetId)} autoProgress={autoVisual.progress[meeting.id]}
-      onCompleted={completed => autoVisual.check(completed, character)}
+      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting} ambience={ambience} locationOptions={character?facingLocationCandidates(character.id):[]} onLocation={async location=>{const saved=await bindFacingLocation(meeting,location);setMeeting(saved);setAudioLocation(location);}}
+      autoAsset={(meeting.visual??meeting.lastCg)?loadCgAssets((meeting.visual??meeting.lastCg)?.characterId??meeting.characterId).find(asset => asset.id === (meeting.visual??meeting.lastCg)?.assetId):undefined} autoProgress={autoVisual.progress[meeting.id]}
+      onCompleted={completed => autoVisual.check(completed, character)} onRetryCg={()=>autoVisual.retry(meeting.id)}
       onMap={() => { setMapOrigin("room"); setPage("map"); }}
       onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,loadUserIdentities().find(item=>item.id===meeting.identityId)??resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
       onScene={async name=>{const group=groups.find(item=>item.name===name);if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
@@ -257,21 +268,24 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
           <button type="button" onClick={()=>{setAssetOrigin("settings");setAssetEditId(undefined);setPage("shared-assets");}}><Images size={18}/><span>通用场景素材</span><ChevronRight size={17}/></button>
           <button type="button" onClick={()=>setPage("products")}><Images size={18}/><span>生图成品 · 按场景分类</span><ChevronRight size={17}/></button>
         </div>
-        <section className="facing-form" key={character.id} aria-label="随剧情换场">
-          <h2 className="facing-record-title">随剧情换场</h2>
+        <section className="facing-form" key={character.id} aria-label="生成 CG 图（新画面）">
+          <h2 className="facing-record-title">生成 CG 图（新画面）</h2>
           <div className="facing-list facing-settings-list facing-auto-settings">
-            <label>每 N 轮生成新画面<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
+            <label>每 N 轮生成 CG 图<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
               onChange={event => commitSetting({ autoVisual: { enabled: event.target.checked } })} /></label>
             <label>生图前跳过 NSFW 场景<input type="checkbox" role="switch" checked={current.autoVisual?.skipNsfw === true}
               onChange={event => commitSetting({ autoVisual: { skipNsfw: event.target.checked } })} /></label>
-            <label>补图间隔（轮）<input type="number" min={1} step={1} inputMode="numeric" defaultValue={current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL}
+            <label>生图间隔（轮）<input type="number" min={1} step={1} inputMode="numeric" defaultValue={current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL}
               onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
               onBlur={event => {
                 const previous = current.autoVisual?.interval ?? FACING_VISUAL_INTERVAL;
                 const value = event.currentTarget.valueAsNumber;
                 if (!Number.isSafeInteger(value) || value < 1) event.currentTarget.value = String(previous);
-                else if (value !== previous) commitSetting({ autoVisual: { interval: value } });
+                else if (value !== previous) commitSetting({ autoVisual: { interval: value, displayRounds: Math.min(facingCgDisplayRounds(current.autoVisual), value - 1) } });
               }} /></label>
+            <label>CG 自动展示轮数<input type="number" min={0} max={Math.max(0,(current.autoVisual?.interval??FACING_VISUAL_INTERVAL)-1)} step={1} key={`display:${current.autoVisual?.interval}:${current.autoVisual?.displayRounds}`} defaultValue={facingCgDisplayRounds(current.autoVisual)} onBlur={event=>{const value=event.currentTarget.valueAsNumber;const max=Math.max(0,(current.autoVisual?.interval??FACING_VISUAL_INTERVAL)-1);if(!Number.isSafeInteger(value)||value<0||value>max){event.currentTarget.value=String(facingCgDisplayRounds(current.autoVisual));return;}commitSetting({autoVisual:{displayRounds:value}});}}/></label>
+            <p className="facing-auto-help">展示轮数必须小于生图间隔。0 表示仅手动查看；图片显示后开始计数，一次完整对话回复算一轮。</p>
+            <label>CG 生图额外要求<textarea key={`cg-prompt:${character.id}`} defaultValue={current.autoVisual?.extraPrompt??""} placeholder="例如：用户第一视角、真实摄影、温馨光线、增强代入感……" onBlur={e=>commitSetting({autoVisual:{extraPrompt:e.target.value}})}/></label>
             <label>人物参考图<select value={current.autoVisual?.referenceSource ?? "character"}
               onChange={event => commitSetting({ autoVisual: { referenceSource: event.target.value as "character" | "avatar" | "upload" } })}>
               <option value="character">角色参考图（没有时用头像）</option><option value="avatar">角色头像</option><option value="upload">自选图片</option>
@@ -291,9 +305,11 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
                 }} /></label>
             </div>}
           </div>
-          <p className="facing-auto-help">普通情绪只切换所选立绘。达到轮次后直接生成一张新的完整画面，使用当前场景背景、人物参考图和本轮描述；不复用旧图。新画面显示到换场或下一次补图，原背景与立绘保留。</p>
+          <p className="facing-auto-help">普通情绪只切换所选立绘。达到轮次后直接生成一张新的完整画面，使用当前场景背景、人物参考图和本轮描述；不复用旧图。CG 按展示轮数自动恢复，也可用顶部双人按钮手动打开或关闭；换地点时恢复新场景。底下的背景和立绘照常随对话更新。</p>
         </section>
+        <h2 className="facing-record-title">生成要求</h2>
         <div className="facing-list facing-settings-list">
+          <label>额外提示词<textarea key={`reply-prompt:${character.id}`} defaultValue={current.extraPrompt??""} placeholder="统一文风、人称、避免的套话等，每次生成回复时带入" onBlur={e=>commitSetting({extraPrompt:e.target.value})}/></label>
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}
             <option value="custom">自定义字数</option>

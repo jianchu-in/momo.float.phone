@@ -286,6 +286,17 @@ async function main() {
   await act(async()=>root.render(React.createElement(Layer,null,React.createElement('button',null,'返回'))));
   assert.ok(document.body.querySelector('.rp-viewport-layer > .rp-safe-frame'));
   await act(async()=>root.unmount());
+  // Reopening without an explicit session ID finds the interrupted checkpoint without API calls.
+  const checkpoint={...storage.createReverseSession(chars[0],scope),id:'reopen-interrupted',status:'running',accepted:true,updatedAt:new Date().toISOString(),events:[{id:'saved-action',kind:'action',text:'已完成的操作保留',at:new Date().toISOString()}]};
+  await storage.saveReverseSession(checkpoint);const beforeReopen=calls.length;
+  root=createRoot(host);await act(async()=>{root.render(React.createElement(Harness));for(let i=0;i<6;i++)await tick();});
+  assert.equal(latest.session.id,checkpoint.id);assert.equal(latest.session.status,'paused');assert.equal(calls.length,beforeReopen);assert.equal(latest.session.events[0].text,'已完成的操作保留');await act(async()=>root.unmount());
+  // A long capture is compacted, while real action/speech events are never removed.
+  for(let i=0;i<140;i++)await storage.appendReverseReplay(checkpoint.id,{at:i*700,html:i%5===0?'<p>页面'+i+'</p>':'',speech:'话语'+i,app:'chat'});
+  const recovered=storage.loadReverseSession(checkpoint.id);assert.ok(recovered.replay.length<=120);assert.equal(recovered.replay.at(-1).speech,'话语139');assert.equal(recovered.events[0].text,'已完成的操作保留');
+  const replay=load('components/checkphone/reverse-phone-replay.tsx');const picture='data:image/png;base64,'+'A'.repeat(6000);
+  const frozen=await replay.freezeReverseFrame('<img src="'+picture+'"><p>实际查看内容</p>');assert.ok(frozen.length<1000,'frame HTML references separately stored media');assert.equal(replay.restoreReverseFrame(frozen).includes(picture),true,'replay can recover its image after re-entry');
+  assert.equal(await replay.freezeReverseFrame('<img src="'+picture+'"><p>实际查看内容</p>'),frozen,'identical image sources reuse one persisted reference');
   console.log('PASS reverse phone: permissions, scope isolation, real messages/remarks, conserved idempotent payments, crash recovery, visible list/recent 20, API plan/retry, title-only shelf, memory, abort, invitation retry, settings and browser editing.');
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

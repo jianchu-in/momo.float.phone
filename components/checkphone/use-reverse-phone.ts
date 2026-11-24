@@ -1,6 +1,7 @@
 "use client";
+import { hydrateKvDb } from "@/lib/kv-db";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { acquireReverseLease, resolveReverseAutomation, reverseAuthorizationActive, REVERSE_SETTINGS_EVENT } from "@/lib/reverse-phone-automation";
+import { acquireReverseLease, reversePhoneBusy, resolveReverseAutomation, reverseAuthorizationActive, REVERSE_SETTINGS_EVENT } from "@/lib/reverse-phone-automation";
 import { bgDelay, bgSetInterval } from "@/lib/bg-timer";
 import { splitReverseReply } from "@/lib/reverse-phone-replies";
 import { abortableDelay, isAbortError, throwIfAborted } from "@/lib/abort-utils";
@@ -14,7 +15,7 @@ import { hydrateReadingStorage, loadBooks } from "@/lib/reading-storage";
 import { loadWalletState } from "@/lib/wallet-storage";
 import { recoverReversePayments, reverseAllowedSessions, reverseCharacterFunds, sendReverseMessage, renameReverseContact, topUpReverseWallet, payReverseCart } from "@/lib/reverse-phone-actions";
 import { requestReverseSection, requestReverseChat } from "@/lib/reverse-phone-engine";
-import { allowedReverseApps, appendReverseEvent, assertReverseScope, createReverseSession, loadReverseSession, loadReverseSettings, loadUserBrowser, rememberReverseSession, resolveReversePermissions, reverseId, saveReverseSession } from "@/lib/reverse-phone-storage";
+import { allowedReverseApps, appendReverseEvent, assertReverseScope, createReverseSession, loadReverseSession, loadReverseSessionSummaries, loadReverseSettings, loadUserBrowser, rememberReverseSession, resolveReversePermissions, reverseId, saveReverseSession } from "@/lib/reverse-phone-storage";
 import { REVERSE_APPS, type ChatDecision, type ReverseApp, type ReverseChatControl, type ReverseResult, type ReverseScope, type ReverseSession, type ReverseTask } from "@/lib/reverse-phone-types";
 
 export type ReverseScreen = { app: "desktop" | ReverseApp; locked?: boolean; section?: string; itemId?: string; chat?: ReverseChatControl };
@@ -320,7 +321,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       await persist({ ...latest.current!, status: "completed" }, true); setScreen({ app: "desktop" });
     } catch (cause) {
       if (!control.signal.aborted && !isAbortError(cause)) { const message = cause instanceof Error ? cause.message : "查岗失败，请重试或跳过这部分。"; setError(message); await persist({ ...latest.current!, status: "paused", error: message }, true); }
-    } finally { cancelHeartbeat?.(); if(leased)await acquireReverseLease(scope,latest.current!.id,leaseToken,true); controller.current = null; busy.current = false; if (lifetime.current) { setRunning(false); setLoading(""); setTouch(value => ({ ...value, visible: false, pressed: false })); } }
+    } finally { cancelHeartbeat?.(); if(leased)await acquireReverseLease(scope,latest.current!.id,leaseToken,true).catch(()=>{}); controller.current = null; busy.current = false; if (lifetime.current) { setRunning(false); setLoading(""); setTouch(value => ({ ...value, visible: false, pressed: false })); } }
   }
   async function start(withInvite = false) {
     if (busy.current || preparing.current) return;
@@ -371,16 +372,17 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     latest.current = value; currentTask.current = value.tasks.find(item => item.state === "pending") ?? null; setSession(value); setCharacterId(value.characterId); setError(value.error ?? "");
   }
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (resumeSessionId) void restore(resumeSessionId).then(() => {
-        const record = latest.current;
-        if (record?.scope.key !== scope.key || record.id !== resumeSessionId || record.status === "stopped" || record.status === "completed") return;
-        if (options.invitationOnly || (options.autoContinue && record.accepted === true)) void execute();
-      });
-      else if (inviteSessionId && options.invitationOnly) void start(true);
-    }, 0);
-    return () => clearTimeout(timer);
+    let alive=true;
+    void hydrateKvDb().then(async()=>{
+      if(!alive)return;
+      if(!resumeSessionId&&!inviteSessionId&&reversePhoneBusy(scope)){setToast("有查岗正在进行或等待释放控制，可从记录查看，稍后继续。");return;}
+      const recover=resumeSessionId??(!inviteSessionId?loadReverseSessionSummaries(scope).find(record=>["running","paused"].includes(record.status)&&(!initialCharacterId||record.characterId===initialCharacterId))?.id:undefined);
+      if(recover){await restore(recover);const record=latest.current;if(!alive||record?.scope.key!==scope.key||record.id!==recover||["stopped","completed"].includes(record.status))return;if(record.status==="running"&&!options.autoContinue){await persist({...record,status:"paused",error:"上次查岗中断，已完成的操作保留。可继续或结束。"});}if(options.invitationOnly||(options.autoContinue&&record.accepted===true))void execute();}
+      else if(inviteSessionId&&options.invitationOnly)void start(true);
+    }).catch(error=>{if(alive)setError(error instanceof Error?error.message:"查岗记录读取失败，可退出后重新进入。");});
+    return()=>{alive=false;};
   }, []);
+
   return { characterId, setCharacterId, session, screen, setScreen, running, loading, speech, error, toast, setToast, touch,
     start, execute, stop, skip, restore, currentTask };
 }

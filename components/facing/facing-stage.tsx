@@ -52,9 +52,10 @@ export function FacingMedia({ url, mediaType, name, loop = true, onEnd, onRatio 
 type FacingStageDraft = Pick<FacingAsset, "category" | "name" | "mediaType" | "layout" | "composition"> & { url: string };
 
 export function FacingStage({ portrait, scene, reaction, draft, fallback, name, points = [], editing, activePoint, onPoint,
-  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, onLayout, onActivate, children }: {
+  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, onLayout, onActivate, onDisplayed, children }: {
   onLayout?: (layout: {x:number;y:number;scale:number}) => void;
   onActivate?: () => void;
+  onDisplayed?: (assetId:string)=>void;
   hideBlank?: boolean;
   fullFallback?: boolean;
   portrait?: FacingAsset;
@@ -94,7 +95,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const mediaUrl = reactionUrl || portraitDraft?.url || portraitUrl;
   const mediaKey = (reactionUrl ? reaction?.mediaId : portraitDraft?.url ?? portrait?.mediaId) ?? fallback ?? "";
   const ratioValue = ratio?.key === mediaKey ? ratio.value : 0.72;
-  const layout = { ...(foreground?.composition === "full" ? foreground.layout : portraitDraft?.layout ?? portrait?.layout ?? foreground?.layout), ...dragLayout };
+  const layout = foreground?.composition === "full" ? {...foreground.layout} : { ...(portraitDraft?.layout ?? portrait?.layout ?? foreground?.layout), ...dragLayout };
   const full = (foreground?.composition === "full" && Boolean(mediaUrl)) || Boolean(fullFallback && fallback);
   const fitWidth = full ? Math.max(size.width, size.height * ratioValue) : Math.min(size.width, size.height * ratioValue);
   const width = fitWidth * (layout?.scale ?? 100) / 100;
@@ -183,7 +184,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
     }}>
       {mediaUrl && foreground
         ? <FacingMedia key={mediaKey} url={mediaUrl} mediaType={reactionUrl ? reaction?.motionMediaType ?? foreground.mediaType : portraitDraft ? portraitDraft.mediaType : portrait?.motionMediaType ?? foreground.mediaType} name={foreground.name}
-            onRatio={value => setRatio({ key: mediaKey, value })} loop={!reactionUrl || reaction?.composition !== "full"} onEnd={reaction?.composition === "full" ? onReactionEnd : undefined} />
+            onRatio={value => {setRatio({ key: mediaKey, value });if(reactionUrl&&reaction?.generated)onDisplayed?.(reaction.id);}} loop={!reactionUrl || reaction?.composition !== "full"} onEnd={reaction?.composition === "full" ? onReactionEnd : undefined} />
         : fallback
           ? <FacingMedia key={mediaKey} url={fallback} mediaType="image/png" name={name} onRatio={value => setRatio({ key: mediaKey, value })} />
           : !hideBlank && <div className="facing-blank-portrait"><UserRound size={64} strokeWidth={1} aria-hidden /></div>}

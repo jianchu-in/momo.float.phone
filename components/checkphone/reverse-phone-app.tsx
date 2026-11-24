@@ -65,13 +65,14 @@ function InspectionPage({ screen, scope, characterId, onBack, onScreen }: { scre
 export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoContinue = false, initialReplayId, initialPanel, background = false, onFinished, onClose }: { initialCharacterId?: string; resumeSessionId?: string; autoContinue?: boolean; initialReplayId?:string; initialPanel?:"history"; background?:boolean; onFinished?:(record:ReverseSession)=>void; onClose: () => void }) {
   const [scope] = useState(reverseScope), host = useRef<HTMLDivElement>(null);
   const run = useReversePhone(scope, host, initialCharacterId, undefined, resumeSessionId, { autoContinue, background });
+  const captureBusy=useRef(false);
   const [replayId,setReplayId]=useState<string|undefined>(initialReplayId); const started=useRef(false),finished=useRef(false);
   const [panel, setPanel] = useState<"settings" | "browser" | "history" | null>(initialPanel??null);
   const [theme] = useState(readThemeProfile), [assets, setAssets] = useState<Record<string, string>>({});
   const characters = loadCharacters(), character = characters.find(item => item.id === (run.running ? run.session?.characterId : run.characterId));
   const settings = loadReverseSettings(scope);
   const records = useReverseRecords(scope);
-  useEffect(() => { let live = true; void getThemeAssetMap([theme.wallpaperAssetId, ...Object.values(theme.iconSkins)].filter((id): id is string => !!id)).then(value => { if (live) setAssets(value); }); return () => { live = false; }; }, [theme]);
+  useEffect(() => { let live = true; void getThemeAssetMap([theme.wallpaperAssetId, ...(["chat","shopping","reading"] as const).map(app=>theme.iconSkins[app])].filter((id): id is string => !!id)).then(value => { if (live) setAssets(value); }); return () => { live = false; }; }, [theme]);
   useEffect(() => { if (!run.toast) return; const timer = setTimeout(() => run.setToast(""), 2600); return () => clearTimeout(timer); }, [run.toast]);
   useEffect(()=>{
     if(run.running)started.current=true;
@@ -82,14 +83,16 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
     const capture=new AbortController();
     const id=run.session.id,at=Date.now()-Date.parse(run.session.createdAt);
     const cancel=bgSetTimeout(()=>{
+      if(captureBusy.current||capture.signal.aborted)return;
       const content=host.current?.querySelector('.rp-phone-content');if(!content)return;
+      captureBusy.current=true;
       const copy=content.cloneNode(true) as HTMLElement;
       const source=[...content.querySelectorAll<HTMLElement>('*')],targets=[...copy.querySelectorAll<HTMLElement>('*')];
       source.forEach((el,i)=>{if(el.scrollTop)targets[i]?.setAttribute('data-rp-scroll-top',String(el.scrollTop));});
-      void freezeReverseFrame(copy.innerHTML,capture.signal).then(html=>appendReverseReplay(id,{at,html,speech:run.speech,loading:run.loading,app:run.screen.app,touch:run.touch})).catch(error=>{if(!isAbortError(error))console.warn("查岗回放画面保存失败，文字记录仍保留",error);});
-    },100);
+      void freezeReverseFrame(copy.innerHTML,capture.signal).then(html=>appendReverseReplay(id,{at,html,speech:run.speech,loading:run.loading,app:run.screen.app,touch:run.touch})).catch(error=>{if(!isAbortError(error))console.warn("查岗回放画面保存失败，文字记录仍保留",error);}).finally(()=>{captureBusy.current=false;});
+    },650);
     return ()=>{cancel();capture.abort();};
-  },[run.screen,run.speech,run.loading,run.touch,run.running,run.session?.id,panel,replayId]);
+  },[run.screen,run.speech,run.loading,run.running,run.session?.id,panel,replayId]);
   const replayRecord = useMemo(() => replayId ? loadReverseSession(replayId) : null, [replayId]);
   if(replayRecord?.scope.key===scope.key)return <ReversePhoneReplay record={replayRecord} onClose={()=>setReplayId(undefined)}/>;
   async function close() { await run.stop(); onClose(); }

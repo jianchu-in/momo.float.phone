@@ -7,7 +7,7 @@ export const REVERSE_PREFIX = "ai_phone_reverse_v1:";
 export const REVERSE_RECORDS_UPDATED_EVENT = "reverse-phone-records-updated";
 function announceRecords() { if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(REVERSE_RECORDS_UPDATED_EVENT)); }
 registerDynamicPrefix(REVERSE_PREFIX);
-export const reverseId = () => crypto.randomUUID();
+export const reverseId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 export function readReverseJson<T>(raw: string | null, fallback: T): T { try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
 export function reverseScope(): ReverseScope {
   const scope = loadChatScope(), user = resolveChatScopeUserIdentity();
@@ -94,7 +94,7 @@ function sessionSummary(session: ReverseSession): ReverseSession {
 }
 export function loadReverseSession(id: string, includeReplay = true): ReverseSession | null {
   const record = readReverseJson<ReverseSession | null>(kvGet(sessionKey(id)), null);
-  if (!record) return null;
+  if (!record || typeof record!=="object" || !record.scope || typeof record.scope.key!=="string" || !Array.isArray(record.tasks) || !Array.isArray(record.events)) return null;
   if (!includeReplay) {
     const count = readReverseJson<ReverseSession | null>(kvGet(summaryKey(id)), null)?.replayFrameCount;
     return {...withoutReplay(record), ...(count !== undefined ? {replayFrameCount: count} : {})};
@@ -118,7 +118,7 @@ export function loadReverseSessionSummaries(scope = reverseScope()): ReverseSess
       summary = sessionSummary(record);
       try { kvSet(summaryKey(id), JSON.stringify(summary)); } catch { /* The original record remains readable. */ }
     }
-    if (summary.scope.key === scope.key) result.push(summary);
+    if (summary?.scope?.key === scope.key && Array.isArray(summary.tasks) && Array.isArray(summary.events)) result.push(summary);
   }
   return result.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -187,8 +187,15 @@ export async function appendReverseReplay(id: string, frame: NonNullable<Reverse
       const stored = readReverseJson<ReplayFrames>(raw, []), frames = stored.length >= legacy.length ? stored : legacy;
       const previous = frames.at(-1), lastHtml = frames.slice().reverse().find(entry => entry.html)?.html;
       if (previous && lastHtml === frame.html && previous.speech === frame.speech && previous.loading === frame.loading && JSON.stringify(previous.touch) === JSON.stringify(frame.touch)) { record.replayFrameCount = frames.length; return JSON.stringify(frames); }
-      record.replayFrameCount = frames.length + 1;
-      return JSON.stringify([...frames, {...frame, html: lastHtml === frame.html ? "" : frame.html}]);
+      let next = [...frames, {...frame, html: lastHtml === frame.html ? "" : frame.html}];
+      // Keep sparse visual checkpoints under a fixed budget; all speech/actions remain in events.
+      while(next.length>120||next.reduce((sum,item)=>sum+(item.html?.length??0),0)>1024*1024){
+        if(next.length<3){next=next.map(item=>({...item,html:item.html&&item.html.length>512*1024?"":item.html}));break;}
+        let carry="";
+        next=next.flatMap((item,index)=>{if(item.html)carry=item.html;return index%2===0||index===next.length-1?[{...item,html:carry}]:[];});
+      }
+      record.replayFrameCount = next.length;
+      return JSON.stringify(next);
     },
     [summaryKey(id)]: raw => record ? JSON.stringify(sessionSummary(record)) : raw ?? "null",
   });
