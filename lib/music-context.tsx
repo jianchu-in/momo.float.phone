@@ -4,7 +4,7 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import type { MusicTrack } from "./music-storage";
 import { getAudioBlob, markTrackPlayed } from "./music-storage";
-import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
+import { findPlayableMatch, getNeteaseLyrics, getNeteaseLyricData, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
 
@@ -111,6 +111,29 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         persistQueue(queue);
     }, [queue]);
 
+    // 自动补全网易云当前歌曲的歌词与译文（解决从外部/一起听选歌播放时无歌词问题）
+    useEffect(() => {
+        const track = currentTrack;
+        if (!track || !track.id.startsWith("netease_")) return;
+        if (track.lyrics !== undefined && track.tlyrics !== undefined) return;
+        const nid = parseInt(track.id.replace("netease_", ""), 10);
+        if (!nid) return;
+        let cancelled = false;
+        getNeteaseLyricData(nid).then(data => {
+            if (cancelled) return;
+            setCurrentTrack(prev => {
+                if (!prev || prev.id !== track.id) return prev;
+                if (prev.lyrics === data.lyrics && prev.tlyrics === data.tlyrics) return prev;
+                return {
+                    ...prev,
+                    lyrics: prev.lyrics || data.lyrics,
+                    tlyrics: prev.tlyrics || data.tlyrics,
+                };
+            });
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [currentTrack?.id]);
+
     /** Wrapped setQueue with max size enforcement */
     const setQueue = useCallback((tracks: MusicTrack[]) => {
         setQueueRaw(tracks.slice(0, QUEUE_MAX_SIZE));
@@ -133,6 +156,14 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         });
         audio.addEventListener("pause", () => setIsPlaying(false));
         audio.addEventListener("play", () => setIsPlaying(true));
+        audio.addEventListener("error", () => {
+            setIsPlaying(false);
+            setCurrentTime(0);
+            setDuration(0);
+            window.dispatchEvent(new CustomEvent("music-playback-failed", {
+                detail: { message: "音频加载失败，可能是 VIP 歌曲或版权限制" }
+            }));
+        });
 
         return () => {
             audio.pause();
@@ -340,16 +371,17 @@ export function MusicProvider({ children }: { children: ReactNode }) {
             const info = await getNeteasePlayInfo(nid);
             const url = info.url;
             if (!url) return { ok: false, message: info.reason || "没有找到可播放的音乐" };
-            const [detail, lyrics] = await Promise.all([
+            const [detail, lyricData] = await Promise.all([
                 getNeteaseSongDetail(nid).catch(() => null),
-                getNeteaseLyrics(nid).catch(() => ""),
+                getNeteaseLyricData(nid).catch(() => ({ lyrics: "", tlyrics: "" })),
             ]);
             const resolvedTrack: MusicTrack = {
                 ...track,
                 title: detail?.name || track.title,
                 artist: detail?.artists || track.artist,
                 coverUrl: detail?.coverUrl || track.coverUrl,
-                lyrics: lyrics || track.lyrics,
+                lyrics: lyricData.lyrics || track.lyrics,
+                tlyrics: lyricData.tlyrics || track.tlyrics,
             };
             playUrl(url, resolvedTrack);
             return { ok: true, message: `正在播放「${resolvedTrack.title}」`, track: resolvedTrack };
@@ -368,9 +400,9 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         }
         if (result.source === "netease" && result.neteaseResult && onlineUrl) {
             const r = result.neteaseResult;
-            const [detail, lyrics] = await Promise.all([
+            const [detail, lyricData] = await Promise.all([
                 getNeteaseSongDetail(r.id).catch(() => null),
-                getNeteaseLyrics(r.id).catch(() => ""),
+                getNeteaseLyricData(r.id).catch(() => ({ lyrics: "", tlyrics: "" })),
             ]);
             const track: MusicTrack = {
                 id: `netease_${r.id}`,
@@ -378,7 +410,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                 artist: detail?.artists || r.artists,
                 duration: r.duration / 1000,
                 coverUrl: detail?.coverUrl || r.coverUrl,
-                lyrics,
+                lyrics: lyricData.lyrics,
+                tlyrics: lyricData.tlyrics,
                 liked: false,
                 addedAt: new Date().toISOString(),
             };

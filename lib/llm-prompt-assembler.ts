@@ -1,5 +1,7 @@
 // lib/llm-prompt-assembler.ts
 
+import { listeningRoomPrompt, CHARACTER_LISTENING_INVITE_PROTOCOL } from "./listen-together";
+import { MUSIC_LISTENING_INSTRUCTION } from "./music-listening";
 import { Character } from "./character-types";
 import { ChatMessage } from "./chat-storage";
 import type { StateValue } from "./chat-storage";
@@ -1141,6 +1143,17 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         }
     }
 
+    if (appId === "chat" && activeTags.includes("text") && history.at(-1)?.sessionId) {
+        finalPayload.push({ role: "system", content: CHARACTER_LISTENING_INVITE_PROTOCOL, _debugMeta: { marker: "character_listening_invite" } });
+    }
+    const together = appId === "chat" ? (typeof listeningRoomPrompt === "function" ? listeningRoomPrompt(character.id, history.at(-1)?.sessionId) : "") : "";
+    if (together || history.some(message => message.listeningContext || message.mediaType === "music_share" || message.mediaType === "music")) {
+        finalPayload.push({ role: "system", content: MUSIC_LISTENING_INSTRUCTION, _debugMeta: { marker: "music_listening" } });
+    }
+    if (appId === "chat" && together) {
+        finalPayload.push({ role: "system", content: together, _debugMeta: { marker: "listen_together" } });
+    }
+
     return finalPayload;
 }
 
@@ -1170,13 +1183,21 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
                 ? `[礼物:${giftName}:${d.recipientName}]`
                 : `[礼物:${giftName}]`;
         }
+        case "listening_invite": {
+            const invite = d?.listeningInvite;
+            const songDesc = invite?.title ? `《${invite.title}》${invite.artist ? " · " + invite.artist : ""}` : "";
+            const actionDesc = invite?.response === "accepted" ? "已接受" : invite?.response === "declined" ? "已婉拒" : "等待回应";
+            return `[一起听邀请${songDesc ? ":" + songDesc : ""} (${actionDesc})]`;
+        }
         case "payment_request":
-            return formatShoppingPaymentRequestHistory({
-                amount: d?.amount,
-                amountLabel: d?.paymentRequestAmountLabel,
-                items: d?.paymentRequestItems,
-                itemsText: d?.paymentRequestItemsText,
-            });
+            return typeof formatShoppingPaymentRequestHistory === "function"
+                ? formatShoppingPaymentRequestHistory({
+                    amount: d?.amount,
+                    amountLabel: d?.paymentRequestAmountLabel,
+                    items: d?.paymentRequestItems,
+                    itemsText: d?.paymentRequestItemsText,
+                })
+                : "[代付请求]";
         case "contact_card":
             return `[名片:${d?.contactCardName || d?.label || "联系人"}]`;
         case "app_card": {
@@ -1219,7 +1240,8 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
         }
         case "music_share": {
             const mTitle = d?.musicTitle || "未知歌曲";
-            return `[音乐分享:${mTitle}]`;
+            const context = msg.listeningContext ?? d?.listeningContext;
+            return `[音乐分享:${mTitle}]${context?.reference?.text ? `\n用户分享的歌词：“${context.reference.text}”` : ""}${msg.content.trim() ? `\n附言：${msg.content.trim()}` : ""}`;
         }
         case "xiaohongshu_note_share":
             return formatXiaohongshuShareForPrompt({

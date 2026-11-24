@@ -92,6 +92,12 @@ export type ChatSession = {
     chineseThinkingPromptLength?: ChineseThinkingPromptLength;
     /** 流式生成（线下）：开启后该会话的线下 AI 回复边生成边显示（默认关，保持原整段请求行为） */
     streamOffline?: boolean;
+    /** 聊天界面风格：classic=经典普通，imessage=苹果拟态 */
+    chatUiStyle?: "classic" | "imessage";
+    /** 美化预设：classic=经典实色，glass=拟态半透玻璃 */
+    beautyPreset?: "classic" | "glass";
+    /** 兼容旧版开关 */
+    glassBubblesEnabled?: boolean;
     /**
      * 线下摘要自动补提：模型没写 <summary> 时再发一次小请求让它补。默认开；
      * 关掉就只调一次 API，那一轮没摘要（不进短期记忆的事件流）。按次计费的接口想省一半调用时关它。
@@ -136,6 +142,7 @@ export type ChatMessage = {
     toolExecutionId?: string; // Links visible tool attachments to their persisted tool result
     editableResponseText?: string; // Processed text shown in the reply editor
     isRetracted?: boolean;
+    listeningContext?: import("./music-listening").MusicListeningContext;
     mediaType?: "image" | "audio" | "video"
         | "red_packet" | "transfer" | "location"
         | "poke" | "sticker" | "quote" | "dice"
@@ -143,7 +150,7 @@ export type ChatMessage = {
         | "meeting_invite"
         | "accept_red_packet" | "decline_red_packet" | "accept_transfer" | "decline_transfer"
         | "payment_request" | "accept_payment_request" | "decline_payment_request"
-        | "music" | "music_share" | "music_notify" | "music_not_found"
+        | "listening_invite" | "music" | "music_share" | "music_notify" | "music_not_found"
         | "xiaohongshu_note_share"
         | "moment_share"
         | "gift"
@@ -230,7 +237,14 @@ export type ChatMessage = {
         blacklistEvent?: "block" | "unblock"; // 仿真拉黑系统事件类型（私聊：用户拉黑/解除拉黑角色）
         blacklistCharacterName?: string; // 拉黑事件发生时的角色名（用于事件详情与上下文）
         blacklistUserName?: string;      // 拉黑事件发生时的用户名（用于事件详情与上下文）
+        musicCoverUrl?: string;
         musicTitle?: string;      // 音乐标题
+        listeningInvite?: { roomId: string; initiator: "user" | "character"; response?: "accepted" | "declined"; title?: string; artist?: string; coverUrl?: string };
+        listeningContext?: import("./music-listening").MusicListeningContext;
+        lyricMode?: "share" | "quote";
+        tapback?: string;
+        tapbackBy?: "user" | "assistant";
+        tapbacks?: import("./chat-tapback").GroupTapback[];
         musicArtist?: string;     // 音乐歌手
         xiaohongshuAuthor?: string;       // 小红书分享作者
         xiaohongshuTitle?: string;        // 小红书分享标题
@@ -395,6 +409,10 @@ export type ChatAppSettings = {
     /** 用剧情 APP 取代聊天输入栏原“线下模式”入口。 */
     storyAsOfflineMode?: boolean;
     storyAutomation?: Partial<import("./chat-automation").StoryAutomation>;
+    /** 全局聊天界面风格：classic=经典普通，imessage=苹果拟态 */
+    globalChatUiStyle?: "classic" | "imessage";
+    /** 全局美化预设：classic=经典实色，glass=拟态半透玻璃 */
+    globalBeautyPreset?: "classic" | "glass";
 };
 
 // ── 聊天提示音配置 ────────────────────────────────────────────────
@@ -590,6 +608,7 @@ const MEDIA_PREVIEW_MAP: Record<string, string> = {
     payment_request: "[代付请求]",
     music: "[音乐]",
     music_share: "[音乐分享]",
+    listening_invite: "[一起听邀请]",
     xiaohongshu_note_share: "[小红书分享]",
     moment_share: "[朋友圈分享]",
     app_card: "[应用卡片]",

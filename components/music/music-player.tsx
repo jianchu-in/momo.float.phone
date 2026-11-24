@@ -1,11 +1,17 @@
 // components/music/music-player.tsx — Full-screen immersive music player
-// Two visual states: cover (ambient flowing background) and glow lyrics.
+// Apple Music-inspired cover layout and synchronized lyrics.
 // A vinyl mode is kept as a switchable style for nostalgia.
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, Heart, MessageCircle, X, Send } from "lucide-react";
+import { requestMusicHome } from "@/lib/music-navigation";
+import privateStyles from "./music-private.module.css";
 import { useMusicPlayer, type PlayMode } from "@/lib/music-context";
-import { scrollElementWithinContainer } from "@/lib/dom-scroll";
+import { createMusicListeningContext, parseTimedLyrics, lyricTimestamp, type MusicListeningContext, type TimedLyric } from "@/lib/music-listening";
+import { getMusicControlBridge } from "@/lib/music-control-bridge";
+import { activeLyricIndex, lyricRange } from "@/lib/lyric-selection";
+import { LyricShareCard } from "./lyric-share-card";
 import { kvGet, kvSet } from "@/lib/kv-db";
 import { extractCoverPalette, DEFAULT_COVER_PALETTE, type CoverPalette } from "@/lib/cover-color";
 import {
@@ -14,9 +20,15 @@ import {
     getSongCommentPage, getNeteaseSongDetail,
     type NeteasePlaylist,
 } from "@/lib/music-service";
+import { loadListeningLibrary, editListeningPlaylist, songForListeningLibrary, LISTENING_LIBRARY_EVENT } from "@/lib/listening-library";
+import { getListeningRoom } from "@/lib/listen-together";
+import { ListeningPlayerPresence, useListeningPresence } from "./listening-presence";
 import MusicCommentsPage from "./music-comments";
 import MusicArtistPage from "./music-artist";
 import { loadMusicBg, playerBgStyle, MUSIC_BG_EVENT, type MusicBgConfig } from "@/lib/music-bg";
+import {
+    loadMusicThemeMode, resolveMusicTheme, MUSIC_THEME_EVENT, type ResolvedMusicTheme,
+} from "@/lib/music-theme";
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     sequence: {
@@ -33,20 +45,6 @@ const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     },
 };
 
-const WAVE_BAR_COUNT = 44;
-
-/** Deterministic waveform heights per track so the bar shape is stable. */
-function waveHeights(seedText: string): number[] {
-    let seed = 0;
-    for (let i = 0; i < seedText.length; i++) seed = (seed * 31 + seedText.charCodeAt(i)) % 100000;
-    const heights: number[] = [];
-    for (let i = 0; i < WAVE_BAR_COUNT; i++) {
-        const v = Math.abs(Math.sin(seed * 0.37 + i * 0.9) * 0.6 + Math.sin(seed * 0.11 + i * 2.3) * 0.4);
-        heights.push(6 + Math.round(v * 16));
-    }
-    return heights;
-}
-
 function formatCount(value: number): string {
     if (!Number.isFinite(value) || value <= 0) return "";
     if (value >= 100000000) return `${Math.round(value / 10000000) / 10}亿`;
@@ -57,11 +55,26 @@ function formatCount(value: number): string {
 type PlayerStyle = "modern" | "vinyl";
 type BodyView = "cover" | "lyrics";
 
+function TrackMarquee({ text }: { text: string }) {
+    const viewport = useRef<HTMLSpanElement>(null);
+    const content = useRef<HTMLSpanElement>(null);
+    const [overflow, setOverflow] = useState(0);
+    useEffect(() => {
+        const measure = () => setOverflow(Math.max(0, (content.current?.scrollWidth ?? 0) - (viewport.current?.clientWidth ?? 0)));
+        const observer = new ResizeObserver(measure);
+        if (viewport.current) observer.observe(viewport.current);
+        if (content.current) observer.observe(content.current);
+        measure();
+        return () => observer.disconnect();
+    }, [text]);
+    return <span ref={viewport} className={privateStyles.marquee} title={text}>
+        <span ref={content} key={text} className={overflow > 1 ? privateStyles.marqueeMoving : undefined}
+            style={{ "--track-overflow": `${-overflow}px`, "--track-duration": `${Math.max(6, overflow / 24 + 3)}s` } as React.CSSProperties}>{text}</span>
+    </span>;
+}
+
 export default function MusicPlayer() {
     const player = useMusicPlayer();
-    const progressRef = useRef<HTMLDivElement>(null);
-    const [isDragging, setIsDragging] = useState(false);
-    const [dragTime, setDragTime] = useState(0);
     const [view, setView] = useState<BodyView>("cover");
     const [playerStyle, setPlayerStyle] = useState<PlayerStyle>(() =>
         (typeof window !== "undefined" && kvGet("music-player-style") === "vinyl") ? "vinyl" : "modern");
@@ -70,6 +83,25 @@ export default function MusicPlayer() {
     const [artistView, setArtistView] = useState<{ id: number; name: string } | null>(null);
     const [palette, setPalette] = useState<CoverPalette>(DEFAULT_COVER_PALETTE);
     const [bgCfg, setBgCfg] = useState<MusicBgConfig>(() => loadMusicBg());
+    const [resolvedTheme, setResolvedTheme] = useState<ResolvedMusicTheme>(() => resolveMusicTheme(loadMusicThemeMode()));
+
+    useEffect(() => {
+        const updateTheme = () => {
+            setResolvedTheme(resolveMusicTheme(loadMusicThemeMode()));
+        };
+        const media = window.matchMedia("(prefers-color-scheme: dark)");
+        const handleMedia = () => {
+            if (loadMusicThemeMode() === "auto") {
+                setResolvedTheme(media.matches ? "dark" : "light");
+            }
+        };
+        window.addEventListener(MUSIC_THEME_EVENT, updateTheme);
+        media.addEventListener("change", handleMedia);
+        return () => {
+            window.removeEventListener(MUSIC_THEME_EVENT, updateTheme);
+            media.removeEventListener("change", handleMedia);
+        };
+    }, []);
     const [commentTotal, setCommentTotal] = useState(0);
 
     useEffect(() => {
@@ -78,9 +110,22 @@ export default function MusicPlayer() {
         return () => window.removeEventListener(MUSIC_BG_EVENT, handleBgChange);
     }, []);
 
-    // kv cache hydrates asynchronously from IndexedDB — the initial read above
-    // may run before it's ready, silently dropping the saved vinyl preference
-    // and custom background. Re-read a few times until hydration has settled.
+    const [lyricFontSize, setLyricFontSize] = useState<number>(() => {
+        const stored = parseInt((typeof window !== "undefined" && kvGet("music-lyric-font-size")) || "15", 10);
+        return Number.isFinite(stored) && stored >= 10 && stored <= 32 ? stored : 15;
+    });
+
+    useEffect(() => {
+        const handleSizeChange = (e: Event) => {
+            const size = (e as CustomEvent<number>).detail;
+            if (typeof size === "number" && size >= 10 && size <= 32) {
+                setLyricFontSize(size);
+            }
+        };
+        window.addEventListener("music-lyric-size-change", handleSizeChange);
+        return () => window.removeEventListener("music-lyric-size-change", handleSizeChange);
+    }, []);
+
     useEffect(() => {
         const timers = [300, 1200, 3000].map(ms => setTimeout(() => {
             const stored = kvGet("music-player-style");
@@ -99,7 +144,7 @@ export default function MusicPlayer() {
     const musicToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const musicLoadingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const currentTime = isDragging ? dragTime : player.currentTime;
+    const currentTime = player.currentTime;
     const progress = player.duration > 0 ? currentTime / player.duration : 0;
 
     const formatTime = (s: number) => {
@@ -151,6 +196,15 @@ export default function MusicPlayer() {
         clearMusicToast();
     }, [clearMusicToast, pendingPlayTrackId, player.currentTrack?.id]);
 
+    useEffect(() => {
+        const handlePlaybackFailed = (e: Event) => {
+            const customEvent = e as CustomEvent<{ message?: string }>;
+            showMusicToast(customEvent.detail?.message || "音频加载失败", 3000);
+        };
+        window.addEventListener("music-playback-failed", handlePlaybackFailed);
+        return () => window.removeEventListener("music-playback-failed", handlePlaybackFailed);
+    }, [showMusicToast]);
+
     useEffect(() => () => {
         if (musicToastTimerRef.current) clearTimeout(musicToastTimerRef.current);
         if (musicLoadingFallbackRef.current) clearTimeout(musicLoadingFallbackRef.current);
@@ -180,35 +234,6 @@ export default function MusicPlayer() {
         return () => { cancelled = true; };
     }, [neteaseId]);
 
-    const getTimeFromEvent = useCallback((clientX: number) => {
-        const bar = progressRef.current;
-        if (!bar || !player.duration) return 0;
-        const rect = bar.getBoundingClientRect();
-        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        return ratio * player.duration;
-    }, [player.duration]);
-
-    const handleProgressDown = useCallback((e: React.PointerEvent) => {
-        e.preventDefault();
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        const time = getTimeFromEvent(e.clientX);
-        setDragTime(time);
-        setIsDragging(true);
-    }, [getTimeFromEvent]);
-
-    const handleProgressMove = useCallback((e: React.PointerEvent) => {
-        if (!isDragging) return;
-        setDragTime(getTimeFromEvent(e.clientX));
-    }, [isDragging, getTimeFromEvent]);
-
-    const handleProgressUp = useCallback((e: React.PointerEvent) => {
-        if (!isDragging) return;
-        const time = getTimeFromEvent(e.clientX);
-        setDragTime(time);
-        player.seek(time);
-        setIsDragging(false);
-    }, [isDragging, getTimeFromEvent, player]);
-
     const cyclePlayMode = useCallback(() => {
         const modes: PlayMode[] = ["sequence", "shuffle", "repeat-one"];
         const idx = modes.indexOf(player.playMode);
@@ -225,56 +250,107 @@ export default function MusicPlayer() {
     }, [showMusicToast]);
 
     // ── Parse LRC lyrics ──
-    const parsedLyrics = useRef<{ time: number; text: string }[]>([]);
+    const parsedLyrics = useMemo(
+        () => parseTimedLyrics(player.currentTrack?.lyrics || "", player.currentTrack?.tlyrics || ""),
+        [player.currentTrack?.lyrics, player.currentTrack?.tlyrics]
+    );
+    const [selectedLyric, setSelectedLyric] = useState<MusicListeningContext | null>(null);
+    const [pressingLyric, setPressingLyric] = useState<number | null>(null);
     const [activeLyricIdx, setActiveLyricIdx] = useState(-1);
+    const [selection, setSelection] = useState<[number, number] | null>(null);
+    const [dragSelecting, setDragSelecting] = useState(false);
+    const selectionRef = useRef<[number, number] | null>(null);
+    const manualScrollUntil = useRef(0);
+    const scrollFrame = useRef(0);
     const lyricsContainerRef = useRef<HTMLDivElement>(null);
+    const lyricPress = useRef<{ timer?: ReturnType<typeof setTimeout>; x: number; y: number; consumed: boolean; selecting?: boolean; lastY?: number; pointerType?: string }>({ x: 0, y: 0, consumed: false });
+    const cancelLyricPress = useCallback(() => {
+        clearTimeout(lyricPress.current.timer);
+        lyricPress.current.timer = undefined;
+        setPressingLyric(null);
+    }, []);
+    useEffect(() => () => cancelLyricPress(), [cancelLyricPress]);
+    useEffect(() => { cancelLyricPress(); }, [view, player.currentTrack?.id, cancelLyricPress]);
+
+    useEffect(() => { setSelectedLyric(null); setSelection(null); selectionRef.current = null; setDragSelecting(false); lyricPress.current.selecting = false; }, [player.currentTrack?.id, view]);
 
     useEffect(() => {
-        const lrc = player.currentTrack?.lyrics || "";
-        if (!lrc) {
-            parsedLyrics.current = [];
-            return;
-        }
-        const lines: { time: number; text: string }[] = [];
-        for (const line of lrc.split("\n")) {
-            const match = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-            if (match) {
-                const mins = parseInt(match[1], 10);
-                const secs = parseFloat(match[2]);
-                lines.push({ time: mins * 60 + secs, text: match[3].trim() });
-            }
-        }
-        lines.sort((a, b) => a.time - b.time);
-        parsedLyrics.current = lines;
-    }, [player.currentTrack?.lyrics]);
-
-    useEffect(() => {
-        const lyrics = parsedLyrics.current;
-        if (lyrics.length === 0) { setActiveLyricIdx(-1); return; }
-        let idx = -1;
-        for (let i = lyrics.length - 1; i >= 0; i--) {
-            if (player.currentTime >= lyrics[i].time) {
-                idx = i;
-                break;
-            }
-        }
-        setActiveLyricIdx(idx);
-    }, [player.currentTime]);
+        if (view !== "lyrics") return;
+        let frame = 0;
+        let lastIndex = -2;
+        const tick = () => {
+            const state = getMusicControlBridge()?.getState();
+            const time = state && state.currentTrack?.id === player.currentTrack?.id ? state.currentTime : player.currentTime;
+            const next = activeLyricIndex(parsedLyrics, time);
+            if (lastIndex !== next) { lastIndex = next; setActiveLyricIdx(next); }
+            if (player.isPlaying) frame = requestAnimationFrame(tick);
+        };
+        tick();
+        return () => cancelAnimationFrame(frame);
+    }, [view, player.currentTrack?.id, player.currentTime, player.isPlaying, parsedLyrics]);
 
     // Auto-scroll lyrics
     useEffect(() => {
-        if (view !== "lyrics" || activeLyricIdx < 0 || !lyricsContainerRef.current) return;
-        const el = lyricsContainerRef.current.children[activeLyricIdx] as HTMLElement;
-        if (el) scrollElementWithinContainer(lyricsContainerRef.current, el, { behavior: "smooth", block: "center" });
-    }, [activeLyricIdx, view]);
+        cancelAnimationFrame(scrollFrame.current);
+        const container = lyricsContainerRef.current;
+        if (selectedLyric || dragSelecting || lyricPress.current.timer || Date.now() < manualScrollUntil.current || view !== "lyrics" || activeLyricIdx < 0 || !container) return;
+        const el = container.children[activeLyricIdx] as HTMLElement;
+        if (!el) return;
+        const start = container.scrollTop;
+        const top = Math.max(0, Math.min(container.scrollHeight - container.clientHeight, start + el.getBoundingClientRect().top - container.getBoundingClientRect().top - (container.clientHeight - el.clientHeight) / 2));
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { container.scrollTop = top; return; }
+        const started = performance.now();
+        const move = (now: number) => {
+            const progress = Math.min(1, (now - started) / 180);
+            container.scrollTop = start + (top - start) * (1 - Math.pow(1 - progress, 3));
+            if (progress < 1) scrollFrame.current = requestAnimationFrame(move);
+        };
+        scrollFrame.current = requestAnimationFrame(move);
+        return () => cancelAnimationFrame(scrollFrame.current);
+    }, [activeLyricIdx, view, selectedLyric, dragSelecting]);
 
-    const handleLyricClick = useCallback((idx: number, e: React.MouseEvent) => {
+    const handleLyricClick = useCallback((_idx: number, e: React.MouseEvent) => {
         e.stopPropagation();
-        const line = parsedLyrics.current[idx];
-        if (line) player.seek(line.time);
-    }, [player]);
+        if (lyricPress.current.consumed) { lyricPress.current.consumed = false; return; }
+        setSelectedLyric(null);
+        setView("cover");
+    }, []);
+
+    const selectLyric = (line: TimedLyric) => {
+        const index = parsedLyrics.indexOf(line);
+        selectionRef.current = [index, index];
+        setSelection([index, index]);
+        const snapshot = getMusicControlBridge()?.getState();
+        const context = createMusicListeningContext(snapshot && snapshot.currentTrack?.id === player.currentTrack?.id ? snapshot : player, null, new Date().toISOString(), line);
+        setSelectedLyric(context || null);
+    };
+    const finishLyricRange = () => {
+        const range = selectionRef.current;
+        if (!range) return;
+        const lines = lyricRange(parsedLyrics, ...range);
+        if (!lines.length) return;
+        const snapshot = getMusicControlBridge()?.getState();
+        const context = createMusicListeningContext(snapshot && snapshot.currentTrack?.id === player.currentTrack?.id ? snapshot : player, null, new Date().toISOString(), lines[0]);
+        if (context) setSelectedLyric({ ...context, selectedLines: lines, reference: { time: lines[0].time, text: lines.map(line => line.text).join("\n") } });
+    };
+    const sendSelectedLyric = () => {
+        if (!selectedLyric) return;
+        window.dispatchEvent(new CustomEvent("open-mini-chat", { detail: { share: {
+            type: "music", title: selectedLyric.title, artist: selectedLyric.artist,
+            lyricMode: "share", listeningContext: selectedLyric, coverUrl: player.currentTrack?.coverUrl,
+        } } }));
+        setSelectedLyric(null);
+        setSelection(null);
+        selectionRef.current = null;
+    };
 
     const [liked, setLiked] = useState(false);
+    const listening = useListeningPresence();
+    const [playlistSource, setPlaylistSource] = useState<"shared" | "cloud">("shared");
+    const [, refreshLibrary] = useState(0);
+    useEffect(()=>{const update=()=>refreshLibrary(n=>n+1);window.addEventListener(LISTENING_LIBRARY_EVENT,update);return()=>window.removeEventListener(LISTENING_LIBRARY_EVENT,update);},[]);
+    const sharedRoom = listening.room;
+    const sharedPlaylists = sharedRoom ? loadListeningLibrary().playlists.filter(p=>p.sessionId===sharedRoom.sessionId) : [];
     const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
     const [playlists, setPlaylists] = useState<NeteasePlaylist[]>([]);
     const [loadingPlaylists, setLoadingPlaylists] = useState(false);
@@ -292,35 +368,36 @@ export default function MusicPlayer() {
         return () => clearTimeout(t);
     }, [addResult]);
 
-    const handleLike = useCallback(async () => {
-        if (!player.currentTrack) return;
-        const newLiked = !liked;
-        setLiked(newLiked);
-        if (newLiked) {
-            // For Netease tracks, open playlist picker to add to a playlist
-            if (isNeteaseTrack && isNeteaseConfigured()) {
-                setShowPlaylistPicker(true);
-                setLoadingPlaylists(true);
-                getUserPlaylists().then(p => { setPlaylists(p); setLoadingPlaylists(false); });
-            }
-        } else {
-            // Unlike — remove from Netease playlist if previously added
-            if (isNeteaseTrack && neteaseId) {
-                const pid = getTrackPlaylistId(neteaseId);
-                if (pid) {
-                    const result = await removeTracksFromPlaylist(pid, [neteaseId]);
-                    removeTrackPlaylistRecord(neteaseId);
-                    setAddResult(result);
-                }
-            }
-        }
-    }, [liked, player.currentTrack, isNeteaseTrack, neteaseId]);
+    useEffect(() => {
+        if (!showPlaylistPicker || playlistSource !== "cloud") return;
+        let cancelled=false; setPlaylists([]);
+        if (!isNeteaseTrack || !isNeteaseConfigured()) {setLoadingPlaylists(false);return;}
+        setLoadingPlaylists(true);
+        getUserPlaylists().then(items=>{if(!cancelled)setPlaylists(items);}).catch(()=>{if(!cancelled)setAddResult({ok:false,message:"云音乐歌单加载失败"});}).finally(()=>{if(!cancelled)setLoadingPlaylists(false);});
+        return()=>{cancelled=true;};
+    },[showPlaylistPicker,playlistSource,isNeteaseTrack]);
+    const openPlaylistPicker = useCallback(() => {
+        setPlaylistSource(getListeningRoom() ? "shared" : "cloud");
+        setShowPlaylistPicker(true);
+    }, []);
+    const handleLike = openPlaylistPicker;
+    const saveSharedSong = (playlistId: string) => {
+        try {
+            const room=getListeningRoom();
+            if(!room || room.id!==sharedRoom?.id)throw new Error("一起听会话已变化，请重新选择");
+            const list=loadListeningLibrary().playlists.find(p=>p.id===playlistId && p.sessionId===room.sessionId);
+            if(!list || !player.currentTrack)throw new Error("歌单或歌曲已不可用");
+            editListeningPlaylist(room.sessionId,list.id,"self",{add:songForListeningLibrary(player.currentTrack,"self")});
+            setLiked(true);setShowPlaylistPicker(false);setAddResult({ok:true,message:"已收藏到"+list.name});
+        }catch(e){setAddResult({ok:false,message:e instanceof Error?e.message:"收藏失败"});}
+    };
 
     const handleAddToPlaylist = useCallback(async (playlist: NeteasePlaylist) => {
         if (!neteaseId) return;
         const result = await addTracksToPlaylist(playlist.id, [neteaseId]);
         if (result.ok) {
             recordTrackPlaylist(neteaseId, playlist.id);
+            setLiked(true);
         }
         setAddResult(result);
         setShowPlaylistPicker(false);
@@ -329,7 +406,7 @@ export default function MusicPlayer() {
     const openShareViaChat = useCallback(() => {
         if (!player.currentTrack) return;
         window.dispatchEvent(new CustomEvent("open-mini-chat", {
-            detail: { share: { type: "music", title: player.currentTrack.title, artist: player.currentTrack.artist } },
+            detail: { share: { type: "music", title: player.currentTrack.title, artist: player.currentTrack.artist, coverUrl: player.currentTrack.coverUrl } },
         }));
     }, [player.currentTrack]);
 
@@ -353,7 +430,6 @@ export default function MusicPlayer() {
     }, [player.currentTrack, isNeteaseTrack, neteaseId, showMusicToast]);
 
     const track = player.currentTrack;
-    const waveBars = useMemo(() => waveHeights(track?.id || "lumen"), [track?.id]);
 
     const getAdjacentTrack = (direction: "prev" | "next") => {
         if (player.queue.length === 0 || !player.currentTrack) return null;
@@ -391,7 +467,6 @@ export default function MusicPlayer() {
             return;
         }
         player.prev();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [handleSwitchToTrack, player]);
 
     const handleNext = useCallback(() => {
@@ -401,24 +476,23 @@ export default function MusicPlayer() {
             return;
         }
         player.next();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [handleSwitchToTrack, player]);
 
     if (!track) return null;
 
-    const hasLyrics = parsedLyrics.current.length > 0;
+    const hasLyrics = parsedLyrics.length > 0;
     const modeInfo = PLAY_MODE_ICONS[player.playMode];
-    const activeLyricText = activeLyricIdx >= 0 ? parsedLyrics.current[activeLyricIdx]?.text : "";
-    const customBg = playerBgStyle(bgCfg);
+    const customBg = playerBgStyle(bgCfg, resolvedTheme);
     const ambientVars = {
         "--mp-c1": palette[0],
         "--mp-c2": palette[1],
         "--mp-c3": palette[2],
+        "--mp-lyric-font-size": `${lyricFontSize}px`,
         ...(customBg || {}),
     } as React.CSSProperties;
 
     return (
-        <div className="music-player mp-lumen" style={ambientVars}>
+        <div className={`music-player mp-lumen mp-apple ${privateStyles.player}`} data-theme={resolvedTheme} style={ambientVars} data-view={view}>
             {musicToast && (
                 <div className="music-toast-overlay">
                     <div className="music-toast-chip">
@@ -431,6 +505,8 @@ export default function MusicPlayer() {
                     </div>
                 </div>
             )}
+
+            {!customBg && track.coverUrl && <div className="mp-album-wash" aria-hidden="true"><img key={track.coverUrl} src={track.coverUrl} alt="" /></div>}
 
             {/* Ambient flowing background tinted by cover colors (hidden on custom bg) */}
             <div className="mp-ambient" aria-hidden="true">
@@ -445,56 +521,94 @@ export default function MusicPlayer() {
                 <span className="mp-vignette" />
             </div>
 
-            {/* Header */}
             <div className="mp-top">
-                <button className="music-player-close" onClick={player.closeFullPlayer}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                        <path d="M15 19 8 12l7-7" />
-                    </svg>
-                </button>
-                <div className="mp-titles">
-                    <div className="mp-song" {...(view === "lyrics" ? { "data-glow": "" } : {})}>{track.title}</div>
-                    <button className="mp-artist" onClick={openArtistPage}>
-                        {track.artist || "未知歌手"}
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 5 7 7-7 7" /></svg>
-                    </button>
-                </div>
-                <div className="mp-top-actions">
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={togglePlayerStyle} title={playerStyle === "vinyl" ? "切换现代样式" : "切换黑胶样式"}>
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                            <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
-                        </svg>
-                    </button>
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={openMiniChat} title="聊天小窗">
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        </svg>
-                    </button>
-                    <button className="music-player-ctrl-btn mp-top-btn" onClick={openShareViaChat} title="分享到聊天">
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                        </svg>
-                    </button>
-                </div>
+                <button className="mp-dismiss" onClick={player.closeFullPlayer} aria-label="返回上一页" title="返回上一页"><ChevronLeft size={25} strokeWidth={1.8} aria-hidden="true" /></button>
             </div>
 
+            <ListeningPlayerPresence />
             {/* Body — cover / vinyl / glow lyrics */}
             <div className="mp-body">
                 {view === "lyrics" ? (
-                    <div className="mp-lyrics-wrap" onClick={() => setView("cover")}>
+                    <div className="mp-lyrics-wrap" onClick={e => handleLyricClick(-1, e)} onKeyDown={e => {
+                        if (e.key === "Escape" && selectedLyric) { e.stopPropagation(); setSelectedLyric(null); setSelection(null); selectionRef.current = null; }
+                    }}>
                         {hasLyrics ? (
-                            <div className="mp-lyrics" ref={lyricsContainerRef}>
-                                {parsedLyrics.current.map((line, i) => {
+                            <div className="mp-lyrics" ref={lyricsContainerRef} onWheel={() => { manualScrollUntil.current = Date.now() + 1800; cancelAnimationFrame(scrollFrame.current); }}>
+                                {parsedLyrics.map((line, i) => {
                                     const dist = Math.abs(i - activeLyricIdx);
                                     return (
                                         <div
                                             key={i}
                                             className="mp-lyric-line"
+                                            data-lyric-index={i}
+                                            data-selected={selection && i >= Math.min(...selection) && i <= Math.max(...selection) ? "" : undefined}
                                             {...(i === activeLyricIdx ? { "data-active": "" } : dist === 1 ? { "data-near": "" } : {})}
-                                            onClick={(e) => handleLyricClick(i, e)}
                                         >
-                                            {line.text || " "}
+                                            <button type="button" className="mp-lyric-seek"
+                                                data-holding={pressingLyric === i ? "" : undefined}
+                                                onClick={e => handleLyricClick(i, e)}
+                                                aria-label={line.text + "；轻点返回封面，长按或右键分享歌词"}
+                                                aria-keyshortcuts="Shift+F10"
+                                                aria-pressed={!!(selection && i >= Math.min(...selection) && i <= Math.max(...selection)) || selectedLyric?.reference?.time === line.time}
+                                                onPointerDown={e => {
+                                                    cancelLyricPress();
+                                                    lyricPress.current = { x: e.clientX, y: e.clientY, consumed: false, pointerType: e.pointerType };
+                                                    if (e.button !== 0 || !line.text.trim()) return;
+                                                    e.currentTarget.setPointerCapture(e.pointerId);
+                                                    cancelAnimationFrame(scrollFrame.current);
+                                                    setSelectedLyric(null);
+                                                    selectionRef.current = null;
+                                                    setSelection(null);
+                                                    setPressingLyric(i);
+                                                    lyricPress.current.timer = setTimeout(() => {
+                                                        lyricPress.current.timer = undefined;
+                                                        lyricPress.current.consumed = true;
+                                                        lyricPress.current.selecting = true;
+                                                        selectionRef.current = [i, i];
+                                                        setSelection([i, i]);
+                                                        setDragSelecting(true);
+                                                        setPressingLyric(null);
+                                                    }, 500);
+                                                }}
+                                                onPointerMove={e => {
+                                                    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                                                    const press = lyricPress.current;
+                                                    const container = lyricsContainerRef.current;
+                                                    if (!container) return;
+                                                    if (press.selecting && selectionRef.current) {
+                                                        const bounds = container.getBoundingClientRect();
+                                                        if (e.clientY < bounds.top + 36) container.scrollTop -= 12;
+                                                        if (e.clientY > bounds.bottom - 36) container.scrollTop += 12;
+                                                        const rows = Array.from(container.children) as HTMLElement[];
+                                                        let nearest = selectionRef.current[1], distance = Infinity;
+                                                        rows.forEach((row, index) => {
+                                                            const rect = row.getBoundingClientRect();
+                                                            const delta = Math.abs(e.clientY - (rect.top + rect.bottom) / 2);
+                                                            if (delta < distance) { nearest = index; distance = delta; }
+                                                        });
+                                                        selectionRef.current = [selectionRef.current[0], nearest];
+                                                        setSelection([...selectionRef.current]);
+                                                    } else if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10 || press.consumed) {
+                                                        cancelLyricPress(); press.consumed = true;
+                                                        container.scrollTop += (press.lastY ?? press.y) - e.clientY;
+                                                        manualScrollUntil.current = Date.now() + 1800;
+                                                    }
+                                                    press.lastY = e.clientY;
+                                                }}
+                                                onPointerUp={() => { if (lyricPress.current.selecting) finishLyricRange(); lyricPress.current.selecting = false; setDragSelecting(false); cancelLyricPress(); }}
+                                                onPointerCancel={() => { cancelLyricPress(); lyricPress.current.consumed = true; lyricPress.current.selecting = false; setDragSelecting(false); setSelection(null); selectionRef.current = null; }}
+                                                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (lyricPress.current.selecting || lyricPress.current.pointerType === "touch" || lyricPress.current.pointerType === "pen") return; cancelLyricPress(); lyricPress.current.consumed = true; if (line.text.trim()) selectLyric(line); }}
+                                                onKeyDown={e => {
+                                                    if ((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") {
+                                                        e.preventDefault(); e.stopPropagation(); if (line.text.trim()) selectLyric(line);
+                                                    }
+                                                }}
+                                            >
+                                                <span className="mp-lyric-orig">{line.text || " "}</span>
+                                                {line.translation ? (
+                                                    <span className="mp-lyric-trans">{line.translation}</span>
+                                                ) : null}
+                                            </button>
                                         </div>
                                     );
                                 })}
@@ -504,6 +618,14 @@ export default function MusicPlayer() {
                                 <div className="mp-lyric-line" data-active="">暂无歌词</div>
                             </div>
                         )}
+                        {!dragSelecting && selectedLyric?.reference && <div className="mp-lyric-actions" onClick={e => e.stopPropagation()} role="group" aria-label="歌词分享">
+                            <div className="mp-lyric-sheet-heading"><span>歌词片段 · {lyricTimestamp(selectedLyric.reference.time)}</span><button type="button" className="mp-icon-button" aria-label="关闭歌词分享" onClick={() => { setSelectedLyric(null); setSelection(null); selectionRef.current = null; }}><X size={18} /></button></div>
+                            <LyricShareCard title={track.title} artist={track.artist || "未知歌手"} coverUrl={track.coverUrl} text={selectedLyric.reference.text} />
+                            <div className="mp-lyric-action-buttons">
+                                <button type="button" onClick={sendSelectedLyric}><Send size={18} strokeWidth={1.7} /><span>分享歌词</span></button>
+                            </div>
+                        </div>}
+
                     </div>
                 ) : playerStyle === "vinyl" ? (
                     <div className="music-player-vinyl-area" onClick={() => setView("lyrics")}>
@@ -533,7 +655,7 @@ export default function MusicPlayer() {
                         </div>
                     </div>
                 ) : (
-                    <div className="mp-cover-area" onClick={() => setView("lyrics")}>
+                    <div className="mp-cover-area" role="button" tabIndex={0} aria-label="查看歌词" onClick={() => setView("lyrics")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setView("lyrics"); } }}>
                         <div className="mp-cover" {...(player.isPlaying ? {} : { "data-paused": "" })}>
                             {track.coverUrl ? (
                                 <img src={track.coverUrl} alt="" />
@@ -545,50 +667,47 @@ export default function MusicPlayer() {
                                 </div>
                             )}
                         </div>
-                        <div className="mp-lyric-peek">
-                            {activeLyricText ? (
-                                <>「{activeLyricText}」<span>点击查看歌词</span></>
-                            ) : hasLyrics ? (
-                                <span>点击查看歌词</span>
-                            ) : null}
-                        </div>
+
                     </div>
                 )}
             </div>
 
-            {/* Waveform progress */}
+            <div className="mp-track-row">
+                <div className="mp-titles">
+                    <div className="mp-song"><TrackMarquee text={track.title} /></div>
+                    <button className="mp-artist" onClick={openArtistPage}>
+                        <TrackMarquee text={track.artist || "未知歌手"} />
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 5 7 7-7 7" /></svg>
+                    </button>
+                </div>
+
+                <div className="mp-track-actions">
+                <button className="mp-icon-button" aria-label={"歌曲评论" + (commentTotal ? "，" + formatCount(commentTotal) + "条" : "")} onClick={() => { if (!isNeteaseTrack) { showMusicToast("本地歌曲暂无评论区"); return; } setShowComments(true); }}><MessageCircle size={20} strokeWidth={1.7} /></button>
+                    <button className="mp-icon-button" aria-label="收藏到歌单" aria-pressed={liked} onClick={handleLike}><Heart size={22} fill={liked ? "currentColor" : "none"} strokeWidth={1.7} /></button>
+                    <button className="mp-icon-button" onClick={cyclePlayMode} aria-label={modeInfo.label} title={modeInfo.label}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: modeInfo.svg }} />
+                    </button>
+                </div>
+
+            </div>
             <div className="mp-progress-area">
-                <div
-                    ref={progressRef}
-                    className="mp-wave"
-                    onPointerDown={handleProgressDown}
-                    onPointerMove={handleProgressMove}
-                    onPointerUp={handleProgressUp}
-                    onPointerCancel={handleProgressUp}
-                >
-                    {waveBars.map((h, i) => {
-                        const lit = (i + 0.5) / WAVE_BAR_COUNT <= progress;
-                        const head = Math.abs((i + 0.5) / WAVE_BAR_COUNT - progress) < 0.5 / WAVE_BAR_COUNT;
-                        return <i key={i} style={{ height: `${h}px` }} {...(head ? { "data-head": "" } : lit ? { "data-lit": "" } : {})} />;
-                    })}
-                </div>
-                <div className="mp-times">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(player.duration)}</span>
-                </div>
+                <input className="mp-range mp-seek" type="range" min="0" max={player.duration || 1} step="0.1"
+                    value={Math.min(currentTime, player.duration || 1)} disabled={!player.duration}
+                    aria-label="播放进度" aria-valuetext={formatTime(currentTime) + " / " + formatTime(player.duration)}
+                    style={{ "--mp-fill": Math.max(0, Math.min(100, progress * 100)) + "%" } as React.CSSProperties}
+                    onChange={e => player.seek(Number(e.target.value))} />
+                <div className="mp-times"><span>{formatTime(currentTime)}</span><span>−{formatTime(Math.max(0, player.duration - currentTime))}</span></div>
             </div>
 
             {/* Controls */}
             <div className="mp-controls">
-                <button className="music-player-ctrl-btn mp-ctrl-side" onClick={cyclePlayMode} title={modeInfo.label}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: modeInfo.svg }} />
-                </button>
-                <button className="music-player-ctrl-btn mp-ctrl" onClick={handlePrev}>
+
+                <button className="music-player-ctrl-btn mp-ctrl" onClick={handlePrev} aria-label="上一首">
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                        <path d="M11 5v14L1 12zm11 0v14l-10-7z" />
                     </svg>
                 </button>
-                <button className="music-player-ctrl-btn mp-ctrl-play" onClick={player.togglePlay}>
+                <button className="music-player-ctrl-btn mp-ctrl-play" onClick={player.togglePlay} aria-label={player.isPlaying ? "暂停" : "播放"}>
                     {player.isPlaying ? (
                         <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M6 4h4v16H6zm8 0h4v16h-4z" />
@@ -599,56 +718,34 @@ export default function MusicPlayer() {
                         </svg>
                     )}
                 </button>
-                <button className="music-player-ctrl-btn mp-ctrl" onClick={handleNext}>
+                <button className="music-player-ctrl-btn mp-ctrl" onClick={handleNext} aria-label="下一首">
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M6 18l8.5-6L6 6v12zm8.5 0h2V6h-2v12z" />
+                        <path d="M2 5v14l10-7zm11 0v14l10-7z" />
                     </svg>
                 </button>
+
+            </div>
+
+
+            <div className="mp-footer">
+                <button className="music-player-ctrl-btn mp-ctrl-side" aria-label="返回音乐首页" title="返回音乐首页" onClick={() => { player.closeFullPlayer(); requestMusicHome(); }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                        <path fill="currentColor" fillRule="evenodd" d="M26 10H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h20a2 2 0 0 0 2-2V12a2 2 0 0 0-2-2ZM20.8 12.6l-7.4 1.5a.8.8 0 0 0-.6.8v7.2l-1.3.3c-1.4.3-2.1 1-1.9 2 .2 1 1.3 1.4 2.6 1.1 1.5-.3 2.2-1.1 2.2-2.4v-6.4l6-1.2v5.1l-1.3.3c-1.4.3-2.1 1-1.9 2 .2 1 1.3 1.4 2.6 1.1 1.5-.3 2.2-1.1 2.2-2.4v-8.3c0-.6-.4-.8-1.2-.7Z" />
+                        <path fill="currentColor" d="M6 6h20v2H6zm2-4h16v2H8z" />
+                    </svg>
+                </button>
+                <button className="music-player-ctrl-btn mp-ctrl-side mp-share-button" aria-label="分享到聊天" title="分享到聊天" onClick={openShareViaChat}><svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M5.5 20a11 11 0 1 1 17 0M8.2 17.6a7.5 7.5 0 1 1 11.6 0M10.8 15.2a4 4 0 1 1 6.4 0" /><path d="m14 15 7.5 10H6.5z" fill="currentColor" stroke="none" /></svg></button>
                 <button
                     className="music-player-ctrl-btn mp-ctrl-side"
                     onClick={() => setShowQueue(true)}
                     disabled={player.queue.length === 0}
                     title="播放列表"
                 >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <svg aria-hidden="true" width="28" height="28" viewBox="1 0 22 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                         <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
                     </svg>
                 </button>
-            </div>
 
-            {/* Social row: like / comments / share */}
-            <div className="mp-social">
-                <button className="mp-social-btn" {...(liked ? { "data-liked": "" } : {})} onClick={handleLike}>
-                    {liked ? (
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                        </svg>
-                    ) : (
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                        </svg>
-                    )}
-                    <span>喜欢</span>
-                </button>
-                <button
-                    className="mp-social-btn"
-                    onClick={() => {
-                        if (!isNeteaseTrack) { showMusicToast("本地歌曲暂无评论区"); return; }
-                        setShowComments(true);
-                    }}
-                >
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path d="M21 12a8.5 8.5 0 0 1-12.4 7.6L4 21l1.5-4.3A8.5 8.5 0 1 1 21 12z" />
-                    </svg>
-                    <span>{commentTotal > 0 ? formatCount(commentTotal) : "评论"}</span>
-                </button>
-                <button className="mp-social-btn" onClick={openShareViaChat}>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                    </svg>
-                    <span>分享</span>
-                </button>
             </div>
 
             {/* Queue drawer */}
@@ -703,13 +800,17 @@ export default function MusicPlayer() {
                 <div className="music-playlist-picker-overlay" onClick={() => setShowPlaylistPicker(false)}>
                     <div className="music-playlist-picker" onClick={e => e.stopPropagation()}>
                         <div className="music-playlist-picker-header">
-                            <span>收藏到歌单</span>
+                            <span>收藏到歌单</span><div className={privateStyles.playlistSource} role="group" aria-label="歌单来源"><button aria-pressed={playlistSource==="shared"} onClick={()=>setPlaylistSource("shared")}>一起听</button><button aria-pressed={playlistSource==="cloud"} onClick={()=>setPlaylistSource("cloud")}>云音乐</button></div>
                             <button className="music-playlist-picker-close" onClick={() => setShowPlaylistPicker(false)}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                             </button>
                         </div>
                         <div className="music-playlist-picker-list">
-                            {loadingPlaylists ? (
+                            {playlistSource === "shared" ? <>
+                                <div className={privateStyles.pickerCaption}>{sharedRoom ? listening.name + " · 共同歌单" : "先选择一起听的对象"}</div>
+                                {sharedPlaylists.map(pl=><button key={pl.id} className="music-playlist-picker-item" onClick={()=>saveSharedSong(pl.id)}><span className={privateStyles.sharedCover}>♫</span><span className="music-playlist-picker-info"><span className="music-playlist-picker-name">{pl.name}</span><small className="music-playlist-picker-count">{pl.songs.length} 首</small></span></button>)}
+                                {sharedRoom && !sharedPlaylists.length && <div className="music-playlist-picker-loading">在一起听页面创建一张共同歌单吧</div>}
+                            </> : !isNeteaseTrack ? <div className="music-playlist-picker-loading">本地歌曲可收藏到一起听歌单</div> : !isNeteaseConfigured() ? <div className="music-playlist-picker-loading">请先在设置中连接云音乐账号</div> : loadingPlaylists ? (
                                 <div className="music-playlist-picker-loading">加载歌单...</div>
                             ) : playlists.length === 0 ? (
                                 <div className="music-playlist-picker-loading">没有找到歌单</div>

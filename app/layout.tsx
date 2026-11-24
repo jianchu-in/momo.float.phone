@@ -8,6 +8,7 @@ import { PWAManifestInjector } from "@/components/pwa-manifest-injector";
 import { PWARegistrar } from "@/components/pwa-registrar";
 import "../styles/fonts.css";
 import "./globals.css";
+import "../styles/imessage26.css";
 
 export const viewport: Viewport = {
   width: "device-width",

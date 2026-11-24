@@ -122,16 +122,16 @@ export default function MusicCommentsPage({ songId, title, artist, coverUrl, res
     const list = sort === "hot" && hotComments.length > 0 ? hotComments : comments;
 
     return (
-        <div className="mcmt-page">
+        <div className="mcmt-page mcmt-frost">
             {/* Header */}
             <div className="mcmt-nav">
-                <button className="music-player-close" onClick={onClose}>
+                <button className="music-player-close" onClick={onClose} aria-label="返回播放器">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                         <path d="M15 19 8 12l7-7" />
                     </svg>
                 </button>
-                <b>评论</b>
-                {total > 0 && <span className="mcmt-total">({total.toLocaleString()})</span>}
+                <div className="mcmt-nav-title"><b>评论</b>
+                {total > 0 && <span className="mcmt-total">{total.toLocaleString()} 条</span>}</div>
             </div>
 
             {/* Song card */}

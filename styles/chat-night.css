@@ -1,0 +1,203 @@
+/* Chat-only appearance overlay with L1 Semantic Tokens & L2 Beauty Preset Compatibility */
+
+/* ==========================================================================
+   L1: Base Theme Tokens
+   ========================================================================== */
+.chat-app[data-chat-theme="light"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color-scheme: light;
+  --chat-bg-base: #f5f6f8;
+  --chat-bg-surface: #ffffff;
+  --chat-bg-header: #f8f9fa;
+  --chat-text-primary: #191b1e;
+  --chat-text-secondary: #70757d;
+  --chat-border-color: #e5e7eb;
+
+  --chat-bubble-self-bg: #95ec69;
+  --chat-bubble-self-text: #000000;
+  --chat-bubble-other-bg: #ffffff;
+  --chat-bubble-other-text: #191b1e;
+}
+
+.chat-app[data-chat-theme="dark"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color-scheme: dark;
+  --chat-bg-base: #191b1e;
+  --chat-bg-surface: #24272b;
+  --chat-bg-header: #1e2024;
+  --chat-text-primary: #dbdde1;
+  --chat-text-secondary: #a3a8b0;
+  --chat-border-color: #303338;
+
+  --c-header-bg: #1e2024;
+  --c-page-body-bg: #191b1e;
+  --c-card: #24272b;
+  --c-card-border: #303338;
+  --c-panel: #24272b;
+  --c-panel-border: #34383e;
+  --c-text-title: #dbdde1;
+  --c-text: #b4b8bf;
+  --c-icon: #93979f;
+  --c-icon-active: #e2e4e8;
+  --c-input: #292d32;
+  --c-input-border: #353a42;
+
+  --chat-bubble-self-bg: #34454a;
+  --chat-bubble-self-text: #dbdde1;
+  --chat-bubble-other-bg: #292d32;
+  --chat-bubble-other-text: #dbdde1;
+
+  background-color: var(--chat-bg-base);
+  color: var(--chat-text-primary);
+}
+
+/* ==========================================================================
+   1. 主页 (Tab: me / UserProfilePanel) 夜间模式深色卡片适配
+   ========================================================================== */
+.chat-app[data-chat-theme="dark"] .user-profile-page-root:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #191b1e;
+  color: #dbdde1;
+}
+
+.chat-app[data-chat-theme="dark"] .user-profile-page-root:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before {
+  display: none;
+}
+
+.chat-app[data-chat-theme="dark"] .user-profile-page-root :is(.bg-white, .bg-white\/70, [class*="bg-white"]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #24272b;
+  color: #dbdde1;
+}
+
+.chat-app[data-chat-theme="dark"] .user-profile-page-root button[style*="background"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: #24272b;
+  color: #dbdde1;
+  border-color: #303338;
+}
+
+/* 移除通用 White 浅色背景残留 */
+.chat-app[data-chat-theme="dark"] :is(.kkt-search-bar, .chat-search-bar, .menu-card, .menu-section, .modal-dialog, .modal-content):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #24272b;
+  color: #dbdde1;
+  border-color: #303338;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.page-shell, .page-body, .chat-main-content, .kkt-list-page):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: var(--chat-bg-base);
+  color: var(--chat-text-primary);
+}
+
+.chat-app[data-chat-theme="dark"] :is(.page-header, .chat-tab-bar, .chat-input-bar, .chat-composer):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: var(--chat-bg-header);
+  border-color: var(--chat-border-color);
+}
+
+.chat-app[data-chat-theme="dark"] :is(input, textarea, select):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: var(--chat-text-primary);
+  background-color: #292d32;
+  border-color: #353a42;
+}
+
+/* ==========================================================================
+   2. 消息列表页面 & 联系人页面文字颜色适配 (不包含聊天室)
+   ========================================================================== */
+.chat-app[data-chat-theme="dark"] :is(.chat-message-list, .kkt-list-page, .chat-contacts-list):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #191b1e;
+  color: #dbdde1;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.chat-message-list, .kkt-list-page, .chat-contacts-list) :is(h1, h2, h3, .page-title, .kkt-list-title, .kkt-contact-name, .kkt-session-name, .chat-session-name, .kkt-own-text strong, [class*="font-semibold"]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #dbdde1;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.chat-message-list, .kkt-list-page, .chat-contacts-list) :is(.kkt-contact-status, .kkt-session-preview, .kkt-session-time, .chat-session-preview, .chat-session-time, .kkt-own-text span, p):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #a3a8b0;
+}
+
+/* ==========================================================================
+   3. 朋友圈动态页面 (MomentsFeed) 文字颜色适配 (不包含聊天室)
+   ========================================================================== */
+.chat-app[data-chat-theme="dark"] :is(.moments-feed-page, .moments-feed-list, .moments-post):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #191b1e;
+  color: #dbdde1;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.moments-feed-page, .moments-feed-list, .moments-post) :is(.moments-post-author, .moments-post-content, .moments-post-text, .moments-comment-author, .moments-comment-text, .moments-comment-content, [class*="text-gray-900"], [class*="text-slate-900"], [class*="text-black"]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #dbdde1;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.moments-feed-page, .moments-feed-list, .moments-post) :is(.moments-post-time, .moments-comment-list, .moments-comments, [class*="text-gray-500"], [class*="text-slate-500"], [class*="text-gray-600"]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #a3a8b0;
+}
+
+.chat-app[data-chat-theme="dark"] .moments-feed-page .moments-profile-hero:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #191b1e;
+}
+
+/* Classic Mode Default Message Bubbles in Night Mode */
+.chat-app[data-chat-theme="dark"] .chat-room-wrapper[data-beauty-preset="classic"] .chat-bubble-role-user:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: var(--chat-bubble-self-bg);
+  color: var(--chat-bubble-self-text);
+}
+
+.chat-app[data-chat-theme="dark"] .chat-room-wrapper[data-beauty-preset="classic"] .chat-bubble-role-assistant:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: var(--chat-bubble-other-bg);
+  color: var(--chat-bubble-other-text);
+}
+
+/* ==========================================================================
+   L2: Glass Mode (iMessage Style) Compatibility
+   ========================================================================== */
+/* Glass Mode must keep transparent/blur backgrounds; do not force solid paint. */
+.chat-app[data-chat-theme="dark"] .chat-room-wrapper[data-beauty-preset="glass"]:not([data-has-bg-image]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background-color: #121316;
+}
+
+/* Scrim & Dialog Styling for Appearance Switcher */
+.chat-appearance-scrim:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: absolute;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 24px;
+}
+
+.chat-appearance-dialog:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  width: 100%;
+  max-width: 280px;
+  overflow: hidden;
+  background: var(--chat-bg-surface, #ffffff);
+  color: var(--chat-text-primary, #30343e);
+  border-radius: 16px;
+  box-shadow: 0 12px 45px rgba(0, 0, 0, 0.3);
+}
+
+.chat-appearance-dialog h2:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  font-size: 16px;
+  margin: 0;
+  padding: 26px 20px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.chat-appearance-actions:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--chat-border-color, #eee);
+}
+
+.chat-appearance-actions button:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border: 0;
+  background: none;
+  color: var(--chat-text-primary, #30343e);
+  font: inherit;
+  font-size: 14px;
+  padding: 15px 8px;
+  cursor: pointer;
+}
+
+.chat-appearance-actions button:first-child:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #246bfd;
+  font-weight: 600;
+  border-right: 1px solid var(--chat-border-color, #eee);
+}

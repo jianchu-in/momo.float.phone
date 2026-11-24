@@ -457,6 +457,8 @@ export function ChatSettingsPanel({
     const [bilingualPromptDraft, setBilingualPromptDraft] = useState(session.bilingualTranslationPrompt || defaultBilingualPrompt);
     const [offlineBilingualTranslationPrompt, setOfflineBilingualTranslationPrompt] = useState(session.offlineBilingualTranslationPrompt || defaultOfflineBilingualPrompt);
     const [offlineBilingualPromptDraft, setOfflineBilingualPromptDraft] = useState(session.offlineBilingualTranslationPrompt || defaultOfflineBilingualPrompt);
+    const [chatUiStyle, setChatUiStyle] = useState(session.chatUiStyle ?? "inherit");
+    const [beautyPreset, setBeautyPreset] = useState(session.beautyPreset ?? "inherit");
     const [customCSS, setCustomCSS] = useState(() => {
         // Read latest CSS from storage (in case 小卷 updated it)
         const sessions = loadChatSessions();
@@ -1543,6 +1545,24 @@ export function ChatSettingsPanel({
 
                 {/* Backgrounds & UI */}
                 <div className="menu-group">
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                        <label className="menu-label-group" htmlFor={`chat-layout-${session.id}`}><span className="menu-label">消息界面风格</span><span className="menu-desc">本会话优先，切换保留自定义 CSS</span></label>
+                        <select id={`chat-layout-${session.id}`} className="ui-input" style={{width:"auto",maxWidth:"45%"}} value={chatUiStyle} onChange={event => {
+                            const value = event.target.value as "inherit" | "classic" | "imessage";
+                            setChatUiStyle(value); updateSession({chatUiStyle: value === "inherit" ? undefined : value});
+                            window.dispatchEvent(new Event("chat-app-settings-updated"));
+                        }}><option value="inherit">跟随全局</option><option value="classic">经典布局</option><option value="imessage">iMessage</option></select>
+                    </div>
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                        <label className="menu-label-group" htmlFor={`chat-beauty-${session.id}`}><span className="menu-label">气泡美化</span><span className="menu-desc">玻璃效果用于 iMessage 布局</span></label>
+                        <select id={`chat-beauty-${session.id}`} className="ui-input" style={{width:"auto",maxWidth:"45%"}} value={beautyPreset} onChange={event => {
+                            const value = event.target.value as "inherit" | "classic" | "glass";
+                            setBeautyPreset(value); updateSession({beautyPreset: value === "inherit" ? undefined : value, glassBubblesEnabled: undefined});
+                            window.dispatchEvent(new Event("chat-app-settings-updated"));
+                        }}><option value="inherit">跟随全局</option><option value="classic">普通气泡</option><option value="glass">Liquid Glass</option></select>
+                    </div>
                     <label className="menu-item">
                         <ChatInfoIcon icon={ImageIcon} color={BINDING_ACCENTS.api} />
                         <div className="menu-label-group"><span className="menu-label">聊天背景</span></div>

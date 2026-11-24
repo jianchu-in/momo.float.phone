@@ -1,3 +1,5 @@
+import { groupListeningRoomPrompt, CHARACTER_LISTENING_INVITE_PROTOCOL } from "./listen-together";
+import { MUSIC_LISTENING_INSTRUCTION } from "./music-listening";
 // lib/group-chat-engine.ts
 // Group chat engine: single API call for all characters.
 
@@ -511,6 +513,12 @@ async function buildGroupChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
+    if (!isOfflineMode) {
+        llmMessages.push({role: "system", content: CHARACTER_LISTENING_INVITE_PROTOCOL + "\n" + MUSIC_LISTENING_INSTRUCTION});
+        const listening = groupListeningRoomPrompt(session.id, participantIds);
+        if (listening) llmMessages.push({role: "system", content: listening});
+    }
+
     if (chineseThinkingEnabled) {
         llmMessages.push({ role: "system", content: buildChineseThinkingPrompt(
             userName, preset?.online_thinking_tag?.trim() || "thinking", memberNames,
