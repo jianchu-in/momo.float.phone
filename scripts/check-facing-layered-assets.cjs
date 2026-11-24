@@ -151,6 +151,13 @@ async function main() {
   await f.changeFacingScene(later.id,{sceneName:'卧室',sceneId:bedroom.id});
   const returned=await f.changeFacingScene(later.id,base.scene);
   assert.equal(f.facingVisualMatches(returned,turn,'',revision),false,'leaving and returning rejects the old in-flight scene');
+  await f.changeFacingScene(later.id,{sceneName:'卧室',sceneId:bedroom.id});
+  const oldCg=await f.toggleFacingCg(later.id,true);
+  const continuing=await f.appendFacingTurn(oldCg,{...turn,id:'manual-other-scene',replyTo:'manual-user',sceneName:'卧室',sceneId:bedroom.id});
+  assert.equal(f.isFacingCgVisible(continuing,{enabled:true,interval:5,displayRounds:2}),true,'manually viewing the latest CG persists through replies in the unchanged current location');
+  const movedAgain=await f.appendFacingTurn(continuing,{...turn,id:'manual-move',replyTo:'manual-move-user'});
+  assert.equal(movedAgain.visual,undefined,'an actual scene transition closes the manually opened CG');
+
   const chatSettings=load('lib/chat-storage.ts');const savedChat=chatSettings.loadChatAppSettings();chatSettings.saveChatAppSettings({...savedChat,timeAware:false});
   textCalls=[];await engine.generateFacingReply({character:chars[0],meeting:{...base,turns:[user]},settings:{memory:false},scene:'客厅',scenes:groups,signal:new AbortController().signal});
   assert.ok(!JSON.stringify(textCalls).includes('当前现实时间'));chatSettings.saveChatAppSettings(savedChat);

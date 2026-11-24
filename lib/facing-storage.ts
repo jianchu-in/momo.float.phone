@@ -522,7 +522,9 @@ export async function appendFacingTurns(meeting: FacingMeeting, incoming: Facing
     const last = turns.at(-1);
     const turn = incoming.at(-1);
     if (!last || !turn) { saved = current; return JSON.stringify(saved); }
-    const visual = current.visual && last.id === turn.id && turn.role === "assistant" && (current.visual.sceneName !== last.sceneName
+    const previousPosition=facingMeetingPosition(current);
+    const moved=previousPosition.sceneName!==last.sceneName||previousPosition.sceneId!==last.sceneId;
+    const visual = current.visual && last.id === turn.id && turn.role === "assistant" && (moved
       || (!current.visual.replacement && current.visual.expiresAt === undefined && current.visual.activityId !== turn.visualContinuityId)) ? undefined : current.visual;
     saved = { ...current, title: current.title || incoming[0]?.text.trim().slice(0, 30) || "见面", turns, updatedAt: turn.at,
       visual, completedRounds: facingCompletedRounds(current) + addedRounds,
