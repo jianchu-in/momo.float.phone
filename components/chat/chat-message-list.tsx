@@ -91,13 +91,16 @@ function getLastNonEmptyPreview(sessionId: string): string {
 
 type ChatMessageListProps = {
     defaultAppearance?: boolean;
+    inspection?: {sessionIds:readonly string[];characterId:string;sameWorldCharacterIds:readonly string[]};
     onCloseApp: () => void;
     activeSession: ChatSession | null;
     onSelectSession: (session: ChatSession | null) => void;
     onSelectMascot: () => void;
 };
 
-export function ChatMessageList({ defaultAppearance = false, onCloseApp, activeSession, onSelectSession, onSelectMascot }: ChatMessageListProps) {
+export function ChatMessageList({ defaultAppearance = false, inspection, onCloseApp, activeSession, onSelectSession, onSelectMascot }: ChatMessageListProps) {
+    const inspectionSessionIds = inspection ? new Set(inspection.sessionIds) : null;
+    const inspectionWorldIds = new Set(inspection?.sameWorldCharacterIds ?? []);
     const [sessions, setSessions] = useState<ChatSession[]>([]);
     const [chatAppSettingsRev, setChatAppSettingsRev] = useState(0);
     useEffect(() => {
@@ -197,11 +200,12 @@ export function ChatMessageList({ defaultAppearance = false, onCloseApp, activeS
 
     // 进列表时检测重复会话（同一角色的单聊 / 同一批成员的群聊），默认全选
     useEffect(() => {
+        if (inspection) { setMergePrompt(null); return; }
         const groups = findPromptableDuplicateSessionGroups();
         if (groups.length === 0) return;
         setMergePrompt(groups);
         setMergeSelected(new Set(groups.map(g => g.signature)));
-    }, []);
+    }, [Boolean(inspection)]);
 
     const handleMergeConfirm = () => {
         if (!mergePrompt) return;
@@ -327,7 +331,7 @@ export function ChatMessageList({ defaultAppearance = false, onCloseApp, activeS
                         />
                     </div>
                 </div>
-                {!isIMessage && (
+                {!isIMessage && !inspection && (
                     <div className="chat-list-tabs" style={{ paddingLeft: 20, paddingRight: 20 }}>
                         {(["all", "private", "group"] as const).map(tab => (
                             <button
@@ -347,12 +351,14 @@ export function ChatMessageList({ defaultAppearance = false, onCloseApp, activeS
                             const contactIds = new Set(altAccount ? altAccount.friendCharacterIds : loadChatContacts().map(c => c.characterId));
                             const allChars = loadCharacters();
                             const keyword = listFilter.trim().toLowerCase();
-                            const showMascot = mascotSettings.chatEnabled
+                            const showMascot = !inspection && mascotSettings.chatEnabled
                                 && listTab !== "group"
                                 && (!keyword || (mascotSettings.nickname || "AI助手").toLowerCase().includes(keyword));
                             const regularItems = [...sessions]
                             .filter(s => {
                                 if (!sessionMatchesChatScope(s, chatScope)) return false;
+                                // Render the same allow-list the inspection engine reads, before applying ordinary list filters.
+                                if (inspectionSessionIds) return !s.isGroup && inspectionSessionIds.has(s.id);
                                 if (!(s.isGroup || contactIds.has(s.contactId))) return false;
                                 if (s.isGroup) {
                                     if (!groupMatchesChatScope(s.participantIds, chatScope)) return false;
@@ -368,6 +374,11 @@ export function ChatMessageList({ defaultAppearance = false, onCloseApp, activeS
                                 return name.toLowerCase().includes(keyword);
                             })
                             .sort((a, b) => {
+                                if (inspection) {
+                                    const rank = (item:ChatSession) => item.contactId === inspection.characterId ? 0 : inspectionWorldIds.has(item.contactId) ? 1 : 2;
+                                    const difference = rank(a) - rank(b);
+                                    if (difference) return difference;
+                                }
                                 if (a.isPinned && !b.isPinned) return -1;
                                 if (!a.isPinned && b.isPinned) return 1;
                                 const aTime = getSessionListTime(a);
@@ -382,7 +393,7 @@ export function ChatMessageList({ defaultAppearance = false, onCloseApp, activeS
                             if (!showMascot && regularItems.length === 0) {
                                 return (
                                     <div className="px-5 py-10 text-center text-[var(--c-icon)] ts-14">
-                                        暂无聊天记录，点击右上角「+」发起聊天
+                                        {inspection ? "当前没有获准查看的聊天会话" : "暂无聊天记录，点击右上角「+」发起聊天"}
                                     </div>
                                 );
                             }

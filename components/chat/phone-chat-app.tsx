@@ -22,7 +22,10 @@ import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT } from "@/lib/chat
 import { CHAT_SESSIONS_MERGED_EVENT, type ChatSessionsMergedDetail } from "@/lib/chat-session-merge";
 import { getMascotSettingsSnapshot } from "@/lib/mascot-settings";
 import { CHAT_SCOPE_UPDATED_EVENT, loadChatScope, sessionMatchesChatScope, type ChatScopeState } from "@/lib/chat-scope-storage";
-import type { ReverseChatControl } from "@/lib/reverse-phone-types";
+import type { ReverseChatControl, ReverseScope } from "@/lib/reverse-phone-types";
+import { reverseAllowedSessions } from "@/lib/reverse-phone-actions";
+import { resolveReversePermissions } from "@/lib/reverse-phone-storage";
+import { getCharacterWorldGroup } from "@/lib/character-world-storage";
 import { WalletPanel } from "./wallet-panel";
 
 type TabKey = "messages" | "contacts" | "feeds" | "me";
@@ -60,6 +63,7 @@ function resolveSessionInCurrentScope(sessionId: string): ChatSession | null {
 
 export type PhoneChatAppProps = {
     inspectionControl?: ReverseChatControl;
+    inspectionViewer?: {characterId:string;scope:ReverseScope};
     onClose: () => void;
     sceneVisible?: boolean;
     initialSessionId?: string | null;
@@ -72,7 +76,7 @@ export type PhoneChatAppProps = {
     onMomentPublished?: (post: MomentPost) => void;
 };
 
-export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSessionId, onSessionChange, sharePayload, onShareDone, onUserMessageSent, onMomentPublished, sceneVisible = true, inspectionControl }: PhoneChatAppProps) {
+export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSessionId, onSessionChange, sharePayload, onShareDone, onUserMessageSent, onMomentPublished, sceneVisible = true, inspectionControl, inspectionViewer }: PhoneChatAppProps) {
     const [activeTab, setActiveTab] = useState<TabKey>("messages");
     const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
     const [activeMascot, setActiveMascot] = useState(false);
@@ -95,6 +99,22 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     // Cache all visited sessions so their ChatRoom stays mounted (hidden)
     const [visitedSessions, setVisitedSessions] = useState<Map<string, ChatSession>>(new Map());
     const [dbReady, setDbReady] = useState(false);
+    const [inspectionRevision, setInspectionRevision] = useState(0);
+    useEffect(() => {
+        if (!inspectionControl) return;
+        const refresh = () => setInspectionRevision(value => value + 1);
+        const events = ["reverse-phone-settings-updated", "character-worlds-updated", "characters-updated", "chat-messages-updated", "weixin-messages-updated", "chat-message-pushed", CHAT_SCOPE_UPDATED_EVENT, CHAT_SESSIONS_MERGED_EVENT];
+        events.forEach(event => window.addEventListener(event, refresh));
+        return () => events.forEach(event => window.removeEventListener(event, refresh));
+    }, [Boolean(inspectionControl)]);
+    const inspectionList = useMemo(() => {
+        if (!inspectionControl) return undefined;
+        const viewer = inspectionViewer;
+        const sessionIds = viewer && resolveReversePermissions(viewer.characterId, viewer.scope).modes.chat === "open"
+            ? reverseAllowedSessions(viewer.characterId, viewer.scope).map(item => item.id) : [];
+        return {sessionIds, characterId:viewer?.characterId ?? "", sameWorldCharacterIds:viewer ? getCharacterWorldGroup(viewer.characterId)?.memberIds ?? [viewer.characterId] : []};
+    }, [Boolean(inspectionControl), inspectionViewer?.characterId, inspectionViewer?.scope.key, inspectionRevision, dbReady]);
+    const inspectionSessionKey = inspectionList?.sessionIds.join("\n");
     useEffect(() => {
         const refresh = (event: Event) => {
             const id = (event as CustomEvent<{ sessionId: string }>).detail?.sessionId;
@@ -111,10 +131,10 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     }, []);
     useEffect(() => {
         if (!inspectionControl || !dbReady) return;
-        const target = inspectionControl.sessionId ? resolveSessionInCurrentScope(inspectionControl.sessionId) : null;
+        const target = inspectionControl.sessionId && inspectionList?.sessionIds.includes(inspectionControl.sessionId) ? resolveSessionInCurrentScope(inspectionControl.sessionId) : null;
         setActiveTab(inspectionControl.page === "messages" ? "messages" : "me");
         setActiveSession(target);
-    }, [inspectionControl?.page, inspectionControl?.sessionId, dbReady]);
+    }, [inspectionControl?.page, inspectionControl?.sessionId, inspectionSessionKey, dbReady]);
     const [hideTabBar, setHideTabBar] = useState(false);
     const [nightMode, setNightMode] = useState(loadChatNightMode);
     const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -167,6 +187,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
     }, [sharePayload]);
 
     useEffect(() => {
+        if (inspectionControl) return;
         const handler = (e: Event) => {
             const sessionId = (e as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
             if (!sessionId) return;
@@ -178,7 +199,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         };
         window.addEventListener(CHAT_OPEN_SESSION_EVENT, handler);
         return () => window.removeEventListener(CHAT_OPEN_SESSION_EVENT, handler);
-    }, []);
+    }, [Boolean(inspectionControl)]);
 
     // 切换主号/小号后，旧账号的聊天室不能继续留在前台或挂载缓存中。
     useEffect(() => {
@@ -390,7 +411,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             )}
             {/* The Main Content Area */}
             <div className="chat-main-content relative flex-1 flex flex-col overflow-hidden" {...(activeSession || activeMascot ? { "data-covered-by-room": "" } : {})}>
-                {activeTab === "messages" && <ChatMessageList defaultAppearance={Boolean(inspectionControl)} onCloseApp={onClose} activeSession={activeSession} onSelectSession={(session) => { setActiveMascot(false); setActiveSession(session); }} onSelectMascot={handleSelectMascot} />}
+                {activeTab === "messages" && <ChatMessageList defaultAppearance={Boolean(inspectionControl)} inspection={inspectionList} onCloseApp={onClose} activeSession={activeSession} onSelectSession={(session) => { setActiveMascot(false); setActiveSession(session); }} onSelectMascot={handleSelectMascot} />}
                 {activeTab === "contacts" && (
                     <ChatContactsList
                         onCloseApp={onClose}
@@ -453,7 +474,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             </nav>
 
             {/* Chat Rooms — all visited sessions stay mounted, only active one is visible */}
-            {[...visitedSessions.values()].filter(sess => !inspectionControl || sess.id === activeSession?.id).map(sess => (
+            {[...visitedSessions.values()].filter(sess => !inspectionControl || (sess.id === activeSession?.id && inspectionList?.sessionIds.includes(sess.id))).map(sess => (
                 <div key={sess.id} style={{ display: activeSession?.id === sess.id ? undefined : 'none' }} className="chat-room-layer absolute inset-0">
                     <ChatRoom
                         session={sess}

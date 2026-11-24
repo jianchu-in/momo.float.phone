@@ -32,7 +32,7 @@ function InspectionPage({ screen, scope, characterId, onBack, onScreen }: { scre
   if (screen.app === "desktop") return null;
   if (screen.locked || p.modes[screen.app] === "locked") return <section className="rp-panel rp-locked"><LockKeyhole size={46} /><h2>该APP已被用户隐私锁定</h2><p>{REVERSE_APPS[screen.app]}的内容不可查看。</p></section>;
   if (p.modes[screen.app] === "hidden") return <section className="rp-panel rp-locked"><p>当前应用不可用</p></section>;
-  if (screen.app === "chat") return <div className="rp-chat-host"><PhoneChatApp onClose={onBack} inspectionControl={screen.chat ?? { page: "messages" }} /></div>;
+  if (screen.app === "chat") return <div className="rp-chat-host"><PhoneChatApp key={`${scope.key}:${characterId}`} onClose={onBack} inspectionControl={screen.chat ?? { page: "messages" }} inspectionViewer={{characterId,scope}} /></div>;
   const section = screen.section ?? (screen.app === "shopping" ? "cart" : screen.app === "browser" ? "history" : "shelf");
   const shopping = screen.app === "shopping" ? loadShoppingState() : null;
   const entries = screen.app === "browser" ? loadUserBrowser(scope).filter(item => p.browser[item.kind]) : [];

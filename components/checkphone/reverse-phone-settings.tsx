@@ -77,6 +77,7 @@ function ReverseSettingsContents({ scope, initialCharacterId, initialApp, initia
           <label>按世界筛选名单<select aria-label="筛选显示的世界" value={worldId} onChange={event => setWorldId(event.target.value)}><option value="all">全部世界</option>{worlds.map(world => <option key={world.id} value={world.id}>{world.name}</option>)}</select></label>
           <p className="rp-muted">筛选只改变名单显示，不会自动勾选或取消角色。</p>
           <div className="rp-target-context"><button onClick={() => option("chat", "targets", null)}>使用同一世界的角色</button><span role="note" aria-live="polite">{owner === "unified" ? "当前预览角色" : "当前查岗角色"}：{viewingName} · {viewingWorld?.name ?? "未分配世界"}</span></div>
+          <p className="rp-muted">查岗时，聊天列表只显示当前查岗角色获准查看的会话。他自己和同世界角色优先显示，额外勾选的跨世界角色也会显示；不会改变你平时的聊天筛选。</p>
           <label>搜索名单<input aria-label="搜索可查看的角色" value={search} onChange={event=>setSearch(event.target.value)} placeholder="输入角色名称" /></label>
           <div className="rp-targets">{filteredTargets.slice(0,targetLimit).map(character =>
             <label key={character.id}><input type="checkbox" checked={targets.includes(character.id)} onChange={event => option("chat", "targets", event.target.checked ? [...new Set([...targets, character.id])] : targets.filter(id => id !== character.id))} />{character.name}</label>)}</div>

@@ -52,9 +52,10 @@ export async function debitReverseCharacter(characterId: string, amount: number,
 export function reverseAllowedSessions(characterId: string, scope: ReverseScope): ChatSession[] {
   const permissions = resolveReversePermissions(characterId, scope);
   const world = getCharacterWorldGroup(characterId);
-  const targets = permissions.chat.targets ?? world?.memberIds ?? [characterId];
+  const targets = new Set(permissions.chat.targets ?? world?.memberIds ?? [characterId]);
+  const characters = new Set(loadCharacters().map(character => character.id));
   return loadChatSessions().filter(session => !session.isGroup && (session.chatAccountId || null) === scope.chatAccountId
-    && targets.includes(session.contactId) && loadCharacters().some(character => character.id === session.contactId));
+    && targets.has(session.contactId) && characters.has(session.contactId));
 }
 function permittedSession(characterId: string, scope: ReverseScope, sessionId: string) {
   assertReverseScope(scope);

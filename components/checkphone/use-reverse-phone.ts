@@ -115,7 +115,8 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       const rows = host.current?.querySelectorAll<HTMLElement>('[data-reverse-session]');
       if (bounds && rows?.length) {
         const ids = [...rows].filter(row => { const rect = row.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && rect.top >= bounds.top && rect.bottom <= bounds.bottom; }).map(row => row.dataset.reverseSession);
-        return allowed.filter(item => ids.includes(item.id));
+        const byId = new Map(allowed.map(item => [item.id, item]));
+        return ids.flatMap(id => { const item = id ? byId.get(id) : undefined; return item ? [item] : []; });
       }
       if (!loadChatSessions().length) return [];
       await delay(120, signal);
