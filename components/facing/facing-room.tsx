@@ -24,12 +24,11 @@ import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, autoAsset, autoProgress, onCompleted,
-  onMeeting, onSettings, onEnd, onSpeechInput, onMap, onScene, onEditPortrait, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft }: {
+  onMeeting, onSettings, onEnd, onSpeechInput, onMap, onScene, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft }: {
   initialDraft?:string;
   initialPhoto?:File;
   onDraft?:(text:string,photo?:File)=>void;
   onScene: (name:string) => Promise<void>;
-  onEditPortrait: (id?:string,characterId?:string) => void;
   onPortraitLayout: (characterId:string, assetId:string, layout:{x:number;y:number;scale:number}) => Promise<void>;
   onStory:()=>Promise<void>;
   character: Character;
@@ -64,6 +63,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const draftRef=useRef(draft);draftRef.current=draft;
   useEffect(()=>()=>{onDraft?.(draftRef.current,photoRef.current);},[]);
   const [hidden, setHidden] = useState(false);
+  const [fullConversation, setFullConversation] = useState(false);
   const [scenePicker,setScenePicker]=useState(false);
   const [storyConfirm,setStoryConfirm]=useState(false);
   const [photo, setPhoto] = useState<File|undefined>(initialPhoto);
@@ -388,13 +388,13 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     }));
     closeMenu();
   }
-  return <section ref={roomRef} className="facing-room" style={roomStyle} aria-label={`与${character.name}见面`}>
+  return <section ref={roomRef} className="facing-room" data-full-conversation={fullConversation || undefined} style={roomStyle} aria-label={`与${character.name}见面`}>
     <FacingStage portrait={stagePortrait} scene={scene ?? (multi ? speakerVisual.backdrop : undefined)}
       reaction={multi ? speakerVisual.reaction?.generated ? speakerVisual.reaction : displayedVisual ?? reaction ?? speakerVisual.reaction : displayedVisual ?? reaction ?? storedReaction}
       fallback={multi ? speakerVisual.portrait || scene ? undefined : speakerVisual.reference : scene ? undefined : character.avatar} hideBlank={multi || !!scene}
       name={speaker.name} points={[]}
-      onEditPortrait={()=>{live.stop();onEditPortrait(selectedPortrait?.id,speaker.id);}}
-      onLayout={busy||listening?undefined:layout=>{if(selectedPortrait)void onPortraitLayout(speaker.id,selectedPortrait.id,layout).catch(e=>setError(e instanceof Error?e.message:"立绘位置保存失败"));}}
+      onActivate={() => { setFullConversation(true); setHidden(false); followLog.current = true; }}
+      onLayout={busy||listening||!selectedPortrait||displayedVisual?.composition === "full"?undefined:layout=>{if(selectedPortrait)void onPortraitLayout(speaker.id,selectedPortrait.id,layout).catch(e=>setError(e instanceof Error?e.message:"立绘位置保存失败"));}}
       retainPoints={!reaction && !!displayedVisual} onReactionEnd={stopReaction} />
     {touchEffect && <div key={touchEffect.id} className="facing-touch-feedback" style={{ left: touchEffect.x, top: touchEffect.y }} role="status">
       <span aria-hidden="true" /><small>你触碰了他的{touchEffect.label}</small>
@@ -406,10 +406,11 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         {settings.autoVisual?.enabled && autoProgress?.message && <small className="facing-glass facing-visual-status" role="status">{autoProgress.message}</small>}
       </div>
       <div className="facing-room-actions">
+        {fullConversation && <button type="button" className="facing-glass facing-icon" aria-label="返回场景对话" onClick={() => setFullConversation(false)}>场景</button>}
         {facingParticipantIds(meeting).length===1&&<button type="button" className="facing-glass facing-icon" aria-label="进入剧情" disabled={busy||listening} onClick={()=>{live.pause();setStoryConfirm(true);}}>剧情</button>}
         <button type="button" className="facing-glass facing-icon" aria-label="世界地图" disabled={busy || listening} onClick={()=>{live.stop();onMap();}}><MapIcon size={18} /></button>
         <button type="button" className="facing-glass facing-icon" aria-label={hidden ? "显示对话" : "隐藏对话"}
-          aria-pressed={hidden} onClick={() => { if(!hidden)live.pause();setHidden(value => !value); followLog.current = true; }}>
+          aria-pressed={hidden} onClick={() => { if(!hidden){live.pause();setFullConversation(false);}setHidden(value => !value); followLog.current = true; }}>
           {hidden ? <Eye size={18} /> : <EyeOff size={18} />}
         </button>
         <button type="button" className="facing-glass facing-icon" aria-label={live.enabled ? "结束实时对话" : "开启实时对话"}
@@ -422,12 +423,12 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       </div>
     </header>
     {storyConfirm&&facingParticipantIds(meeting).length===1&&<FacingStoryDialog onClose={()=>setStoryConfirm(false)} onConfirm={onStory} />}
-    {scenePicker&&<div className="facing-scene-picker" role="dialog" aria-label="更换场景"><h3>更换场景</h3><div className="facing-list">{scenes.map(group=><button type="button" key={group.name} onClick={()=>void onScene(group.name).then(()=>setScenePicker(false)).catch(e=>setError(String(e)))}>{group.name}</button>)}</div>{!scenes.length&&<p>请先在场景素材中添加背景。</p>}<button type="button" onClick={()=>setScenePicker(false)}>取消</button></div>}
+    {scenePicker&&<div className="facing-scene-picker" role="dialog" aria-label="更换场景"><h3>更换场景</h3><div className="facing-list">{scenes.map(group=><button type="button" key={group.name} onClick={()=>void onScene(group.name).then(()=>setScenePicker(false)).catch(e=>setError(String(e)))}>{group.name}</button>)}</div>{!scenes.length&&<p>请先在场景素材中添加背景。</p>}{selectedPortrait && <button type="button" disabled={busy || listening} onClick={() => { void onPortraitLayout(speaker.id, selectedPortrait.id, { x: 50, y: 100, scale: 100 }).then(() => setScenePicker(false)).catch(e => setError(String(e))); }}>重置立绘位置</button>}<button type="button" onClick={()=>setScenePicker(false)}>取消</button></div>}
     {!hidden && <div className="facing-room-bottom">
       {multi && !speakerVisual.portrait && !speakerVisual.reference && <div className="facing-speaker-badge facing-glass" aria-label={`当前发言：${speaker.name}`}>
         {speaker.avatar ? <img src={speaker.avatar} alt={speaker.name} /> : <span>{speaker.name.slice(0, 1)}</span>}<small>{speaker.name}</small>
       </div>}
-      {(meeting.turns.length > 0 || busy || error || interimText) && <div ref={log} className="facing-room-log" role="log"
+      {(fullConversation || meeting.turns.length > 0 || busy || error || interimText) && <div ref={log} className="facing-room-log" role="log"
         aria-label="对话记录" tabIndex={0} onScroll={event => {
           const area = event.currentTarget;
           followLog.current = area.scrollHeight - area.scrollTop - area.clientHeight < 48;

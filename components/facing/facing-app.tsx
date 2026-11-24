@@ -244,7 +244,6 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       onMap={() => { setMapOrigin("room"); setPage("map"); }}
       onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,loadUserIdentities().find(item=>item.id===meeting.identityId)??resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
       onScene={async name=>{const group=groups.find(item=>item.name===name);if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
-      onEditPortrait={(id,owner)=>{setAssetEditId(id??"new");setAssetOwnerId(owner??character.id);setAssetOrigin("room");setPage(loadFacingAssets(FACING_SHARED_CHARACTER_ID).some(a=>a.id===id)?"shared-assets":"assets");}}
       onPortraitLayout={async (owner,id,layout)=>{const previous=loadFacingSettings().characters[owner];setPreferences(await saveFacingSettings(owner,{portraitLayouts:{...previous?.portraitLayouts,[id]:layout}}));}}
       onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
       onSpeechInput={value => commitSetting({ speechInput: value })} />}
@@ -297,7 +296,11 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
         <div className="facing-list facing-settings-list">
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}
+            <option value="custom">自定义字数</option>
           </select></label>
+          {current.length === "custom" && <label>自定义回复字数<input aria-label="自定义回复字数" type="number" min={1} max={10000} step={1} defaultValue={current.customReplyLength ?? 150}
+            onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
+            onBlur={event => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= 1) commitSetting({ customReplyLength: Math.min(10000, Math.round(value)) }); }} /></label>}
           <label>角色语音<input type="checkbox" role="switch" checked={current.voice !== false} onChange={event => commitSetting({ voice: event.target.checked })} /></label>
           <label>未配置立绘时的通用NPC<select value={current.fallbackNpcGender??"male"} onChange={event=>commitSetting({fallbackNpcGender:event.target.value as "male"|"female"})}><option value="male">男性立绘</option><option value="female">女性立绘</option></select></label>
           <label>读写角色记忆<input type="checkbox" role="switch" checked={current.memory !== false} onChange={event => commitSetting({ memory: event.target.checked })} /></label>
@@ -327,7 +330,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       </div>}
     {page === "map-settings" && <FacingMapSettings onBack={() => setPage(mapSettingsOrigin)} />}
     {page === "assets" && character && <FacingAssets key={assetOwnerId??character.id} character={characters.find(item=>item.id===assetOwnerId)??character} assets={loadFacingAssets(assetOwnerId??character.id)} groups={groupFacingScenes(loadFacingAssets(assetOwnerId??character.id))} initialAssetId={assetEditId}
-      onBack={() => setPage(assetOrigin)} onChange={() => setAssets(loadFacingUsableAssets(character.id))}
+      onBack={() => setPage(assetOrigin)} onChange={() => { setAssets(loadFacingUsableAssets(character.id));setPreferences(loadFacingSettings()); }}
       onDelete={async assetIds => {
         await deleteFacingAssets(assetOwnerId??character.id, assetIds);
         setAssets(loadFacingUsableAssets(character.id));

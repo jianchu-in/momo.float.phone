@@ -47,12 +47,17 @@ async function componentChecks(){
  const conversation={id:'saved',updatedAt:Date.now(),context:{label:'当前剧情'},messages:[]};
  const dialog=load('components/roleplay-discussion-dialog.tsx',{
   react:React,'react/jsx-runtime':require('react/jsx-runtime'),'lucide-react':require('lucide-react'),
-  '@/components/use-overlay-viewport':{useOverlayViewport},'@/lib/focus-without-scroll':focus,
+  '@/components/use-overlay-viewport':{useOverlayViewport},'@/components/use-discussion-keyboard':load('components/use-discussion-keyboard.ts',{react:React},globals),'@/lib/focus-without-scroll':focus,
   '@/lib/character-storage':{loadCharacters:()=>[]},'@/lib/roleplay-discussion':{getDiscussionCharacterIds:()=>[]},
   '@/lib/roleplay-discussion-history':{loadDiscussionConversations:()=>[conversation],DISCUSSION_HISTORY_UPDATED:'discussion-test'},
  },globals).RoleplayDiscussionDialog;
  root=createRoot(host);await act(async()=>{root.render(React.createElement(dialog,{context:{label:'当前剧情'},onClose(){}}));await tick();});assert.equal(focusCalls.at(-1).preventScroll,true);
- assert.equal(host.scrollLeft,0);assert.equal(host.scrollTop,0);assert.equal(document.body.scrollLeft,0);assert.equal(document.body.scrollTop,0);await act(async()=>root.unmount());
+ assert.equal(host.scrollLeft,0);assert.equal(host.scrollTop,0);assert.equal(document.body.scrollLeft,0);assert.equal(document.body.scrollTop,0);
+ const editable=document.createElement('textarea');host.querySelector('section').append(editable);
+ Object.defineProperty(document,'activeElement',{configurable:true,value:editable});
+ await act(async()=>{host.scrollTop=220;document.body.scrollTop=150;window.dispatchEvent(new window.Event('scroll'));await tick();await tick();});
+ assert.equal(host.scrollTop,0,'delayed WebKit input reveal cannot scroll the phone shell away');assert.equal(document.body.scrollTop,0);
+ await act(async()=>root.unmount());
  const {useBallDrag}=load('components/floating-tools.tsx',{react:React,'react/jsx-runtime':require('react/jsx-runtime'),'lucide-react':require('lucide-react'),'@/lib/kv-db':{kvGet:()=>null}},globals,'\nexport { useBallDrag };');
  let activations=0,prevented=0;root=createRoot(host);
  function Ball(){const {handlers}=useBallDrag('test',()=>activations++);return React.createElement('div',null,React.createElement('button',handlers,'破壁聊天'));}

@@ -83,12 +83,12 @@ async function main(){
  let standalone=true;Object.defineProperty(global,'navigator',{configurable:true,value:{userAgent:'iPhone',platform:'iPhone',maxTouchPoints:5,get standalone(){return standalone;}}});
  window.matchMedia=q=>{const target=new window.EventTarget();target.matches=q.includes('standalone')&&standalone;return target;};document.cookie='';
  const {PWAManifestInjector}=load('components/pwa-manifest-injector.tsx');const pwaRoot=createRoot(host);
- await act(async()=>pwaRoot.render(React.createElement(PWAManifestInjector)));assert.equal(document.documentElement.dataset.iosPwa,'true');assert.equal(document.documentElement.dataset.pwaDisplayMode,undefined);
+ await act(async()=>pwaRoot.render(React.createElement(PWAManifestInjector)));assert.equal(document.documentElement.dataset.iosPwa,undefined);assert.equal(document.documentElement.dataset.pwaDisplayMode,undefined);
  document.cookie='pwa_display_mode=standalone';await act(async()=>window.dispatchEvent(new window.Event('pwa-display-mode-changed')));assert.equal(document.documentElement.dataset.pwaDisplayMode,'standalone');
  standalone=false;await act(async()=>window.dispatchEvent(new window.Event('pageshow')));assert.equal(document.documentElement.dataset.iosPwa,undefined);
  navigator.userAgent='Android';standalone=true;await act(async()=>window.dispatchEvent(new window.Event('pageshow')));assert.equal(document.documentElement.dataset.iosPwa,undefined);
  await act(async()=>pwaRoot.unmount());assert.equal(document.documentElement.dataset.pwaDisplayMode,undefined);
  require('postcss').parse(fs.readFileSync(path.join(project,'styles/chat-composer.css'),'utf8'));
- console.log('PASS real composer/plugin components: send + menu actions, classic DOM, exclusive panels, viewport/keyboard/scaling budgets, observer cleanup, iOS PWA marker and preference lifecycle. No native iOS visual validation.');
+ console.log('PASS real composer/plugin components: send + menu actions, classic DOM, exclusive panels, viewport/keyboard/scaling budgets, observer cleanup, restored PWA preference lifecycle. No native iOS visual validation.');
 }
 main().then(()=>process.exit(0)).catch(error=>{console.error(error.stack??error);process.exit(1);});

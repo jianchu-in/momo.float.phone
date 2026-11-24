@@ -123,7 +123,8 @@ export type FacingCharacterSettings = {
   fullPortraitId?: string;
   sceneId?: string;
   useScene?: boolean;
-  length?: keyof typeof FACING_REPLY_LENGTHS;
+  length?: keyof typeof FACING_REPLY_LENGTHS | "custom";
+  customReplyLength?: number;
   voice?: boolean;
   speechInput?: "browser" | "cloud";
   touch?: boolean;
@@ -133,6 +134,14 @@ export type FacingCharacterSettings = {
   autoVisual?: FacingAutoVisualSettings;
   hotspots?: Record<string, FacingHotspot[]>;
 };
+
+export function facingReplyLength(settings: FacingCharacterSettings): number {
+  if (settings.length === "custom") {
+    const value = settings.customReplyLength;
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.max(1, Math.min(10000, Math.round(value))) : 150;
+  }
+  return FACING_REPLY_LENGTHS[settings.length ?? "short"]?.characters ?? FACING_REPLY_LENGTHS.short.characters;
+}
 
 export type FacingAutoVisualSettings = {
   enabled?: boolean;

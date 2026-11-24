@@ -12,11 +12,6 @@ export function PWAManifestInjector() {
     ));
 
     const syncRuntimeDisplayMode = () => {
-      const runtimeMode = getRuntimePwaDisplayMode();
-      const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      const standalone = runtimeMode === "standalone" || (navigator as Navigator & {standalone?:boolean}).standalone === true;
-      if (ios && standalone) root.dataset.iosPwa = "true";
-      else delete root.dataset.iosPwa;
       // 只有用户显式选了「显示系统状态栏」才挂运行时标记。iOS 装到桌面的 PWA 永远
       // 报 standalone（不支持 fullscreen），无门控会让所有 iOS 用户静默丢失虚拟状态栏。
       if (readPwaDisplayPreference(document.cookie) === "standalone") {
@@ -51,7 +46,6 @@ export function PWAManifestInjector() {
       window.removeEventListener(PWA_DISPLAY_MODE_CHANGED_EVENT, handleSettingsChanged);
       displayModeQueries.forEach(query => query.removeEventListener("change", syncRuntimeDisplayMode));
       delete root.dataset.pwaDisplayMode;
-      delete root.dataset.iosPwa;
     };
   }, []);
 

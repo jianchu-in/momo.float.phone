@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useDiscussionKeyboard } from "@/components/use-discussion-keyboard";
 import { useOverlayViewport } from "@/components/use-overlay-viewport";
 import { focusWithoutScroll } from "@/lib/focus-without-scroll";
 import { ArrowUp, ChevronDown, ChevronRight, Cpu, List, MessagesSquare, Plus, SlidersHorizontal, X } from "lucide-react";
@@ -11,7 +12,7 @@ import {
   isBuiltInDiscussionPreset, loadDiscussionPresets, saveDiscussionPreset, type DiscussionPreset,
 } from "@/lib/roleplay-discussion";
 import {
-  createDiscussionConversation, discussionId, DISCUSSION_HISTORY_UPDATED, loadDiscussionConversations,
+  createDiscussionConversation, deleteDiscussionConversation, discussionId, discussionRetryUser, DISCUSSION_HISTORY_UPDATED, loadDiscussionConversations,
   updateDiscussionConversation, type DiscussionConversation, type DiscussionMessage,
 } from "@/lib/roleplay-discussion-history";
 
@@ -28,9 +29,12 @@ export function RoleplayDiscussionDialog({ context, onClose }: { context: Mascot
   const [conversations, setConversations] = useState(loadDiscussionConversations);
   const [active, setActive] = useState<DiscussionConversation | null>(() =>
     conversations.length ? null : newConversation(context));
+  const [deleting, setDeleting] = useState<string>();
+  const [deleteError, setDeleteError] = useState("");
   const dialog = useRef<HTMLElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
   const viewportStyle = useOverlayViewport(backdrop, true, true);
+  useDiscussionKeyboard(backdrop);
 
   useEffect(() => {
     const refresh = () => setConversations(loadDiscussionConversations());
@@ -72,6 +76,7 @@ export function RoleplayDiscussionDialog({ context, onClose }: { context: Mascot
           aria-label="新开对话" title="新开对话" onClick={() => setActive(newConversation(context))}><Plus size={19} /></button>}
         <button type="button" className="discussion-icon-button" onClick={onClose} aria-label="关闭破壁聊天"><X size={19} /></button>
       </header>
+      {deleteError && <p className="roleplay-discussion-error" role="alert">{deleteError}</p>}
       {active ? <DiscussionChat key={active.id} initial={active} /> :
         <div className="discussion-history">
           <button type="button" className="discussion-primary discussion-new" onClick={() => setActive(newConversation(context))}>
@@ -92,6 +97,8 @@ export function RoleplayDiscussionDialog({ context, onClose }: { context: Mascot
                   <time dateTime={new Date(item.updatedAt).toISOString()}>{new Date(item.updatedAt).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</time>
                   <ChevronRight size={16} />
                 </button>
+                {deleting === item.id ? <div className="discussion-history-delete"><span>删除这段对话？</span><button type="button" onClick={() => { void deleteDiscussionConversation(item.id).then(() => setDeleting(undefined)).catch(() => setDeleteError("删除失败，请重试。")); }}>确认删除</button><button type="button" onClick={() => setDeleting(undefined)}>取消</button></div>
+                  : <button type="button" className="discussion-history-delete" aria-label={`删除对话：${title}`} onClick={() => { setDeleteError("");setDeleting(item.id); }}>删除</button>}
               </li>;
             })}
           </ul> : <div className="roleplay-discussion-empty"><MessagesSquare size={27} strokeWidth={1.35} /><p>还没有对话记录</p></div>}
@@ -118,6 +125,16 @@ function DiscussionChat({ initial }: { initial: DiscussionConversation }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [menuId, setMenuId] = useState<string>();
+  const [messageAction, setMessageAction] = useState<"edit" | "delete" | "instruction">();
+  const [messageDraft, setMessageDraft] = useState("");
+  const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pressStart = useRef<{ x: number; y: number } | undefined>(undefined);
+  const selectedMessage = messages.find(item => item.id === menuId);
+  function cancelPress() { clearTimeout(press.current); press.current = undefined; }
+  function closeMessageMenu() { setMenuId(undefined);setMessageAction(undefined); }
+  function openMessageMenu(id: string) { if (!controlsBusy) { cancelPress();setMenuId(id);setMessageAction(undefined); } }
+  useEffect(() => () => cancelPress(), []);
   const controller = useRef<AbortController | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const modelName = getDiscussionModelName(context, characterId);
@@ -197,7 +214,7 @@ function DiscussionChat({ initial }: { initial: DiscussionConversation }) {
     }
   }
 
-  async function ask(text: string, retry?: DiscussionMessage) {
+  async function ask(text: string, retry?: DiscussionMessage, replaceId?: string, instruction?: string) {
     if (!text || controller.current || editing || controlsBusy) return;
     const run = new AbortController();
     controller.current = run;
@@ -213,10 +230,11 @@ function DiscussionChat({ initial }: { initial: DiscussionConversation }) {
       setConversation(current);
       const userIndex = current.messages.findIndex(message => message.id === userMessage.id);
       const turns = current.messages.slice(0, userIndex + 1).map(({ role, content }) => ({ role, content }));
+      if (instruction?.trim()) turns.push({ role: "user", content: `请按以下要求重新回答上一条消息：${instruction.trim()}` });
       const content = await discussRoleplay(context, characterId, preset.prompt, turns, run.signal);
       if (run.signal.aborted) return;
       const updated = await updateDiscussionConversation(current, {
-        message: { id: discussionId(), role: "assistant", speaker: preset.label, content, replyTo: userMessage.id },
+        reply: { userId: userMessage.id, userContent: userMessage.content, replaceId, speaker: preset.label, content },
       });
       if (!run.signal.aborted) setConversation(updated);
     } catch (cause) {
@@ -232,12 +250,27 @@ function DiscussionChat({ initial }: { initial: DiscussionConversation }) {
     }
   }
 
+  function retryMessage(message: DiscussionMessage, instruction?: string) {
+    const user = discussionRetryUser(messages, message.id);
+    if (!user) { setError("没有找到这条回复对应的用户消息。"); return; }
+    closeMessageMenu();
+    void ask(user.content, user, message.role === "assistant" ? message.id : undefined, instruction);
+  }
+  async function changeMessage(update: Parameters<typeof updateDiscussionConversation>[1]) {
+    if (controlsBusy) return;
+    setSelectionBusy(true);setError("");
+    try { setConversation(await updateDiscussionConversation(conversation, update));closeMessageMenu(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "消息保存失败，请重试。"); }
+    finally { setSelectionBusy(false); }
+  }
+
   function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void ask(draft.trim());
   }
 
   return <div className="discussion-chat" onKeyDown={event => {
+    if (event.key === "Escape" && menuId) { event.preventDefault();closeMessageMenu();return; }
     if (event.key === "Escape" && editing) {
       event.preventDefault();
       setEditing(false);
@@ -313,15 +346,28 @@ function DiscussionChat({ initial }: { initial: DiscussionConversation }) {
           <MessagesSquare size={29} strokeWidth={1.35} />
           <p>可以聊角色为什么这么做，或讨论下一段怎么演。</p>
         </div>}
-        {messages.map(message => <div key={message.id} className="discussion-bubble" data-role={message.role}>
+        {messages.map(message => <div key={message.id} className="discussion-bubble" data-role={message.role}
+          onContextMenu={event => { event.preventDefault();openMessageMenu(message.id); }}
+          onPointerDown={event => { if (event.pointerType === "mouse" && event.button !== 0) return;cancelPress();pressStart.current = { x: event.clientX, y: event.clientY };press.current = setTimeout(() => openMessageMenu(message.id), 500); }}
+          onPointerMove={event => { if (pressStart.current && Math.hypot(event.clientX - pressStart.current.x, event.clientY - pressStart.current.y) > 8) cancelPress(); }}
+          onPointerUp={cancelPress} onPointerCancel={cancelPress} onPointerLeave={cancelPress}>
           <span>{message.speaker}</span>
           <p>{message.content}</p>
+          <button type="button" className="discussion-message-more" aria-label={`操作${message.role === "user" ? "用户" : "回复"}消息`} disabled={controlsBusy} onClick={() => openMessageMenu(message.id)}>···</button>
+          {!!message.versions?.length && <div className="discussion-versions"><button type="button" aria-label="上一版回复" disabled={controlsBusy || !message.versionIndex} onClick={() => void changeMessage({ version: { id: message.id, index: (message.versionIndex ?? 0) - 1 } })}>‹</button><span>{(message.versionIndex ?? 0) + 1} / {message.versions.length}</span><button type="button" aria-label="下一版回复" disabled={controlsBusy || (message.versionIndex ?? 0) >= message.versions.length - 1} onClick={() => void changeMessage({ version: { id: message.id, index: (message.versionIndex ?? 0) + 1 } })}>›</button></div>}
         </div>)}
         {busy ? <p className="discussion-replying" role="status">正在回复…</p> :
           waitingMessage?.role === "user" && <button type="button" className="discussion-edit-toggle discussion-retry"
             disabled={controlsBusy} onClick={() => void ask(waitingMessage.content, waitingMessage)}>重试回复</button>}
       </div>
       {error && <p className="roleplay-discussion-error discussion-send-error" role="alert">{error}</p>}
+      {selectedMessage && <div className="discussion-message-menu" role="dialog" aria-label="破壁消息操作">
+        <header><strong>{messageAction === "edit" ? "编辑消息" : messageAction === "delete" ? "删除这条消息？" : messageAction === "instruction" ? "指令重试" : "消息操作"}</strong><button type="button" aria-label="关闭消息操作" onClick={closeMessageMenu}>关闭</button></header>
+        {messageAction ? <>
+          {messageAction !== "delete" && <textarea aria-label={messageAction === "edit" ? "编辑消息内容" : "重试指令"} rows={4} value={messageDraft} onChange={event => setMessageDraft(event.target.value)} />}
+          <button type="button" disabled={controlsBusy || messageAction !== "delete" && !messageDraft.trim()} onClick={() => { if (messageAction === "instruction") retryMessage(selectedMessage, messageDraft);else void changeMessage(messageAction === "edit" ? { edit: { id: selectedMessage.id, content: messageDraft.trim() } } : { removeMessageId: selectedMessage.id }); }}>{messageAction === "delete" ? "确认删除" : messageAction === "edit" ? "保存消息" : "重新生成"}</button>
+        </> : <div className="discussion-editor-actions"><button type="button" onClick={() => retryMessage(selectedMessage)}>重试</button><button type="button" onClick={() => { setMessageDraft(selectedMessage.content);setMessageAction("edit"); }}>编辑</button><button type="button" onClick={() => {setMessageDraft("");setMessageAction("instruction");}}>指令重试</button><button type="button" onClick={() => setMessageAction("delete")}>删除</button></div>}
+      </div>}
       <form className="discussion-composer" onSubmit={send}>
         <textarea rows={2} aria-label="讨论内容" placeholder="聊聊你想怎么演…" maxLength={4000} value={draft} disabled={controlsBusy}
           onChange={event => setDraft(event.target.value)} />

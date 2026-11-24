@@ -13,7 +13,7 @@ import { loadVnScenes, loadVnSprites, type VnAssetLayout } from "@/lib/vn-asset-
 import { analyzeSceneImage } from "@/lib/scene-image-analysis";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "@/lib/image-generation-service";
 import { FACING_IMAGE_LOCATIONS, FACING_MEDIA_ACCEPT, FACING_REACTIONS, facingAssetLocation, facingId, facingMediaType,
-  groupFacingScenes, replaceFacingAssetMedia, FACING_SHARED_CHARACTER_ID, saveFacingAsset, setFacingAssetMotion, setFacingScenePortraits, updateFacingAsset,
+  groupFacingScenes, loadFacingSettings, saveFacingSettings, replaceFacingAssetMedia, FACING_SHARED_CHARACTER_ID, saveFacingAsset, setFacingAssetMotion, setFacingScenePortraits, updateFacingAsset,
   type FacingAsset, type FacingSceneGroup } from "@/lib/facing-storage";
 import { FacingMedia, FacingStage, useFacingMediaUrl } from "./facing-stage";
 import { FacingLegacyAssets } from "./facing-legacy-assets";
@@ -48,7 +48,7 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
   useEffect(() => () => { if (draft?.candidate?.url.startsWith("blob:")) URL.revokeObjectURL(draft.candidate.url); }, [draft?.candidate?.url]);
   function open(asset?: FacingAsset, category: Draft["category"] = "portrait") {
     setError(""); setDescription(asset?.description ?? ""); setReferenceMode(asset?.referenceMode ?? "avatar");
-    setDraft({ asset, category: asset?.category ?? category, name: asset?.name ?? (category === "scene" ? "客厅" : "默认"), folder: asset?.folder ?? "", layout: asset?.layout ?? {}, portraitIds: asset?.portraitIds ?? [], npcGender: asset?.npcGender ?? "male" });
+    setDraft({ asset, category: asset?.category ?? category, name: asset?.name ?? (category === "scene" ? "客厅" : "默认"), folder: asset?.folder ?? "", layout: { ...asset?.layout, ...(asset ? loadFacingSettings().characters[character.id]?.portraitLayouts?.[asset.id] : {}) }, portraitIds: asset?.portraitIds ?? [], npcGender: asset?.npcGender ?? "male" });
   }
   useEffect(()=>{if(initialAssetId)open(assets.find(asset=>asset.id===initialAssetId));},[initialAssetId]);
   async function run(action: (signal: AbortSignal) => Promise<void>) {
@@ -73,6 +73,11 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
       let saved: FacingAsset;
       if (draft.asset) { saved = { ...draft.asset, ...changes }; if (draft.candidate) saved = await replaceFacingAssetMedia(saved,draft.candidate.blob,draft.candidate.mediaType); else await updateFacingAsset(saved); }
       else saved = await saveFacingAsset({ ...changes, id: facingId() }, draft.candidate!.blob, draft.candidate!.mediaType);
+      const previous = loadFacingSettings().characters[character.id];
+      if (previous?.portraitLayouts?.[saved.id]) {
+        const portraitLayouts = { ...previous.portraitLayouts };delete portraitLayouts[saved.id];
+        await saveFacingSettings(character.id, { portraitLayouts });
+      }
       onChange(); setDraft({ ...draft, asset: saved, candidate: undefined });
       if (draft.motion) { saved = await setFacingAssetMotion(saved, draft.motion); onChange(); }
       setDraft(undefined);
@@ -117,7 +122,21 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
         {!!old.length && <button className="facing-soft" onClick={() => setLegacy(true)}>旧版整图素材 · {old.length}</button>}
         {!!selected.size && <div className="facing-form"><span>已选择 {selected.size} 项</span><label>移动立绘到分类<input value={moveFolder} onChange={event => setMoveFolder(event.target.value)} placeholder="例如 日常/居家" /></label><div className="facing-choices"><button className="facing-small" disabled={busy} onClick={() => void run(async () => { for (const asset of sprites.filter(item => selected.has(item.id))) await updateFacingAsset({ ...asset, folder: moveFolder.split("/").map(part => part.trim()).filter(Boolean).join("/") }); setSelected(new Set()); onChange(); })}>移动所选立绘</button><button className="facing-small facing-delete" onClick={() => setDeleting([...selected])}><Trash2 size={14} />删除所选</button><button className="facing-small" onClick={() => setSelected(new Set())}>取消选择</button></div></div>}
       </> : <div className="facing-form">
-        {url && <div className="facing-layout-preview"><FacingStage draft={{ category: draft.category, name: draft.name, url, mediaType: type, layout: draft.layout }} scene={draft.category === "portrait" ? groups.find(group => group.backdrop)?.backdrop : undefined} portrait={draft.category === "scene" ? sprites[0] : undefined} name={character.name} /></div>}
+        {url && <div className="facing-layout-preview"><FacingStage draft={{ category: draft.category, name: draft.name, url, mediaType: type, layout: draft.layout }} scene={draft.category === "portrait" ? groups.find(group => group.backdrop)?.backdrop : undefined} portrait={draft.category === "scene" ? sprites[0] : undefined} name={character.name} onLayout={draft.category === "portrait" && !busy ? layout => setDraft(current => current ? { ...current, layout } : current) : undefined} /></div>}
+        <div className="facing-layout-controls" aria-label="素材位置与缩放">
+          {draft.category === "portrait" && <p className="facing-layout-help">在预览中单指自由拖动，双指放大缩小。</p>}
+          {(["x", "y", "scale"] as const).map(key => {
+            const value = draft.layout[key] ?? (key === "scale" || key === "y" && draft.category === "portrait" ? 100 : 50);
+            const center = key === "scale" || key === "y" && draft.category === "portrait" ? 100 : 50;
+            const min = draft.category === "portrait" ? key === "scale" ? 10 : Math.min(center - 100, value) : key === "scale" ? 100 : 0;
+            const max = draft.category === "portrait" ? Math.max(key === "scale" ? 190 : center + 100, value) : key === "scale" ? 180 : 100;
+            return <label key={key}>{{ x: "横向位置", y: "纵向位置", scale: "缩放" }[key]} · {Math.round(value)}{key === "scale" ? "%" : ""}
+              <input aria-label={{ x: "横向位置", y: "纵向位置", scale: "缩放" }[key]} type="range" min={min} max={max} step="0.1" value={value} disabled={busy}
+                onChange={event => setDraft({ ...draft, layout: { ...draft.layout, [key]: +event.target.value } })} />
+            </label>;
+          })}
+          <button type="button" className="facing-small" disabled={busy} onClick={() => setDraft({ ...draft, layout: { x: 50, y: draft.category === "portrait" ? 100 : 50, scale: 100 } })}>重置位置</button>
+        </div>
         <label>{draft.category === "scene" ? "场所名称" : "立绘名称／情绪"}<input aria-label="素材名称" value={draft.name} list={draft.category === "scene" ? "facing-place-names" : "facing-mood-names"} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
         <datalist id="facing-place-names">{[...new Set([...FACING_IMAGE_LOCATIONS, ...groups.map(group => group.name)])].map(name => <option key={name} value={name} />)}</datalist>
         <datalist id="facing-mood-names">{["默认", ...FACING_REACTIONS].map(name => <option key={name} value={name} />)}</datalist>
@@ -137,7 +156,7 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
         {character.id === FACING_SHARED_CHARACTER_ID && draft.category === "portrait" && <label>通用NPC立绘<select value={draft.npcGender} onChange={event=>setDraft({...draft,npcGender:event.target.value as "male"|"female"})}><option value="male">男性NPC</option><option value="female">女性NPC</option></select></label>}
         {draft.category === "portrait" && <label>配套GIF／动图（可选）<input type="file" accept="image/gif,image/apng,image/webp,image/png,video/mp4,video/webm,video/quicktime,.apng" onChange={event => { const motion = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setDraft({ ...draft, motion }); }} />{draft.motion?.name}</label>}
         {draft.asset?.motionMediaId && <button className="facing-small" onClick={() => void run(async () => { const updated = await setFacingAssetMotion(draft.asset!, null); setDraft({ ...draft, asset: updated }); onChange(); })}>移除配套动图</button>}
-        {(["x", "y", "scale"] as const).map(key => <label key={key}>{{ x: "横向位置", y: "纵向位置", scale: "缩放" }[key]}<input type="range" min={key === "scale" ? draft.category === "scene" ? 100 : 40 : 0} max={key === "scale" ? 180 : 100} value={draft.layout[key] ?? (key === "scale" ? 100 : key === "y" && draft.category === "portrait" ? 100 : 50)} onChange={event => setDraft({ ...draft, layout: { ...draft.layout, [key]: +event.target.value } })} /></label>)}
+
         {draft.category === "scene" && <fieldset><legend>这个场所可用的立绘（多选）</legend>{sprites.map(asset => <label key={asset.id} className="fmap-check"><input type="checkbox" checked={draft.portraitIds.includes(asset.id)} onChange={event => setDraft({ ...draft, portraitIds: event.target.checked ? [...draft.portraitIds, asset.id] : draft.portraitIds.filter(id => id !== asset.id) })} />{asset.folder && `${asset.folder} / `}{asset.npcGender?`${asset.npcGender==="female"?"女NPC":"男NPC"} · `:""}{asset.name}</label>)}</fieldset>}
         <button className="facing-primary" disabled={busy} onClick={() => void save()}>保存素材</button>
         {draft.asset && <div className="facing-choices"><button className="facing-small" onClick={() => void run(async () => { const source = await getThemeAssetDataUrl(draft.asset!.mediaId); if (!source) throw new Error("原图不存在。"); const blob = await (await fetch(source)).blob(); await downloadFile(blob, `${draft.name}.${blob.type.split("/")[1] || "png"}`); })}>下载原素材</button><button className="facing-small facing-delete" onClick={() => setDeleting([draft.asset!.id])}>删除素材</button></div>}

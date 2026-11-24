@@ -6516,3 +6516,22 @@
 @supports (-webkit-touch-callout:none) {
   .roleplay-discussion :is(textarea,input,select) { font-size:16px; }
 }
+
+.roleplay-discussion, .roleplay-discussion-backdrop { box-sizing: border-box; }
+.roleplay-discussion { position: relative; }
+.discussion-header, .discussion-role, .discussion-preset-bar, .discussion-composer { flex-shrink: 0; }
+.discussion-history-delete { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 9px; border: 0; background: transparent; color: var(--c-danger, #a53851); font-size: 12px; }
+.discussion-bubble { position: relative; -webkit-touch-callout: none; }
+.discussion-message-more { display: block; margin-left: auto; min-width: 28px; border: 0; background: transparent; font-size: 14px; }
+.discussion-versions { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.discussion-versions button { border: 0; min-width: 28px; background: transparent; }
+.discussion-message-menu { flex: none; display: grid; gap: 8px; max-height: 55%; overflow: auto; padding: 12px; border-top: 1px solid var(--discussion-edge); background: var(--c-bg-card, #fff); }
+.discussion-message-menu header { display: flex; justify-content: space-between; gap: 8px; }
+.discussion-message-menu textarea { width: 100%; min-height: 60px; box-sizing: border-box; font-size: 16px; resize: vertical; }
+@media (max-height: 500px) {
+  .roleplay-discussion-backdrop { padding: 4px 8px; }
+  .roleplay-discussion { border-radius: 14px; }
+  .discussion-header { padding-block: 5px; }
+  .discussion-role, .discussion-preset-bar { padding-block: 3px; }
+  .discussion-composer { margin-block: 3px; padding-block: 3px; }
+}

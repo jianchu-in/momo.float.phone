@@ -6,7 +6,7 @@ import { splitVisibleCallActions } from "./call-action-text";
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
-import { FACING_REPLY_LENGTHS, facingParticipantIds, groupFacingScenes, loadFacingUsableAssets, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { facingReplyLength, facingParticipantIds, groupFacingScenes, loadFacingUsableAssets, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -185,7 +185,7 @@ export async function generateFacingReply(options: {
       options.speakerId && `本次只重试 ${options.speakerId} 的回应，保持其他人的原回复。`,
       options.deferVisual && "本轮画面由独立流程处理。scene_id 和 reaction_id 一律填写 null，仍要自然描写剧情中发生的动作与地点。",
       options.visualActivity && `另加一个后台 JSON 字段 visual_continues。紧接本轮动作后，「${options.visualActivity}」确定仍在继续时填 true，已经结束、换场或不确定时填 false。不要在台词或动作中提到画面处理。`,
-      `每轮回复约 ${(FACING_REPLY_LENGTHS[settings.length ?? "short"] ?? FACING_REPLY_LENGTHS.short).characters} 个中文字，台词和动作合计。字数是目标，保持当面说话的节奏，可按语境缩短。`, JSON.stringify({
+      `每轮回复约 ${facingReplyLength(settings)} 个中文字，台词和动作合计。字数是目标，保持当面说话的节奏，可按语境缩短。`, JSON.stringify({
       角色: character.name, 用户: identity?.name ?? "用户", 当前场景: scene,
       当前场景反应: options.deferVisual ? undefined : summarizeReactions(currentScene),
       可切换场景: destinations.map(group => ({ id: group.name, 可用反应: summarizeReactions(group) })),

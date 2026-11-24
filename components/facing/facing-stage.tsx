@@ -52,9 +52,9 @@ export function FacingMedia({ url, mediaType, name, loop = true, onEnd, onRatio 
 type FacingStageDraft = Pick<FacingAsset, "category" | "name" | "mediaType" | "layout" | "composition"> & { url: string };
 
 export function FacingStage({ portrait, scene, reaction, draft, fallback, name, points = [], editing, activePoint, onPoint,
-  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, onLayout, onEditPortrait, children }: {
+  onPointMove, onReactionEnd, retainPoints, hideBlank, fullFallback, onLayout, onActivate, children }: {
   onLayout?: (layout: {x:number;y:number;scale:number}) => void;
-  onEditPortrait?: () => void;
+  onActivate?: () => void;
   hideBlank?: boolean;
   fullFallback?: boolean;
   portrait?: FacingAsset;
@@ -76,9 +76,13 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const [ratio, setRatio] = useState<{ key: string; value: number }>();
   const area = useRef<HTMLDivElement>(null);
   const figure = useRef<HTMLDivElement>(null);
-  const drag = useRef<{x:number;y:number;left:number;top:number;moved:boolean} | undefined>(undefined);
-  const [dragLayout,setDragLayout] = useState<{x:number;y:number}>();
-  useEffect(()=>setDragLayout(undefined),[portrait?.id,portrait?.layout?.x,portrait?.layout?.y]);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ x: number; y: number; distance: number; layout: { x: number; y: number; scale: number }; moved: boolean } | undefined>(undefined);
+  const pending = useRef<{ x: number; y: number; scale: number } | undefined>(undefined);
+  const suppressClick = useRef(false);
+  const [dragLayout, setDragLayout] = useState<{ x: number; y: number; scale: number }>();
+  useEffect(() => { pointers.current.clear(); gesture.current = undefined; pending.current = undefined; setDragLayout(undefined); },
+    [portrait?.id, portrait?.layout?.x, portrait?.layout?.y, portrait?.layout?.scale, draft?.url, draft?.layout]);
   const portraitUrl = useFacingMediaUrl(portrait, true);
   const reactionUrl = useFacingMediaUrl(reaction, true);
   const sceneUrl = useFacingMediaUrl(scene, true);
@@ -90,7 +94,7 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
   const mediaUrl = reactionUrl || portraitDraft?.url || portraitUrl;
   const mediaKey = (reactionUrl ? reaction?.mediaId : portraitDraft?.url ?? portrait?.mediaId) ?? fallback ?? "";
   const ratioValue = ratio?.key === mediaKey ? ratio.value : 0.72;
-  const layout = { ...(foreground?.layout ?? portrait?.layout), ...dragLayout };
+  const layout = { ...(foreground?.composition === "full" ? foreground.layout : portraitDraft?.layout ?? portrait?.layout ?? foreground?.layout), ...dragLayout };
   const full = (foreground?.composition === "full" && Boolean(mediaUrl)) || Boolean(fullFallback && fallback);
   const fitWidth = full ? Math.max(size.width, size.height * ratioValue) : Math.min(size.width, size.height * ratioValue);
   const width = fitWidth * (layout?.scale ?? 100) / 100;
@@ -109,16 +113,66 @@ export function FacingStage({ portrait, scene, reaction, draft, fallback, name, 
     return () => observer.disconnect();
   }, []);
 
+  function beginGesture(moved = false) {
+    const values = [...pointers.current.values()];
+    if (!values.length) return;
+    const a = values[0], b = values[1] ?? a;
+    gesture.current = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
+      distance: values.length > 1 ? Math.hypot(b.x - a.x, b.y - a.y) : 0,
+      layout: pending.current ?? { x: layout.x ?? 50, y: layout.y ?? (full ? 50 : 100), scale: layout.scale ?? 100 }, moved };
+  }
+  function moveGesture() {
+    const g = gesture.current, bounds = area.current?.getBoundingClientRect();
+    if (!g || !bounds?.width || !bounds.height) return;
+    const values = [...pointers.current.values()], a = values[0], b = values[1] ?? a;
+    if (!a) return;
+    const x = (a.x + b.x) / 2, y = (a.y + b.y) / 2;
+    const distance = values.length > 1 ? Math.hypot(b.x - a.x, b.y - a.y) : 0;
+    if (Math.hypot(x - g.x, y - g.y) > 5 || Math.abs(distance - g.distance) > 3) g.moved = true;
+    if (!g.moved) return;
+    suppressClick.current = true;
+    const scale = Math.max(10, Math.min(1000, g.layout.scale * (g.distance > 0 ? distance / g.distance : 1)));
+    const factor = scale / g.layout.scale;
+    // Keep the pinched point under the fingers, including inside scaled phone shells.
+    const oldWidth = fitWidth * g.layout.scale / 100, oldHeight = oldWidth / ratioValue;
+    const oldX = full ? (size.width - oldWidth) * g.layout.x / 100 : size.width * g.layout.x / 100;
+    const oldY = full ? (size.height - oldHeight) * g.layout.y / 100 : size.height * g.layout.y / 100;
+    const cx = (g.x - bounds.left) * size.width / bounds.width, cy = (g.y - bounds.top) * size.height / bounds.height;
+    const nextX = cx + (oldX - cx) * factor + (x - g.x) * size.width / bounds.width;
+    const nextY = cy + (oldY - cy) * factor + (y - g.y) * size.height / bounds.height;
+    pending.current = { x: full ? (size.width - oldWidth * factor ? nextX / (size.width - oldWidth * factor) * 100 : g.layout.x) : nextX / size.width * 100,
+      y: full ? (size.height - oldHeight * factor ? nextY / (size.height - oldHeight * factor) * 100 : g.layout.y) : nextY / size.height * 100, scale };
+    setDragLayout(pending.current);
+  }
+
   return <div className="facing-stage" ref={area}>
     {background && backgroundUrl && <div className="facing-scene" key={sceneDraft ? "draft-scene" : scene?.mediaId} style={{ "--facing-scene-x": `${background.layout?.x ?? 50}%`,
       "--facing-scene-y": `${background.layout?.y ?? 50}%`, "--facing-scene-scale": (background.layout?.scale ?? 100) / 100 } as React.CSSProperties}>
       <FacingMedia url={backgroundUrl} mediaType={sceneDraft ? sceneDraft.mediaType : scene?.motionMediaType ?? background.mediaType} name={background.name} />
     </div>}
     <div ref={figure} className="facing-figure" data-movable={!!onLayout || undefined}
-      onPointerDown={onLayout ? event=>{if((event.target as HTMLElement).closest("button"))return;event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);drag.current={x:event.clientX,y:event.clientY,left:layout.x??50,top:layout.y??100,moved:false};}:undefined}
-      onPointerMove={onLayout ? event=>{const d=drag.current;const bounds=area.current?.getBoundingClientRect();if(!d||!bounds?.width||!bounds.height)return;const dx=event.clientX-d.x,dy=event.clientY-d.y;if(Math.hypot(dx,dy)>5)d.moved=true;if(d.moved)setDragLayout({x:Math.max(0,Math.min(100,d.left+dx/bounds.width*100)),y:Math.max(0,Math.min(100,d.top+dy/bounds.height*100))});}:undefined}
-      onPointerUp={onLayout ? ()=>{const d=drag.current;drag.current=undefined;if(d?.moved&&dragLayout)onLayout({...dragLayout,scale:layout.scale??100});else if(d)onEditPortrait?.();}:undefined}
-      onPointerCancel={()=>{drag.current=undefined;setDragLayout(undefined);}}
+      role={onActivate ? "button" : undefined} tabIndex={onActivate ? 0 : undefined} aria-label={onActivate ? "全屏对话" : undefined}
+      onKeyDown={onActivate ? event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onActivate(); } } : undefined}
+      onClick={onActivate ? () => { if (!suppressClick.current) onActivate(); suppressClick.current = false; } : undefined}
+      onPointerDown={onLayout ? event => {
+        if ((event.target as HTMLElement).closest("button") || (event.pointerType === "mouse" && event.button !== 0)) return;
+        event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+        if (!pointers.current.size) { suppressClick.current = false; pending.current = undefined; }
+        pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (pointers.current.size > 1) suppressClick.current = true;
+        beginGesture(pointers.current.size > 1 || !!gesture.current?.moved);
+      } : undefined}
+      onPointerMove={onLayout ? event => {
+        if (!pointers.current.has(event.pointerId)) return;
+        pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); moveGesture();
+      } : undefined}
+      onPointerUp={onLayout ? event => {
+        if (!pointers.current.delete(event.pointerId)) return;
+        if (pointers.current.size) { beginGesture(true); return; }
+        if (gesture.current?.moved && pending.current) onLayout(pending.current);
+        gesture.current = undefined;
+      } : undefined}
+      onPointerCancel={() => { pointers.current.clear(); gesture.current = undefined; pending.current = undefined; setDragLayout(undefined); suppressClick.current = true; }}
       style={full ? {
       width, height, transform: "none",
       left: (size.width - width) * (layout?.x ?? 50) / 100,
