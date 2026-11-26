@@ -1,8 +1,92 @@
 "use client";
-import {useState} from "react";
+
+import { useEffect, useId, useRef, useState } from "react";
 import type { FacingAsset } from "@/lib/facing-storage";
 import { getThemeAssetDataUrl } from "@/lib/theme-storage";
 import { downloadFile } from "@/lib/download-utils";
 import { FacingMedia, useFacingMediaUrl } from "./facing-stage";
-function Product({asset}:{asset:FacingAsset}){const url=useFacingMediaUrl(asset);const [error,setError]=useState(""),[preview,setPreview]=useState(false);return <article className="facing-life-card">{url&&<button type="button" className="facing-product-preview" aria-label={`查看成品${asset.name}`} onClick={()=>setPreview(true)}><FacingMedia url={url} mediaType={asset.mediaType} name={asset.name}/></button>}<h3>{asset.name}</h3>{asset.description&&<p>{asset.description}</p>}<button onClick={()=>void getThemeAssetDataUrl(asset.mediaId).then(async src=>{if(!src)throw new Error("原图暂时无法读取，请重试。");await downloadFile(await(await fetch(src)).blob(),asset.name+"."+(asset.mediaType.split("/")[1]??"png"));}).catch(e=>setError(e instanceof Error?e.message:"下载失败，请重试"))}>下载原图</button>{error&&<p role="alert">{error}</p>}{preview&&url&&<div className="facing-overlay" onClick={()=>setPreview(false)}><section className="facing-sheet" role="dialog" aria-label="生图成品预览" onClick={e=>e.stopPropagation()}><header><h2>{asset.location} · {asset.name}</h2><button type="button" onClick={()=>setPreview(false)}>关闭</button></header><FacingMedia url={url} mediaType={asset.mediaType} name={asset.name}/>{asset.description&&<p>{asset.description}</p>}</section></div>}</article>;}
-export function FacingProducts({assets,onBack}:{assets:FacingAsset[];onBack:()=>void}){const products=assets.filter(a=>a.generated);const places=[...new Set(products.map(a=>a.location??"未分类场景"))];return <section className="facing-life-panel"><header className="facing-header"><button aria-label="返回" onClick={onBack}>‹</button><h1>生图成品</h1></header><main className="facing-scroll">{places.map(place=><section key={place}><h2>{place}</h2><div className="facing-horizontal-assets">{products.filter(a=>(a.location??"未分类场景")===place).map(a=><Product asset={a} key={a.id}/>)}</div></section>)}{!products.length&&<p className="facing-empty">本轮补图等已生成生活画面会按场景保存在这里。</p>}</main></section>;}
+
+function Product({ asset, onPreview }: { asset: FacingAsset; onPreview: (opener: HTMLButtonElement) => void }) {
+  const url = useFacingMediaUrl(asset);
+  return <article className="facing-life-card facing-product-card">
+    <button type="button" className="facing-product-preview" aria-label={`查看成品${asset.name}`} onClick={event => onPreview(event.currentTarget)}>
+      <div className="facing-product-thumbnail">
+        {url ? asset.mediaType.startsWith("video/")
+          ? <video src={url} muted playsInline preload="metadata" aria-label={asset.name} />
+          : <img src={url} alt={asset.name} loading="lazy" decoding="async" />
+          : <span>图片暂未载入</span>}
+      </div>
+      <h3>{asset.name}</h3>
+      {asset.location && <small>{asset.location}</small>}
+      {asset.description && <p className="facing-product-description">{asset.description}</p>}
+    </button>
+  </article>;
+}
+
+function ProductPreview({ asset, opener, onClose }: { asset: FacingAsset; opener: HTMLButtonElement; onClose: () => void }) {
+  const url = useFacingMediaUrl(asset);
+  const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const downloadButton = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    closeButton.current?.focus({ preventScroll: true });
+    return () => { if (opener.isConnected) opener.focus({ preventScroll: true }); };
+  }, [opener]);
+
+  async function download() {
+    if (downloading) return;
+    setDownloading(true);
+    setError("");
+    try {
+      const src = await getThemeAssetDataUrl(asset.mediaId);
+      if (!src) throw new Error("原图暂时无法读取，请重试。");
+      const response = await fetch(src);
+      if (!response.ok) throw new Error("原图暂时无法读取，请重试。");
+      const blob = await response.blob();
+      const type = blob.type || asset.mediaType;
+      const extension = ({ "image/jpeg": "jpg", "image/svg+xml": "svg", "video/quicktime": "mov" } as Record<string, string>)[type]
+        ?? type.split("/")[1]?.split(";")[0] ?? "png";
+      await downloadFile(blob, `${asset.name}.${extension}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "下载失败，请重试。");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return <div className="facing-overlay facing-overlay-center facing-product-overlay" onClick={onClose}>
+    <section className="facing-sheet facing-product-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}
+      onClick={event => event.stopPropagation()} onKeyDown={event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
+        if (event.key === "Tab") {
+          const last = downloading ? closeButton.current : downloadButton.current;
+          if (event.shiftKey && event.target === closeButton.current) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && event.target === last) { event.preventDefault(); closeButton.current?.focus(); }
+        }
+      }}>
+      <header><h2 id={titleId}>{asset.name}</h2><button ref={closeButton} type="button" onClick={onClose}>关闭</button></header>
+      {url ? <FacingMedia url={url} mediaType={asset.mediaType} name={asset.name} /> : <p>图片暂未载入，仍可尝试下载原图。</p>}
+      {asset.location && <small>{asset.location}</small>}
+      {asset.description && <p className="facing-product-full-description">{asset.description}</p>}
+      <button ref={downloadButton} type="button" className="facing-primary" disabled={downloading} onClick={() => void download()}>
+        {downloading ? "正在下载…" : "下载原图"}
+      </button>
+      {error && <p className="facing-error" role="alert">{error}</p>}
+    </section>
+  </div>;
+}
+
+export function FacingProducts({ assets, onBack }: { assets: FacingAsset[]; onBack: () => void }) {
+  const [preview, setPreview] = useState<{ asset: FacingAsset; opener: HTMLButtonElement }>();
+  const products = assets.filter(asset => asset.generated);
+  return <section className="facing-life-panel">
+    <header className="facing-header"><button type="button" aria-label="返回" onClick={onBack}>‹</button><h1>生图成品</h1></header>
+    <main className="facing-scroll" inert={!!preview}>
+      <div className="facing-products-grid">{products.map(asset => <Product asset={asset} key={asset.id} onPreview={opener => setPreview({ asset, opener })} />)}</div>
+      {!products.length && <p className="facing-empty">已生成的生活画面会保存在这里，点击成品可查看完整描述并下载原图。</p>}
+    </main>
+    {preview && <ProductPreview key={preview.asset.id} {...preview} onClose={() => setPreview(undefined)} />}
+  </section>;
+}

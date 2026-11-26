@@ -1,6 +1,6 @@
 "use client";
 
-import {FACING_REPLY_FORMATS,facingVisibleSegments} from "@/lib/facing-reply-format";
+import {FACING_DIALOGUE_NOTATIONS,FACING_REPLY_FORMATS,facingSegmentText,facingVisibleSegments} from "@/lib/facing-reply-format";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, Settings2, UserRound, X } from "lucide-react";
 import { FacingMapApp } from "./facing-map-app";
@@ -62,7 +62,7 @@ function MeetingTranscript({ record, character, onBack, onContinue, onFork }: {
           <small>{turn.role === "assistant" ? turn.speakerName ?? character.name : "你"} · {turn.sceneName}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
           {turn.imageRef && <ShownImage mediaRef={turn.imageRef} className="facing-message-photo" />}
           {!!turn.touches?.length && <p className="facing-action">{turn.touches.map(part => `（触碰了${part}）`).join(" ")}</p>}
-          {facingVisibleSegments(turn).map((part,index)=><p key={index} className={part.type==="action"?"facing-action":undefined}>{turn.kind==="touch"&&part.type==="dialogue"?`触碰了${part.text}`:part.text}</p>)}
+          {facingVisibleSegments(turn).map((part,index)=><p key={index} className={part.type==="action"?"facing-action":undefined}>{turn.kind==="touch"&&part.type==="dialogue"?`触碰了${part.text}`:facingSegmentText(part,turn.role==="assistant"?turn.dialogueNotation:undefined)}</p>)}
           {turn.reactionName && <em>{turn.reactionName}</em>}
         </li>)}
       </ol>
@@ -266,7 +266,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
           <button type="button" onClick={() => { setMapSettingsOrigin("settings"); setPage("map-settings"); }}><MapIcon size={18} /><span>地图设置</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
           <button type="button" onClick={()=>{setAssetOrigin("settings");setAssetEditId(undefined);setPage("shared-assets");}}><Images size={18}/><span>通用场景素材</span><ChevronRight size={17}/></button>
-          <button type="button" onClick={()=>setPage("products")}><Images size={18}/><span>生图成品 · 按场景分类</span><ChevronRight size={17}/></button>
+          <button type="button" onClick={()=>setPage("products")}><Images size={18}/><span>生图成品</span><ChevronRight size={17}/></button>
         </div>
         <section className="facing-form" key={character.id} aria-label="生成 CG 图（新画面）">
           <h2 className="facing-record-title">生成 CG 图（新画面）</h2>
@@ -310,6 +310,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
         <h2 className="facing-record-title">生成要求</h2>
         <div className="facing-list facing-settings-list">
           <label>生成格式<select aria-label="生成格式" value={current.replyFormat??"alternating"} onChange={e=>commitSetting({replyFormat:e.target.value as FacingCharacterSettings["replyFormat"]})}>{Object.entries(FACING_REPLY_FORMATS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+          <label>对话符号<select aria-label="对话符号" value={current.dialogueNotation??"plain"} onChange={e=>commitSetting({dialogueNotation:e.target.value as FacingCharacterSettings["dialogueNotation"]})}>{Object.entries(FACING_DIALOGUE_NOTATIONS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
           <label>额外提示词<textarea key={`reply-prompt:${character.id}`} defaultValue={current.extraPrompt??""} placeholder="统一文风、人称、避免的套话等，每次生成回复时带入" onBlur={e=>commitSetting({extraPrompt:e.target.value})}/></label>
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}

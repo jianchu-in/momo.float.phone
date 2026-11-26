@@ -1,5 +1,5 @@
 "use client";
-import {facingVisibleSegments} from "@/lib/facing-reply-format";
+import {facingSegmentText,facingVisibleSegments} from "@/lib/facing-reply-format";
 import { formatChatUiTime } from "@/lib/chat-time";
 
 import { memo, useEffect, useRef } from "react";
@@ -33,7 +33,7 @@ export const FacingMessage = memo(function FacingMessage({ turn, characterName, 
     <small>{turn.role === "assistant" ? characterName : "你"}{turn.kind === "voice" ? " · 语音转写" : ""}</small>
     {turn.imageRef && <ShownImage className="facing-message-photo" mediaRef={turn.imageRef} />}
     {!!turn.touches?.length && <p className="facing-action">{turn.touches.map(part => `（触碰了${part}）`).join(" ")}</p>}
-    {facingVisibleSegments(turn).map((part,index)=><p key={index} className={part.type==="action"?"facing-action":undefined}>{turn.kind==="touch"&&!turn.touches?.length&&part.type==="dialogue"?`（触碰了${part.text}）`:part.text}</p>)}
+    {facingVisibleSegments(turn).map((part,index)=><p key={index} className={part.type==="action"?"facing-action":undefined}>{turn.kind==="touch"&&!turn.touches?.length&&part.type==="dialogue"?`（触碰了${part.text}）`:facingSegmentText(part,turn.role==="assistant"?turn.dialogueNotation:undefined)}</p>)}
     {!turn.action && !turn.text && !turn.imageRef && !turn.touches?.length &&
       <p className="facing-action">{turn.reactionName ? `（${turn.reactionName}）` : `来到${turn.sceneName}`}</p>}
     <time className="facing-message-time" dateTime={turn.at}>{formatChatUiTime(turn.at)}</time>

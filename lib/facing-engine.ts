@@ -180,7 +180,7 @@ export async function generateFacingReply(options: {
   const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
   const mode: LLMMessage = {
     role: "system",
-    content: [FACING_MODE_PROMPT, facingReplyFormatInstruction(settings.replyFormat), mapContextPrompt,
+    content: [FACING_MODE_PROMPT, facingReplyFormatInstruction(settings.replyFormat, settings.dialogueNotation), mapContextPrompt,
       resolvePromptTimeAware() && `当前现实时间：${formatPromptTimestamp(new Date().toISOString())}。结合消息时间理解间隔，不把历史中的时间当成现在。`,
       settings.extraPrompt?.trim() && `【用户的生成要求】\n${settings.extraPrompt.trim()}`,
       options.illustrate && settings.autoVisual?.extraPrompt?.trim() && `【本轮CG画面额外要求】${settings.autoVisual.extraPrompt.trim()}`,
@@ -233,7 +233,7 @@ export async function generateFacingReply(options: {
     const item = items.find(value => value && typeof value === "object" && value.speaker_id === speakerId);
     if (!item) continue;
     const speaker = cast.find(value => value.id === speakerId) ?? character;
-    const {dialogue,action,segments}=parseFacingReplyParts(item,settings.replyFormat);
+    const {dialogue,action,segments}=parseFacingReplyParts(item,settings.replyFormat,settings.dialogueNotation);
     const ownScene = (speakerId === character.id ? scenes : groupFacingScenes(loadFacingUsableAssets(speakerId))).find(group => group.name === (nextScene?.name ?? scene));
     const reaction = options.deferVisual ? undefined : ownScene?.reactions.find(asset => asset.id === item.reaction_id || asset.name === item.reaction_id);
     if (dialogue || action || reaction || nextScene) replies.push({ speakerId, speakerName: speaker.name,

@@ -1,4 +1,4 @@
-import {facingVisibleSegments,type FacingReplyFormat,type FacingSegment} from "./facing-reply-format";
+import {facingVisibleSegments,type FacingDialogueNotation,type FacingReplyFormat,type FacingSegment} from "./facing-reply-format";
 import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, registerKvMigration } from "./kv-db";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 import type { VnAssetLayout } from "./vn-asset-storage";
@@ -128,6 +128,7 @@ export type FacingCharacterSettings = {
   customReplyLength?: number;
   extraPrompt?: string;
   replyFormat?: FacingReplyFormat;
+  dialogueNotation?: FacingDialogueNotation;
   voice?: boolean;
   speechInput?: "browser" | "cloud";
   touch?: boolean;
@@ -209,6 +210,7 @@ export type FacingTurn = {
   audioRef?: string;
   action?: string;
   segments?: FacingSegment[];
+  dialogueNotation?: FacingDialogueNotation;
   imageRef?: string;
   touches?: string[];
   at: string;
@@ -226,11 +228,11 @@ export type FacingTurn = {
   versionIndex?: number;
 };
 
-export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "segments" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "speakerId" | "speakerName" | "audioRef">;
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "segments" | "dialogueNotation" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "speakerId" | "speakerName" | "audioRef">;
 
 export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
-  const { text, action, segments, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef } = turn;
-  return { text, action, segments, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef };
+  const { text, action, segments, dialogueNotation, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef } = turn;
+  return { text, action, segments, dialogueNotation, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef };
 }
 
 export function facingTurnText(turn: FacingTurn): string {
