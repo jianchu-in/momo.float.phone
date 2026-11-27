@@ -12,7 +12,8 @@ import type { StoryGroup, StoryMessage, StorySession } from "./story-storage";
 
 export const FAVORITES_UPDATED_EVENT = "favorites-updated";
 
-export type FavoriteCategory = "chat" | "story";
+export type FavoriteCategory = "chat" | "story" | "facing" | "dwelling";
+export const FAVORITE_CATEGORY_LABELS: Record<FavoriteCategory, string> = { chat: "聊天", story: "剧情", facing: "面对面", dwelling: "栖所" };
 export type FavoriteKind = "message" | "bundle" | "image" | "moment";
 export type FavoriteEntityType = "character" | "group";
 
@@ -353,4 +354,43 @@ export async function addMomentFavorite(input: {
       imageDescription: post.photoDescription,
     }],
   });
+}
+
+
+/** Keep the original media reference: another viewing entry never stores another copy. */
+export async function addImageFavorite(input: {
+  category: FavoriteCategory; sourceId: string; mediaUrl: string; title: string;
+  description?: string; participantIds: string[]; containerId?: string; containerName?: string;
+  chatAccountId?: string | null; userIdentityId?: string | null; tags?: string[];
+}): Promise<FavoriteItem> {
+  const scopeState = loadChatScope();
+  const accountId = input.chatAccountId === undefined ? scopeState.chatAccountId : input.chatAccountId;
+  const identityId = input.userIdentityId === undefined ? scopeState.userIdentityId ?? resolveChatAccountUserIdentity(accountId, input.participantIds[0], input.category)?.id ?? null : input.userIdentityId;
+  const scope = resolveScope(accountId, identityId);
+  const id = `favorite_image:${scope.scopeKey}:${input.category}:${input.sourceId}`;
+  const previous = await favoritesDb.items.get(id);
+  if (previous) return previous;
+  const now = new Date().toISOString();
+  const ids = unique(input.participantIds);
+  const names = ids.map(id => loadCharacters().find(item => item.id === id)?.name || "已移除角色");
+  return putFavoriteItem({ id, category: input.category, kind: "image", ...scope,
+    chatAccountId: accountId, userIdentityId: identityId, entityType: ids.length > 1 ? "group" : "character",
+    entityId: ids.length > 1 ? [...ids].sort().join("|") : ids[0] || "unassigned", entityName: names.join("、") || input.title,
+    participantIds: ids, participantNames: names, containerId: input.containerId ?? input.sourceId,
+    containerName: input.containerName ?? FAVORITE_CATEGORY_LABELS[input.category], sourceItemIds: [input.sourceId],
+    sourceCreatedAt: now, createdAt: now, updatedAt: now, title: input.title, preview: compactPreview(input.description || input.title),
+    tags: unique([FAVORITE_CATEGORY_LABELS[input.category], ...(input.tags ?? [])]),
+    entries: [{ id: input.sourceId, role: "assistant", senderName: names.join("、"), content: input.description || "",
+      createdAt: now, mediaType: "image", mediaUrl: input.mediaUrl, imageDescription: input.description }],
+  });
+}
+
+/** Fail closed on DB errors: retaining a possibly referenced original is safer than deleting it. */
+export async function favoriteUsesMedia(ref: string): Promise<boolean> {
+  const aliases = new Set([ref, ref.replace(/^(?:theme-asset|asset):\/\//, "")]);
+  if (!ref.includes("://")) { aliases.add(`theme-asset://${ref}`); aliases.add(`asset://${ref}`); }
+  const walk = (value: unknown): boolean => typeof value === "string" ? [...aliases].some(alias => value === alias || value.includes(`"${alias}"`) || value.includes(`(${alias})`))
+    : Array.isArray(value) ? value.some(walk) : !!value && typeof value === "object" && Object.values(value).some(walk);
+  try { return (await favoritesDb.items.toArray()).some(item => walk(item.entries)); }
+  catch { return true; }
 }

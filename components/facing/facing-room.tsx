@@ -210,7 +210,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         dialogueNotation: settings.dialogueNotation ?? "plain",
         speakerId: reply.speakerId, speakerName: reply.speakerName,
         at: new Date().toISOString(), replyTo: user.id, reactionId: reply.reaction?.id, reactionName: reply.reaction?.name,
-        visualDescription: reply.visualDescription, visualRating: reply.visualRating,
+        visualDescription: reply.visualDescription, visualRating: reply.visualRating, visualReferenceMode: settings.autoVisual?.referenceMode ?? "depicted", visualReferenceSource: settings.autoVisual?.referenceSource ?? "character", depictedCharacterIds: reply.depictedCharacterIds, userVisible: reply.userVisible,
         visualContinuityId: deferVisual && existingActivity ? existingActivity.id : reply.visualContinues ? activity?.id : undefined,
       }));
       const previous = options?.previous;
@@ -420,9 +420,9 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           }}
           onMenu={() => { live.pause();setMenuId(turn.id); setMessageDialog(undefined); }} onVersion={index => {live.pause();changeVersion(turn, index);}} />),[meeting.turns,queuedIds,busy,listening,speech.playingId,character.name]);
   return <section ref={roomRef} className="facing-room" data-full-conversation={fullConversation || undefined} style={roomStyle} aria-label={`与${character.name}见面`}>
-    <FacingStage portrait={stagePortrait} scene={scene ?? (multi ? speakerVisual.backdrop : undefined)}
-      reaction={displayedVisual ?? (multi ? reaction ?? speakerVisual.reaction : reaction ?? storedReaction)}
-      fallback={multi ? speakerVisual.portrait || scene ? undefined : speakerVisual.reference : scene ? undefined : character.avatar} hideBlank={multi || !!scene}
+    <FacingStage portrait={stagePortrait} scene={scene}
+      reaction={displayedVisual ?? (multi ? (reaction?.characterId === speaker.id ? reaction : speakerVisual.reaction) : reaction ?? storedReaction)}
+      fallback={multi ? speakerVisual.portrait ? undefined : speakerVisual.reference || speaker.avatar : scene ? undefined : character.avatar} hideBlank={false}
       name={speaker.name} points={[]}
       onDisplayed={assetId=>{void markFacingCgShown(meeting.id,assetId).then(saved=>{if(saved)onMeeting(saved);}).catch(()=>setError("CG展示进度保存失败。"));}}
       onActivate={() => { setFullConversation(true); setHidden(false); followLog.current = true; }}
@@ -435,7 +435,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       <button type="button" className="facing-glass facing-icon" aria-label="返回" onClick={()=>{live.stop();onEnd();}}><ChevronLeft size={22} /></button>
       <div className="facing-room-location">
         <button type="button" className="facing-glass facing-room-scene" title={position.sceneName} aria-label="更换当前场景" disabled={busy||listening} onClick={()=>{live.pause();setScenePicker(v=>!v);}}>{position.sceneName} ▾</button>
-        {settings.autoVisual?.enabled && autoProgress?.message && <small className="facing-glass facing-visual-status" role="status">{autoProgress.message}{onRetryCg&&autoProgress.message.includes("未完成")&&<button type="button" onClick={onRetryCg}>重试CG</button>}</small>}
+        {settings.autoVisual?.enabled && autoProgress?.message && <small className="facing-glass facing-visual-status" role="status">{autoProgress.message}{onRetryCg&&!autoProgress.message.includes("正在")&&<button type="button" onClick={onRetryCg}>调整并重试CG</button>}</small>}
       </div>
       <div className="facing-room-actions">
         {fullConversation && <button type="button" className="facing-glass facing-icon" aria-label="返回场景对话" onClick={() => setFullConversation(false)}>场景</button>}

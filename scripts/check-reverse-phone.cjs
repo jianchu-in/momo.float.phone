@@ -51,7 +51,7 @@ async function main() {
   for (const s of sessions) for (let i = 0; i < 25; i++) chat.pushChatMessage({ sessionId: s.id, role: i % 2 ? 'assistant' : 'user', content: `记录${i}`, senderName: i % 2 ? '角色' : '简初' });
   const storage = load('lib/reverse-phone-storage.ts'), actions = load('lib/reverse-phone-actions.ts'), engine = load('lib/reverse-phone-engine.ts');
   const scope = storage.reverseScope();
-  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, chat: { ...v.unified.chat, targets: chars.map(c => c.id) } } }));
+  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: {...v.unified.modes, favorites:"hidden"}, chat: { ...v.unified.chat, targets: chars.map(c => c.id) } } }));
   await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, chat: { ...v.unified.chat, reply: false } }, characters: { a: { chat: { reply: true, remark: false }, modes: { browser: 'locked', reading: 'hidden' } } } }));
   let p = storage.resolveReversePermissions('a', scope);
   assert.equal(p.chat.reply, true); assert.equal(p.chat.remark, false); assert.equal(p.chat.assets, true);
@@ -142,12 +142,12 @@ async function main() {
   const memory = load('lib/short-term-memory-records.ts').loadManualShortMemories('a').find(item => item.id === 'reverse_phone_' + latest.session.id);
   for (const phrase of ['[查手机]', '我说：“桌面很整洁”', '他现在在我这里', '朋友乙', '海边的卡夫卡', '周末旅行', '订单', '充值']) assert.ok(memory.content.includes(phrase), phrase);
   // Hidden app never reaches the model; locked app receives only a lock notice, not browser records.
-  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { chat: 'hidden', shopping: 'hidden', browser: 'locked', reading: 'hidden' } } }));
+  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { favorites: 'hidden', chat: 'hidden', shopping: 'hidden', browser: 'locked', reading: 'hidden' } } }));
   calls = []; await act(async () => { await latest.start(); });
   assert.deepEqual(calls.map(c => c.kind), ['desktop', 'locked']);
   assert.deepEqual(calls[0].data.应用.map(a => a.id), ['browser']); assert.ok(!JSON.stringify(calls[1].data).includes('周末旅行'));
   // Reclaim during a partial stream: no reply, remark, or unseen speech gets committed.
-  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { chat: 'open', shopping: 'hidden', browser: 'hidden', reading: 'hidden' } } }));
+  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { favorites: 'hidden', chat: 'open', shopping: 'hidden', browser: 'hidden', reading: 'hidden' } } }));
   let streaming = false, pending;
   responder = async (kind, data, signal, callbacks) => {
     if (kind === 'desktop') return { order: ['chat'] };
@@ -161,7 +161,7 @@ async function main() {
   assert.equal(latest.session.status, 'stopped'); assert.ok(!chat.loadChatMessages(sessions[1].id).some(m => m.content === '未完成消息'));
   assert.equal(chat.loadChatSessions().find(s => s.id === sessions[1].id).alias, '朋友乙'); assert.ok(!storage.reverseMemoryText(latest.session).includes('未完成消息'));
   // Blocking a page aborts its request, records one spoken refusal, and continues with the remaining app.
-  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { chat: 'hidden', shopping: 'hidden', browser: 'open', reading: 'open' } } }));
+  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { favorites: 'hidden', chat: 'hidden', shopping: 'hidden', browser: 'open', reading: 'open' } } }));
   let browsing = false;
   responder = async (kind, data, signal) => {
     if (kind === 'desktop') return { order: ['browser', 'reading'] };
@@ -178,7 +178,7 @@ async function main() {
   assert.ok(storage.reverseMemoryText(latest.session).includes('我说：“好，不看就不看”')); assert.ok(calls.some(c => c.kind === 'reading'));
   await act(async () => root.unmount());
   // Private-chat invitation persists a real card. Retrying a failed acceptance call reuses that card.
-  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { chat: 'hidden', shopping: 'hidden', browser: 'hidden', reading: 'hidden' } } }));
+  await storage.updateReverseSettings(scope, v => ({ ...v, unified: { ...v.unified, modes: { favorites: 'hidden', chat: 'hidden', shopping: 'hidden', browser: 'hidden', reading: 'hidden' } } }));
   root = createRoot(document.getElementById('root')); let inviteFailed = false, acceptedSessionId = null;
   responder = async kind => {
     if (kind === 'invite') { if (!inviteFailed) { inviteFailed = true; throw new Error('邀请接口失败'); } return { accepted: true, reaction: '好，让我看看' }; }

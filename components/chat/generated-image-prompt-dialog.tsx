@@ -1,8 +1,9 @@
 "use client";
 
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 
 export function GeneratedImagePromptDialog({
+    children,
     value,
     onChange,
     onCancel,
@@ -17,8 +18,10 @@ export function GeneratedImagePromptDialog({
     hasUserReference,
     descriptionLabel,
     textOnly = false,
+    hideReferenceControls = false,
     userReferenceLabel = "允许使用用户参考图（文字模型判断用户是否出镜）",
 }: {
+    children?: ReactNode;
     value: string;
     onChange: (value: string) => void;
     onCancel: () => void;
@@ -33,6 +36,7 @@ export function GeneratedImagePromptDialog({
     hasUserReference: boolean;
     descriptionLabel?: string;
     textOnly?: boolean;
+    hideReferenceControls?: boolean;
     userReferenceLabel?: string;
 }) {
     const descriptionId = useId();
@@ -64,7 +68,8 @@ export function GeneratedImagePromptDialog({
                         placeholder="输入图片提示词"
                         disabled={busy}
                     />
-                    {textOnly ? <div className="chat-generated-image-prompt-empty-hint">多人剧情使用纯文字生图，不附参考图。</div> : <>
+                    {children}
+                    {hideReferenceControls ? null : textOnly ? <div className="chat-generated-image-prompt-empty-hint">纯文字生图，不附人物参考图。</div> : <>
                     {hasReferenceImage ? (
                         <label className="chat-generated-image-prompt-check">
                             <input

@@ -1,4 +1,6 @@
 "use client";
+import { reverseAllowedFavorites, reverseFavoriteVisibleText, captureReverseFavorites } from "@/lib/reverse-favorites";
+import { loadApiConfigs, loadBindingConfig, resolveBinding } from "@/lib/settings-storage";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { acquireReverseLease, reversePhoneBusy, resolveReverseAutomation, reverseAuthorizationActive, REVERSE_SETTINGS_EVENT } from "@/lib/reverse-phone-automation";
@@ -100,10 +102,10 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     await persist({ ...value, tasks: value.tasks.map(task => task.id === id ? { ...task, state, ...(result ? { result } : {}) } : task) });
   }
   function permissions() { return resolveReversePermissions(actor().id, scope); }
-  async function section(character: Character, task: ReverseTask, kind: string, data: unknown, signal: AbortSignal) {
+  async function section(character: Character, task: ReverseTask, kind: string, data: unknown, signal: AbortSignal, screenshot?: string) {
     if (task.result) return task.result as ReverseResult;
     setLoading("Ta正在查看…"); setSpeech(""); setTouch(value => ({ ...value, visible: false }));
-    const result = await requestReverseSection(character, scope, kind, data, signal, { origin: latest.current?.origin });
+    const result = await requestReverseSection(character, scope, kind, data, signal, { origin: latest.current?.origin, screenshot });
     await taskState(task.id, "pending", result);
     if (result.farewell) farewell.current = result.farewell;
     return result;
@@ -123,6 +125,44 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       await delay(120, signal);
     }
     return [];
+  }
+  async function favoritePage(signal: AbortSignal) {
+    for (let attempt=0;attempt<40;attempt++) {
+      throwIfAborted(signal);
+      const root=host.current?.querySelector<HTMLElement>('[data-reverse-favorites][data-rp-favorites-ready="true"]');
+      if(root)return root;
+      await delay(100,signal);
+    }
+    throw new Error("收藏页面加载失败，请重试。");
+  }
+  async function favoriteSnapshot(signal: AbortSignal) {
+    const root=await favoritePage(signal);
+    for(let attempt=0;attempt<80&&root.querySelector('[data-rp-image-state="loading"]');attempt++)await delay(100,signal);
+    const verify=async()=>{
+      const allowed=await reverseAllowedFavorites(actor().id,scope);
+      const ids=[...root.querySelectorAll<HTMLElement>('[data-rp-favorite], [data-rp-favorite-detail]')].map(node=>node.dataset.rpFavorite??node.dataset.rpFavoriteDetail);
+      if(ids.some(id=>!allowed.some(item=>item.id===id)))throw new Error("收藏或授权范围已变更，请刷新当前页面后重试。");
+    };
+    await verify();
+    const config=loadApiConfigs().find(item=>item.id===resolveBinding(loadBindingConfig(),actor().id,"checkphone").apiConfigId);
+    let screenshot:string|undefined;
+    let imageStatus=root.querySelector("[data-rp-image-state]")?"图片暂未载入或无法读取，未识别":"本页面没有图片";
+    if(root.querySelector("img")) {
+      if(config?.enableImageRecognition) {
+        try { screenshot=await captureReverseFavorites(root,signal); imageStatus="已附当前页面真实截图，仅识别截图可见部分"; }
+        catch(cause){throwIfAborted(signal);imageStatus="当前页面截图失败，图片未识别";setToast(imageStatus);}
+      } else { imageStatus="当前绑定API未开启识图，图片未识别";setToast(imageStatus); }
+    }
+    throwIfAborted(signal); assertReverseScope(scope);
+    if(permissions().modes.favorites!=="open")throw new Error("收藏查看权限已关闭。");
+    await verify();
+    return {root,screenshot,text:reverseFavoriteVisibleText(root),imageStatus};
+  }
+  async function clickFavorite(target:string,signal:AbortSignal) {
+    throwIfAborted(signal);if(permissions().modes.favorites!=="open")throw new Error("收藏查看权限已关闭。");
+    const node=host.current?.querySelector<HTMLButtonElement>(`[data-rp-target="${selector(target)}"]`);
+    if(!node||node.disabled)return false;
+    await tap(target,signal);throwIfAborted(signal);node.click();await settle(signal);return true;
   }
   async function playTask(task: ReverseTask, signal: AbortSignal) {
     assertReverseScope(scope); throwIfAborted(signal);
@@ -145,6 +185,54 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
       await event("view", `我点开${REVERSE_APPS[task.app]}，看到“该APP已被用户隐私锁定”，没有读取其中内容。`, `${task.id}:view`);
       const result = await section(character, task, "locked", { 应用: REVERSE_APPS[task.app], 提示: "该APP已被用户隐私锁定" }, signal);
       await showSpeech(result.reaction, signal, `${task.id}:speech`);
+    } else if (task.app === "favorites") {
+      setScreen({app:"favorites"});await settle(signal);
+      if(task.kind === "favorite") {
+        const permitted=(await reverseAllowedFavorites(character.id,scope)).find(item=>item.id===task.targetId);
+        if(!permitted){await taskState(task.id,"skipped");return;}
+        await favoritePage(signal);
+        if(task.favoriteNavigation)await clickFavorite(task.favoriteNavigation,signal);
+        if(!await clickFavorite(`favorite:${permitted.id}`,signal)){await taskState(task.id,"skipped");return;}
+        let snapshot=await favoriteSnapshot(signal);
+        await event("view",`我打开了收藏“${permitted.title}”的当前详情：${snapshot.text}。${snapshot.imageStatus}。`,`${task.id}:view`);
+        const result=await section(character,task,"favorite_detail",{当前可见文字:snapshot.text,图片读取:snapshot.imageStatus},signal,snapshot.screenshot);
+        snapshot.screenshot=undefined;
+        await showSpeech(result.reaction,signal,`${task.id}:speech`);
+        const step=result.steps?.find(step=>["favorites:expand","favorites:next-entry"].includes(step.target));
+        if(step&&await clickFavorite(step.target,signal)) {
+          snapshot=await favoriteSnapshot(signal);
+          await event("view",`我${step.target.endsWith("expand")?"展开了当前条目":"翻到下一条"}，实际可见内容：${snapshot.text}。${snapshot.imageStatus}。`,`${task.id}:expanded`);
+          const response=result.expanded??await requestReverseSection(character,scope,"favorite_detail",{当前可见文字:snapshot.text,图片读取:snapshot.imageStatus,操作上限:"已达到，仅回应，不再操作"},signal,{origin:latest.current?.origin,screenshot:snapshot.screenshot});
+          snapshot.screenshot=undefined;
+          await taskState(task.id,"pending",{...result,expanded:response});await showSpeech(response.reaction,signal,`${task.id}:expanded:speech`);
+        }
+        await clickFavorite("favorites:back",signal);
+      } else {
+        await tap("app:favorites",signal);
+        let snapshot=await favoriteSnapshot(signal);
+        const currentIds=async()=>{
+          const allowed=await reverseAllowedFavorites(character.id,scope);
+          const clip=snapshot.root.querySelector('[data-rp-favorites-scroll]')!.getBoundingClientRect();
+          return [...snapshot.root.querySelectorAll<HTMLElement>('[data-rp-favorite]')].filter(node=>{const rect=node.getBoundingClientRect();return rect.width>0&&rect.top>=clip.top&&rect.bottom<=clip.bottom;}).map(node=>node.dataset.rpFavorite!).filter(id=>allowed.some(item=>item.id===id));
+        };
+        let visible=await currentIds();
+        await event("view",`我浏览了收藏当前一屏的缩略图和摘要：${snapshot.text}。尚未打开详情。${snapshot.imageStatus}。`,`${task.id}:view`);
+        const result=await section(character,task,"favorites",{当前可见文字:snapshot.text,可打开收藏ID:visible,图片读取:snapshot.imageStatus,翻页筛选上限:1},signal,snapshot.screenshot);
+        snapshot.screenshot=undefined;
+        await showSpeech(result.reaction,signal,`${task.id}:speech`);
+        const navigation=result.steps?.find(step=>["favorites:tab:images","favorites:tab:text","favorites:next-page"].includes(step.target))?.target;
+        let chosen=result;
+        if(navigation&&await clickFavorite(navigation,signal)) {
+          snapshot=await favoriteSnapshot(signal);visible=await currentIds();
+          await event("view",`我${navigation.endsWith("next-page")?"翻了一页":"切换了收藏分类"}，实际看到当前一屏：${snapshot.text}。尚未打开详情。`,`${task.id}:navigation`);
+          chosen=result.navigation??await requestReverseSection(character,scope,"favorites",{当前可见文字:snapshot.text,可打开收藏ID:visible,图片读取:snapshot.imageStatus,翻页筛选上限:0},signal,{origin:latest.current?.origin,screenshot:snapshot.screenshot});
+          snapshot.screenshot=undefined;await taskState(task.id,"pending",{...result,navigation:chosen});await showSpeech(chosen.reaction,signal,`${task.id}:navigation:speech`);
+        }
+        const ids=[...new Set(chosen.sessions??[])].filter(id=>visible.includes(id)).slice(0,3);
+        const tasks=[...latest.current!.tasks],index=tasks.findIndex(item=>item.id===task.id);
+        const next:ReverseTask[]=ids.map(id=>({id:`${task.id}:favorite:${id}`,kind:"favorite",app:"favorites",favoriteNavigation:navigation,targetId:id,state:"pending"}));
+        tasks.splice(index+1,0,...next.filter(item=>!tasks.some(old=>old.id===item.id)));await persist({...latest.current!,tasks});
+      }
     } else if (task.kind === "conversation") {
       const target = reverseAllowedSessions(character.id, scope).find(item => item.id === task.targetId);
       if (!target) { await taskState(task.id, "skipped"); return; }
@@ -353,7 +441,7 @@ export function useReversePhone(scope: ReverseScope, host: RefObject<HTMLDivElem
     for (const receipt of await recoverReversePayments(scope, latest.current.id)) await event("action", receipt.text, receipt.id);
     if (latest.current.inviteSessionId && latest.current.accepted !== true) { await stop(); return; }
     await taskState(task.id, "skipped");
-    if (task.kind === "app" && task.app === "chat") await persist({ ...latest.current!, tasks: latest.current!.tasks.map(item => item.app === "chat" && item.state === "pending" ? { ...item, state: "skipped" } : item) });
+    if ((task.kind === "app" && task.app === "chat") || (task.app === "favorites" && block)) await persist({ ...latest.current!, tasks: latest.current!.tasks.map(item => item.app === task.app && item.state === "pending" ? { ...item, state: "skipped" } : item) });
     await event("control", block ? `用户阻止了我继续查看${task.kind === "conversation" ? "当前聊天会话" : task.app ? REVERSE_APPS[task.app] : "当前页面"}，这部分本次不再查看。` : "我跳过了当前未完成的部分。");
     if (version !== interruption.current) return;
     if (block) {

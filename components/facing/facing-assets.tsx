@@ -95,7 +95,7 @@ export function FacingAssets({ character, assets, groups, onBack, onChange, onDe
       const config = resolveConfiguredImageGenerationSettings(character.id, "facing");
       const reference = config.characterReferences?.[character.id];
       const role = draft.category === "portrait" && config.provider !== "novelai" && referenceMode !== "none" ? referenceMode === "character" && reference?.enabled !== false && reference?.assetId ? await getChatImageFromIndexedDB(reference.assetId) : character.avatar : undefined;
-      const result = await generateImageFromConfiguredApi({ characterId: character.id, appId: "facing", description: [instruction, description].join("\n"), explicitReferenceImage: role || undefined, referenceSelection: { character: false, user: false }, portraitOutput: true, signal });
+      const result = await generateImageFromConfiguredApi({ persistResult: false, characterId: character.id, appId: "facing", description: [instruction, description].join("\n"), explicitReferenceImage: role || undefined, referenceSelection: { character: false, user: false }, portraitOutput: true, signal });
       if (!result) throw new Error("请先为面对面启用并绑定生图配置。");
       if (!signal.aborted) setDraft(current => current ? { ...current, candidate: { blob: result.blob, url: result.dataUrl, mediaType: facingMediaType(result.blob) || "image/png" } } : current);
     });

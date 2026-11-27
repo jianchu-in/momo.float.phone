@@ -1,5 +1,6 @@
 "use client";
 
+import { ImageFavoriteButton } from "@/components/favorites/image-favorite-button";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronLeft, Compass, RefreshCw, Trash2, Wand2, X } from "lucide-react";
 import type { Character } from "@/lib/character-types";
@@ -526,6 +527,7 @@ export function DwellingApp({ onClose, visible, onIdle }: DwellingAppProps) {
                 else if (imageEnabled && assetUrl) imageStatus = "ready";
                 else if (imageEnabled && imageConfigured && cs.imageErrors[activeRoom.id]) imageStatus = "failed";
                 return (
+                    <>{activeRoom.imageAssetId && <ImageFavoriteButton category="dwelling" sourceId={`${activeRoom.id}:${activeRoom.imageAssetId}`} mediaUrl={activeRoom.imageAssetId} title={activeRoom.name} participantIds={activeCharId?[activeCharId]:[]} />}
                     <RoomView
                         room={activeRoom}
                         itemHtmlCache={cs.itemHtmlCache}
@@ -559,7 +561,7 @@ export function DwellingApp({ onClose, visible, onIdle }: DwellingAppProps) {
                         }}
                         onRetryImage={() => { if (activeCharId) void handleGenerateRoomImage(activeCharId, activeRoom.id); }}
                         onCancelImage={() => { if (activeCharId) cancelDwellingRoomImage(activeCharId, activeRoom.id); }}
-                    />
+                    /></>
                 );
             })()}
             {itemDetail && (

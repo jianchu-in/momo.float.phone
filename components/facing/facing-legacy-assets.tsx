@@ -304,7 +304,7 @@ export function FacingLegacyAssets({ character, assets, groups, onBack, onChange
     try {
       const ref = await loadReference(false, run.signal);
       const moodInstruction = emotion === "默认" ? "角色保持平时自然的神情。" : `角色表现「${emotion}」，保持该场景的环境连续。`;
-      const result = await generateImageFromConfiguredApi({
+      const result = await generateImageFromConfiguredApi({ persistResult: false,
         characterId: character.id, appId: "facing",
         description: [facingFullImageInstruction(targetLocation), moodInstruction, description.trim()].filter(Boolean).join("\n"),
         referenceSelection: { character: false, user: false }, explicitReferenceImage: ref ?? undefined,

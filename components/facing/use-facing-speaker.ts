@@ -9,7 +9,8 @@ import { loadShownImageDataUrl } from "@/lib/shown-image";
 export function useFacingSpeaker(character: Character, location: string, multi: boolean, reactionId?: string) {
   const {settings,assets,groups,config} = useMemo(()=>{const settings=loadFacingSettings().characters[character.id]??{};const assets=loadFacingUsableAssets(character.id);return {settings,assets,groups:groupFacingScenes(assets,settings.portraitId),config:resolveConfiguredImageGenerationSettings(character.id,"facing")};},[character.id,location,reactionId,multi]);
   const group = groups.find(item => item.name === location) ?? groups.find(item => item.name === location.split(" · ").at(-1));
-  const portrait = group?.portrait;
+  const portrait = group?.portrait ?? assets.find(item => item.characterId === character.id && item.id === settings.portraitId && !item.generated && item.composition !== "full")
+    ?? assets.find(item => item.characterId === character.id && item.category === "portrait" && item.use === "idle" && !item.generated && item.composition !== "full");
   const reference = config.characterReferences?.[character.id];
   const upload = settings.autoVisual?.referenceMediaRef;
   const refId = reference?.enabled !== false ? reference?.assetId : undefined;

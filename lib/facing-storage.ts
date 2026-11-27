@@ -38,8 +38,13 @@ export type FacingAsset = {
   folder?: string;
   portraitIds?: string[];
   generated?: boolean;
+  userIdentityId?: string | null;
   description?: string;
   referenceMode?: "none" | "character" | "avatar";
+  depictedCharacterIds?: string[];
+  userVisible?: boolean;
+  referenceSource?: "character" | "avatar" | "upload";
+  participantIds?: string[];
   npcGender?: "male" | "female";
   location?: string;
 };
@@ -47,6 +52,8 @@ export type FacingAsset = {
 export type FacingScenePosition = Pick<FacingTurn, "sceneName" | "portraitId" | "sceneId">;
 export type FacingSceneGroup = {
   name: string;
+  locationName?: string;
+  ownerId?: string;
   assets: FacingAsset[];
   portrait?: FacingAsset;
   backdrop?: FacingAsset;
@@ -98,7 +105,7 @@ export function facingMeetingPosition(meeting: FacingMeeting): FacingScenePositi
 }
 
 export function resolveFacingScene(position: FacingScenePosition, groups: FacingSceneGroup[], assets: FacingAsset[]) {
-  const group = groups.find(item => item.name === position.sceneName);
+  const group = groups.find(item => position.sceneId && item.backdrop?.id === position.sceneId) ?? groups.find(item => item.name === position.sceneName);
   const recordedPortrait = assets.find(asset => asset.id === position.portraitId);
   const recordedBackdrop = assets.find(asset => asset.id === position.sceneId && asset.category === "scene") ?? readJson<FacingAsset[]>(kvGet(FACING_ASSETS_KEY), []).find(asset=>asset.id===position.sceneId&&asset.category==="scene");
   const allowed = !group?.backdrop?.portraitIds || group.backdrop.portraitIds.includes(recordedPortrait?.id ?? "");
@@ -151,6 +158,7 @@ export type FacingAutoVisualSettings = {
   enabled?: boolean;
   interval?: number;
   skipNsfw?: boolean;
+  referenceMode?: "text" | "depicted";
   referenceSource?: "character" | "avatar" | "upload";
   referenceMediaRef?: string;
   extraPrompt?: string;
@@ -197,7 +205,75 @@ export async function toggleFacingCg(meetingId: string, show: boolean): Promise<
   return saved;
 }
 
-export type FacingSettings = { characterId?: string; participantIds?: string[]; characters: Record<string, FacingCharacterSettings> };
+export type FacingGroup = { id: string; name: string; participantIds: string[] };
+export type FacingPreset = { id: string; name: string; values: FacingCharacterSettings };
+export type FacingSettings = { characterId?: string; participantIds?: string[]; groupId?: string;
+  groups?: FacingGroup[]; common?: FacingCharacterSettings; presets?: FacingPreset[];
+  characters: Record<string, FacingCharacterSettings> };
+
+const COMMON_FIELDS = ["length", "customReplyLength", "extraPrompt", "replyFormat", "dialogueNotation", "voice", "speechInput", "fallbackNpcGender", "memory", "appearance", "touch", "touchMode"] as const;
+/** Only values are shared. Uploaded references, assets and voice bindings stay with their owner. */
+export function facingPresetValues(settings: FacingCharacterSettings): FacingCharacterSettings {
+  const values: FacingCharacterSettings = {};
+  for (const field of COMMON_FIELDS) if (settings[field] !== undefined) Object.assign(values, { [field]: settings[field] });
+  if (settings.autoVisual) { const { referenceMediaRef: _private, ...autoVisual } = settings.autoVisual; values.autoVisual = autoVisual; }
+  return values;
+}
+export function facingEffectiveSettings(characterId: string, settings = loadFacingSettings()): FacingCharacterSettings {
+  const own = settings.characters[characterId] ?? {};
+  // Until the first shared edit, migrate the selected character's previous values without losing private media.
+  const common = settings.common ?? facingPresetValues(settings.characters[settings.characterId ?? characterId] ?? own);
+  return { ...own, ...common, autoVisual: { ...own.autoVisual, ...common.autoVisual, referenceMediaRef: own.autoVisual?.referenceMediaRef } };
+}
+export async function saveFacingCommon(patch: Partial<FacingCharacterSettings>) {
+  let saved!: FacingSettings;
+  await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
+    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const previous = current.common ?? facingPresetValues(current.characters[current.characterId ?? ""] ?? {});
+    const clean = facingPresetValues(patch);
+    saved = { ...current, common: { ...previous, ...clean, autoVisual: { ...previous.autoVisual, ...clean.autoVisual } } };
+    return JSON.stringify(saved);
+  }); return saved;
+}
+export async function saveFacingPreset(name: string) {
+  if (!name.trim()) throw new Error("请输入预设名称。");
+  let saved!: FacingSettings;
+  await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
+    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const presets = current.presets ?? [];
+    const old = presets.find(item => item.name === name.trim());
+    saved = { ...current, presets: [...presets.filter(item => item.id !== old?.id), { id: old?.id ?? facingId(), name: name.trim(), values: facingPresetValues(facingEffectiveSettings(current.characterId ?? "", current)) }] };
+    return JSON.stringify(saved);
+  }); return saved;
+}
+export async function applyFacingPreset(id: string) {
+  let saved!: FacingSettings;
+  await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
+    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const preset = current.presets?.find(item => item.id === id);
+    if (!preset) throw new Error("预设已移除。");
+    saved = { ...current, common: facingPresetValues(preset.values) }; return JSON.stringify(saved);
+  }); return saved;
+}
+export async function saveFacingGroup(name: string, participantIds: string[]) {
+  const ids = [...new Set(participantIds.filter(Boolean))];
+  if (ids.length < 2 || !name.trim()) throw new Error("请输入组名并选择至少两位角色。");
+  let saved!: FacingSettings;
+  await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
+    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const match = current.groups?.find(item => [...item.participantIds].sort().join("|") === [...ids].sort().join("|"));
+    const group = { id: match?.id ?? facingId(), name: name.trim(), participantIds: ids };
+    saved = { ...current, groups: [...(current.groups ?? []).filter(item => item.id !== group.id), group], groupId: group.id, characterId: ids[0], participantIds: ids };
+    return JSON.stringify(saved);
+  }); return saved;
+}
+/** Qualify same-named places by owner while preserving their stable backdrop IDs. */
+export function facingCastScenes(ids: string[], names: Record<string, string>): FacingSceneGroup[] {
+  const owners = [...new Set([...ids, FACING_SHARED_CHARACTER_ID])];
+  const places = owners.flatMap(ownerId => groupFacingScenes(loadFacingAssets(ownerId), loadFacingSettings().characters[ownerId]?.portraitId).map(group => ({...group,ownerId,locationName:group.name})));
+  return places.map(group=>({...group, name: ids.length>1 || places.filter(item=>item.name===group.name).length>1
+    ? `${group.ownerId===FACING_SHARED_CHARACTER_ID ? "通用" : names[group.ownerId]??group.ownerId} · ${group.name}` : group.name}));
+}
 
 export type FacingTurn = {
   participantIds?:string[];
@@ -223,16 +299,20 @@ export type FacingTurn = {
   visualContinuityId?: string;
   visualDescription?: string;
   visualRating?: string;
+  visualReferenceMode?: "text" | "depicted";
+  visualReferenceSource?: "character" | "avatar" | "upload";
+  depictedCharacterIds?: string[];
+  userVisible?: boolean;
   replyTo?: string;
   versions?: FacingReplyVersion[];
   versionIndex?: number;
 };
 
-export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "segments" | "dialogueNotation" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "speakerId" | "speakerName" | "audioRef">;
+export type FacingReplyVersion = FacingScenePosition & Pick<FacingTurn, "text" | "action" | "segments" | "dialogueNotation" | "reactionId" | "reactionName" | "visualContinuityId" | "visualDescription" | "visualRating" | "visualReferenceMode" | "visualReferenceSource" | "depictedCharacterIds" | "userVisible" | "speakerId" | "speakerName" | "audioRef">;
 
 export function facingReplyVersion(turn: FacingTurn): FacingReplyVersion {
-  const { text, action, segments, dialogueNotation, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef } = turn;
-  return { text, action, segments, dialogueNotation, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, speakerId, speakerName, audioRef };
+  const { text, action, segments, dialogueNotation, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, visualReferenceMode, visualReferenceSource, depictedCharacterIds, userVisible, speakerId, speakerName, audioRef } = turn;
+  return { text, action, segments, dialogueNotation, sceneName, sceneId, portraitId, reactionId, reactionName, visualContinuityId, visualDescription, visualRating, visualReferenceMode, visualReferenceSource, depictedCharacterIds, userVisible, speakerId, speakerName, audioRef };
 }
 
 export function facingTurnText(turn: FacingTurn): string {
@@ -243,6 +323,7 @@ export function facingTurnText(turn: FacingTurn): string {
 }
 
 export type FacingMeeting = {
+  groupId?: string;
   participantHistoryIds?:string[];
   id: string;
   type: "main" | "branch" | "independent";
@@ -296,12 +377,13 @@ export async function saveFacingSettings(characterId: string, patch?: Partial<Fa
   return saved;
 }
 
-export async function saveFacingParticipants(ids: string[]): Promise<FacingSettings> {
+export async function saveFacingParticipants(ids: string[], groupId?: string): Promise<FacingSettings> {
   const participantIds = [...new Set(ids.filter(Boolean))];
   if (!participantIds.length) throw new Error("请至少选择一位见面角色。");
   let saved: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    saved = { ...readJson<FacingSettings>(raw, { characters: {} }), characterId: participantIds[0], participantIds };
+    const previous = readJson<FacingSettings>(raw, { characters: {} });
+    saved = { ...previous, common: previous.common ?? (previous.characterId ? facingPresetValues(previous.characters[previous.characterId] ?? {}) : undefined), characterId: participantIds[0], participantIds, groupId };
     return JSON.stringify(saved);
   });
   return saved!;
@@ -440,7 +522,8 @@ export async function applyFacingVisual(meetingId: string, anchor: FacingTurn, a
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meetingId, raw => {
     const meeting = readJson<FacingMeeting | null>(raw, null);
     if (!meeting || !facingVisualMatches(meeting, anchor, activityId, revision) || generationRound !== undefined && (meeting.visual?.round ?? -1) > generationRound) return raw ?? "null";
-    const assets = loadFacingAssets(anchor.speakerId ?? meeting.characterId);
+    const assets = loadFacingAssets(asset.characterId);
+    if (!facingParticipantIds(meeting).includes(asset.characterId)) return raw!;
     if (!assets.some(item => item.id === asset.id)) return raw!;
     if (mode === "scene") {
       const group = groupFacingScenes(assets).find(item => item.name === location);
@@ -485,6 +568,7 @@ export function createFacingMeeting(
   const now = new Date().toISOString();
   return {
     id: facingId(), characterId, identityId, type, createdAt: now, updatedAt: now,
+    groupId: parent?.groupId,
     participantIds: parent ? facingParticipantIds(parent) : [characterId],
     parentId: parent?.id, title: parent ? `分线 · ${parent.title}` : "", turns: parent?.turns.slice() ?? [], completedRounds: 0,
   };
@@ -548,7 +632,7 @@ export function loadFacingUsableAssets(characterId: string): FacingAsset[] {
   if (characterId === FACING_SHARED_CHARACTER_ID) return own;
   const shared = loadFacingAssets(FACING_SHARED_CHARACTER_ID);
   const ownSprites = own.filter(item => item.category === "portrait" && item.composition !== "full" && !item.generated);
-  const gender = loadFacingSettings().characters[characterId]?.fallbackNpcGender ?? "male";
+  const gender = facingEffectiveSettings(characterId).fallbackNpcGender ?? "male";
   return [...own, ...shared.filter(item => item.category === "portrait" && !ownSprites.length && (!item.npcGender || item.npcGender === gender)),
     ...shared.filter(item => item.category === "scene").map(item => ownSprites.length ? { ...item, portraitIds: undefined } : item)];
 }

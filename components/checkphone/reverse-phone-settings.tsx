@@ -67,6 +67,7 @@ function ReverseSettingsContents({ scope, initialCharacterId, initialApp, initia
       <p className="rp-muted">{owner === "unified" ? "当前修改统一规则：下方查看名单、操作权限和应用锁，对所有跟随统一设置的角色生效。" : `当前只为「${viewingName}」设置查看名单、操作权限和应用锁；未单独设置的项目跟随统一规则。`}</p>
       <ReverseAutomationSettings key={owner} character={owner!=="unified"} value={owner==="unified"?settings.automation:override.automation} unified={settings.automation} disabled={busy} onReset={()=>void save(current=>({...current,characters:{...current.characters,[owner]:{...current.characters[owner],automation:undefined}}}))} onChange={(key,value)=>{ if(owner==="unified")void save(current=>({...current,automation:{...current.automation,[key]:value} as import("@/lib/reverse-phone-types").ReverseAutomation}));else option("automation",key,value); }} />
       <nav className="rp-tabs">{(Object.keys(REVERSE_APPS) as ReverseApp[]).map(id => <button key={id} aria-pressed={app === id} onClick={() => setApp(id)}>{REVERSE_APPS[id]}</button>)}</nav>
+      {app === "favorites" && <p className="rp-muted">只开放当前账号和用户身份下的真实收藏。相关角色范围沿用“聊天”中的允许查看名单；多人收藏的所有成员均需在名单内。</p>}
       <fieldset disabled={busy}>
         {app === "chat" && <>
           <h3>允许查看的角色列表</h3>

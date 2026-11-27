@@ -134,7 +134,7 @@ export async function renderFacingMap(lead: Character, plan: MapPlan, preference
   const edge = extension?.tile ? await mapTileReference(extension.tile, extension.direction) : undefined;
   const original = referenceTile ? await getThemeAssetDataUrl(referenceTile.mediaId) : undefined;
   if (referenceTile && !original) throw new Error("原图读取失败，请关闭参考原图后重试。");
-  const result = await generateImageFromConfiguredApi({ characterId: lead.id, appId: "facing", settings,
+  const result = await generateImageFromConfiguredApi({ persistResult: false, characterId: lead.id, appId: "facing", settings,
     description: [plan.description, "只画地图底图，地点名称、头像与UI由程序叠加。", sources ? JSON.stringify(mapGenerationSources(sources)) : "",
       extension ? `本图向原地图的${{ left: "左", right: "右", top: "上", bottom: "下" }[extension.direction]}侧扩展；参考图是原图相邻边缘，请在新图对应边缘保留18%的衔接画面，续接道路、河流、建筑尺度与光线。` : "",
       referenceTile ? "参考图是正在修改的地图图块。按新描述更新这块地图，保留原有布局、建筑身份及空间关系，适应新的宽高比例。" : "",

@@ -191,9 +191,10 @@ async function combineReferenceImagesForEdit(
   requireAll = false,
 ): Promise<string | null> {
   if (references.length === 0) return null;
+  if (references.length > 12) throw new Error("本张画面的参考图超过12张，请减少出镜角色或选择纯文字生图。");
   if (references.length === 1) return references[0].dataUrl;
   try {
-    const items = await Promise.all(references.slice(0, 6).map(async reference => ({
+    const items = await Promise.all(references.map(async reference => ({
       ...reference,
       image: await loadDataUrlImage(reference.dataUrl),
     })));
@@ -230,7 +231,7 @@ async function combineReferenceImagesForEdit(
     });
     return canvas.toDataURL("image/png");
   } catch {
-    if (requireAll) throw new Error("无法合成两张参考图，请检查图片或改选一张。");
+    if (requireAll) throw new Error("参考图读取或合成失败，请检查各角色图片，或选择纯文字生图。");
     return references[0].dataUrl;
   }
 }
@@ -873,6 +874,8 @@ export async function generateImageFromConfiguredApi(params: {
   explicitReferenceImages?: readonly { dataUrl: string; label: string }[];
   portraitOutput?: boolean;
   landscapeOutput?: boolean;
+  /** Caller owns blob persistence (e.g. facing assets). */
+  persistResult?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult | null> {
@@ -933,7 +936,7 @@ export async function generateImageFromConfiguredApi(params: {
     const mimeType = data.mimeType || "image/png";
     const blob = base64ToBlob(data.b64, mimeType);
     throwIfAborted(params.signal);
-    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    const mediaRef = params.persistResult === false ? "" : await storeMediaBlob(blob, mimeType, "image");
     throwIfAborted(params.signal);
     return {
       mediaRef,
@@ -1017,6 +1020,7 @@ export async function generateImageFromConfiguredApi(params: {
       characterPrompt ? `【角色固定外观】${characterPrompt}` : "",
       anchorsPrompt ? `【角色特定锚点】${anchorsPrompt}` : "",
       userPrompt,
+      referenceInputs.length ? `【参考身份顺序】${referenceInputs.map((item,index)=>`${index+1}. ${item.label}`).join("；")}` : "",
       referenceInputs.length > 1 ? `【参考图说明】上传的是分格参考板，共 ${referenceInputs.length} 格；请按每格下方标签分别还原人物或物件，不要把不同格的身份混合。` : "",
     ].filter(Boolean).join("\n\n"),
     openaiSettings.extraPrompt,
@@ -1030,7 +1034,7 @@ export async function generateImageFromConfiguredApi(params: {
   const mimeType = data.mimeType || "image/png";
   const blob = base64ToBlob(data.b64, mimeType);
   throwIfAborted(params.signal);
-  const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+  const mediaRef = params.persistResult === false ? "" : await storeMediaBlob(blob, mimeType, "image");
   throwIfAborted(params.signal);
   return {
     mediaRef,

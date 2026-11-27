@@ -31,7 +31,7 @@ import { createBackupBlob, importBackupBlob } from "@/lib/data-management/backup
 import { downloadFile } from "@/lib/download-utils";
 import type { FavoriteExportEntity } from "@/lib/favorites-transfer";
 
-type FavoritesTab = "chat" | "story" | "recent";
+type FavoritesTab = "chat" | "story" | "facing" | "dwelling" | "recent";
 
 type EntitySummary = {
   key: string;
@@ -102,7 +102,7 @@ function useFavoriteMediaUrl(rawUrl?: string): string | null {
     let cancelled = false;
     let objectUrl: string | null = null;
     const storedMedia = isMediaStoreRef(raw);
-    const load = storedMedia ? loadMediaObjectUrl(raw) : getChatImageFromIndexedDB(raw.replace(/^asset:\/\//, ""));
+    const load = storedMedia ? loadMediaObjectUrl(raw) : getChatImageFromIndexedDB(raw.replace(/^(?:asset|theme-asset):\/\//, ""));
     void load.then(value => {
       if (!value) return;
       if (cancelled) {
@@ -482,6 +482,8 @@ export function FavoritesApp({ onClose }: { onClose: () => void }) {
 
       <nav className="favorites-tabs" aria-label="收藏分类">
         <button type="button" data-active={tab === "chat" ? "1" : "0"} onClick={() => { setTab("chat"); setSelectedEntity(null); }}><MessageCircle size={18} /><span>聊天室</span></button>
+        <button type="button" data-active={tab === "facing" ? "1" : "0"} onClick={()=>{setTab("facing");setSelectedEntity(null);}}><Bookmark size={18}/><span>面对面</span></button>
+        <button type="button" data-active={tab === "dwelling" ? "1" : "0"} onClick={()=>{setTab("dwelling");setSelectedEntity(null);}}><Bookmark size={18}/><span>栖所</span></button>
         <button type="button" data-active={tab === "story" ? "1" : "0"} onClick={() => { setTab("story"); setSelectedEntity(null); }}><Bookmark size={18} /><span>剧情</span></button>
         <button type="button" data-active={tab === "recent" ? "1" : "0"} onClick={() => { setTab("recent"); setSelectedEntity(null); }}><ImageIcon size={18} /><span>最近收藏</span></button>
       </nav>

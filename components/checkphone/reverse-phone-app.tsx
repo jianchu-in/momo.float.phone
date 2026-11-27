@@ -4,7 +4,7 @@ import { isAbortError } from "@/lib/abort-utils";
 import { bgSetTimeout } from "@/lib/bg-timer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { BookOpen, Globe, LockKeyhole, MessageCircle, ShoppingBag, Settings, History, ChevronLeft } from "lucide-react";
+import { Bookmark, BookOpen, Globe, LockKeyhole, MessageCircle, ShoppingBag, Settings, History, ChevronLeft } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import { loadShoppingState } from "@/lib/shopping-storage";
 import { loadBooks } from "@/lib/reading-storage";
@@ -15,12 +15,13 @@ import { ReversePhoneReplay, freezeReverseFrame } from "./reverse-phone-replay";
 import { ReversePhoneHistory } from "./reverse-phone-history";
 import { useReverseRecords } from "./use-reverse-records";
 import { ReversePhoneSettings } from "./reverse-phone-settings";
+import { ReverseFavoritesPage } from "./reverse-favorites-page";
 import { UserBrowser } from "./user-browser";
 import { useReversePhone, type ReverseScreen } from "./use-reverse-phone";
 import "@/styles/reverse-phone.css";
 
 const PhoneChatApp = dynamic(() => import("@/components/chat/phone-chat-app").then(module => module.PhoneChatApp), { ssr: false });
-const ICONS = { chat: MessageCircle, shopping: ShoppingBag, browser: Globe, reading: BookOpen };
+const ICONS = { chat: MessageCircle, shopping: ShoppingBag, browser: Globe, reading: BookOpen, favorites: Bookmark };
 
 function Avatar({ src, name }: { src?: string | null; name: string }) {
   return <span className="rp-avatar">{src ? <img src={src} alt={name} onError={event => { event.currentTarget.style.display = "none"; }} /> : name.slice(0, 1)}</span>;
@@ -33,6 +34,7 @@ function InspectionPage({ screen, scope, characterId, onBack, onScreen }: { scre
   if (screen.locked || p.modes[screen.app] === "locked") return <section className="rp-panel rp-locked"><LockKeyhole size={46} /><h2>该APP已被用户隐私锁定</h2><p>{REVERSE_APPS[screen.app]}的内容不可查看。</p></section>;
   if (p.modes[screen.app] === "hidden") return <section className="rp-panel rp-locked"><p>当前应用不可用</p></section>;
   if (screen.app === "chat") return <div className="rp-chat-host"><PhoneChatApp key={`${scope.key}:${characterId}`} onClose={onBack} inspectionControl={screen.chat ?? { page: "messages" }} inspectionViewer={{characterId,scope}} /></div>;
+  if (screen.app === "favorites") return <ReverseFavoritesPage scope={scope} characterId={characterId} screen={screen} onScreen={onScreen} onBack={onBack} />;
   const section = screen.section ?? (screen.app === "shopping" ? "cart" : screen.app === "browser" ? "history" : "shelf");
   const shopping = screen.app === "shopping" ? loadShoppingState() : null;
   const entries = screen.app === "browser" ? loadUserBrowser(scope).filter(item => p.browser[item.kind]) : [];
@@ -72,7 +74,7 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
   const characters = loadCharacters(), character = characters.find(item => item.id === (run.running ? run.session?.characterId : run.characterId));
   const settings = loadReverseSettings(scope);
   const records = useReverseRecords(scope);
-  useEffect(() => { let live = true; void getThemeAssetMap([theme.wallpaperAssetId, ...(["chat","shopping","reading"] as const).map(app=>theme.iconSkins[app])].filter((id): id is string => !!id)).then(value => { if (live) setAssets(value); }); return () => { live = false; }; }, [theme]);
+  useEffect(() => { let live = true; void getThemeAssetMap([theme.wallpaperAssetId, ...(["chat","shopping","reading","favorites"] as const).map(app=>theme.iconSkins[app])].filter((id): id is string => !!id)).then(value => { if (live) setAssets(value); }); return () => { live = false; }; }, [theme]);
   useEffect(() => { if (!run.toast) return; const timer = setTimeout(() => run.setToast(""), 2600); return () => clearTimeout(timer); }, [run.toast]);
   useEffect(()=>{
     if(run.running)started.current=true;
@@ -110,7 +112,7 @@ export function ReversePhoneApp({ initialCharacterId, resumeSessionId, autoConti
                 {run.screen.app === "desktop" ? <div className="rp-desktop">
                   {theme.wallpaperAssetId && assets[theme.wallpaperAssetId] && <div className="rp-wallpaper" style={{ backgroundImage: `url(${assets[theme.wallpaperAssetId]})`, backgroundPosition: `${theme.wallpaperX}% ${theme.wallpaperY}%`, backgroundSize: "cover", transform: `scale(${theme.wallpaperScale / 100})`, filter: `blur(${theme.wallpaperBlur}px)`, opacity: theme.wallpaperOpacity }} />}
                   <div className="rp-owner"><Avatar src={scope.userAvatar} name={scope.userName} /><h2>{scope.userName}的手机</h2><p>{run.running ? run.session?.origin === "stealth" ? "角色正在自主查看" : "正在共享屏幕" : "邀请角色来看看你的手机"}</p></div>
-                  <div className="rp-app-grid">{(Object.keys(REVERSE_APPS) as ReverseApp[]).map(app => { const Icon = ICONS[app], skin = app === "browser" ? undefined : theme.iconSkins[app]; return <button className={`rp-app-icon rp-icon-${app}`} data-rp-target={`app:${app}`} key={app} onClick={() => app === "browser" ? setPanel("browser") : run.setToast("选择角色后，点击下方开始查岗。浏览器可以直接进入编辑。") }><span>{skin && assets[skin] ? <img src={assets[skin]} alt="" /> : <Icon size={29} strokeWidth={1.7} />}</span><b>{REVERSE_APPS[app]}</b></button>; })}</div>
+                  <div className="rp-app-grid">{(Object.keys(REVERSE_APPS) as ReverseApp[]).map(app => { const Icon = ICONS[app], skin = app === "browser" ? undefined : theme.iconSkins[app]; return <button className={`rp-app-icon rp-icon-${app}`} data-rp-target={`app:${app}`} key={app} onClick={() => app === "browser" ? setPanel("browser") : app === "favorites" ? run.setScreen({app:"favorites"}) : run.setToast("选择角色后，点击下方开始查岗。浏览器可以直接进入编辑。") }><span>{skin && assets[skin] ? <img src={assets[skin]} alt="" /> : <Icon size={29} strokeWidth={1.7} />}</span><b>{REVERSE_APPS[app]}</b></button>; })}</div>
                   {!run.running && <p className="rp-desktop-tip">应用权限在右上角设置中配置</p>}
                 </div> : <InspectionPage scope={scope} characterId={run.session?.characterId ?? run.characterId} screen={run.screen} onScreen={run.setScreen} onBack={back} />}
               </div>

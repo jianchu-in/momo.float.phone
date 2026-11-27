@@ -101,6 +101,11 @@ async function main(){
  await maps.deleteFacingAtlas(imported.atlas.id);
  assert.equal(location.resolveFacingLocation({...storage.createFacingMeeting('b',null,'main'),scene:{sceneName:'厨房'}}).place.id,'kitchen','direct home dialogue resolves its actual room');
  assert.equal(location.resolveFacingLocation({...storage.createFacingMeeting('a',null,'main'),scene:{sceneName:'商场',sceneId:parkBg.id}}).place.id,'mall','public scenes resolve without home ownership');
+ const extraHome={id:'a-home',name:'角色a的家',description:'',x:3,y:3};
+ atlas=await maps.saveMapPage(atlas.id,{...atlas.pages[0],places:[...atlas.pages[0].places,extraHome]});atlas=await maps.createMapInterior(atlas.id,extraHome);
+ const aPage=atlas.pages.find(page=>page.parentPlaceId===extraHome.id);atlas=await maps.saveMapPage(atlas.id,{...aPage,places:[{id:'a-kitchen',name:'厨房',description:'',x:1,y:1}]});atlas=await life.savePlaceLife(atlas.id,'a-home',{homeCharacterIds:['a']});
+ const multi={...storage.createFacingMeeting('a',null,'main'),participantIds:['a','b'],scene:{sceneName:'角色b · 厨房',sceneId:bg.id},mapContext:{atlasId:atlas.id,placeId:'a-kitchen',participantIds:['a','b'],secret:false,description:'',sceneName:'角色a · 厨房'}};
+ assert.equal(location.resolveFacingLocation(multi).place.id,'kitchen','B backdrop changes shared location and ambience even when A owns a same-named room');
  await act(async()=>root.unmount());
  console.log('PASS place life: inherited ambience, independent pause/mute/autoplay/ducking/cleanup, home scene ownership and audio export/import.');
 }

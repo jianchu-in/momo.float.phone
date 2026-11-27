@@ -16,7 +16,7 @@ export function reverseScope(): ReverseScope {
 }
 export function assertReverseScope(scope: ReverseScope) { if (reverseScope().key !== scope.key) throw new Error("当前用户或聊天账号已切换，已停止本次查岗。"); }
 export function defaultReversePermissions(): ReversePermissions {
-  return { modes: { chat: "open", shopping: "open", browser: "open", reading: "open" },
+  return { modes: { chat: "open", shopping: "open", browser: "open", reading: "open", favorites: "open" },
     chat: { targets: null, reply: true, remark: true, assets: true, balance: true }, shopping: { cart: true, orders: true }, browser: { history: true, bookmarks: true } };
 }
 function settingsKey(scope: ReverseScope) { return REVERSE_PREFIX + "settings:" + scope.key; }

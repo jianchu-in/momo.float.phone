@@ -7,7 +7,7 @@ import { FacingMapApp } from "./facing-map-app";
 import { FacingMapSettings } from "./facing-map-panels";
 import { loadFacingAtlas, mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
 import {bigMapPlace} from "@/lib/facing-place-life";
-import {resolveFacingLocation,bindFacingLocation,facingLocationCandidates} from "@/lib/facing-location";
+import {resolveFacingLocation,bindFacingLocation,facingMeetingLocationCandidates} from "@/lib/facing-location";
 import {FacingAmbience,type FacingAmbienceControl} from "./facing-ambience";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -16,9 +16,11 @@ import { createFacingMeeting, deleteFacingAssets, loadFacingUsableAssets, change
 import { sceneForMapPlace } from "@/lib/facing-map-scenes";
 import { continueFacingInStory } from "@/lib/story-storage";
 import { loadUserIdentities, resolveUserIdentity } from "@/lib/settings-storage";
-import { saveFacingParticipants } from "@/lib/facing-storage";
+import { facingCastScenes, facingEffectiveSettings, saveFacingCommon, saveFacingGroup, saveFacingPreset, applyFacingPreset, saveFacingParticipants } from "@/lib/facing-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
 import "@/styles/facing-life.css";
+import { FacingCgEditor } from "./facing-cg-editor";
+import { FacingVoiceBinding } from "./facing-voice-binding";
 import { FacingProducts } from "./facing-life-panels";
 import { FacingAssets } from "./facing-assets";
 import { FacingRoom } from "./facing-room";
@@ -79,6 +81,12 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const [preferences, setPreferences] = useState(loadFacingSettings);
   const character = characters.find(item => item.id === preferences.characterId);
   const participantIds = [...new Set([preferences.characterId, ...(preferences.participantIds ?? [])])].filter((id): id is string => !!id && characters.some(item => item.id === id));
+  const [castTab, setCastTab] = useState<"single" | "groups" | "create">("single");
+  const [groupName, setGroupName] = useState("");
+  const [settingsOwnerId, setSettingsOwnerId] = useState<string>();
+  const [presetName, setPresetName] = useState("");
+  const [presetId, setPresetId] = useState("");
+  const [presetRevision, setPresetRevision] = useState(0);
   const [castDraft, setCastDraft] = useState(participantIds);
   const castNames = participantIds.map(id => characters.find(item => item.id === id)!.name).join("、");
   const [page, setPage] = useState<Page>("home");
@@ -113,18 +121,21 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const [record, setRecord] = useState<FacingMeeting>();
   const [recordType, setRecordType] = useState<FacingMeeting["type"]>("main");
   const [error, setError] = useState("");
+  const [retryCg,setRetryCg]=useState(false);
   const [savingReference, setSavingReference] = useState(false);
   const [assets, setAssets] = useState(() => character ? loadFacingUsableAssets(character.id) : []);
   const autoVisual = useFacingSceneGeneration(
     updated => setMeeting(current => current?.id === updated.id ? updated : current),
     (characterId, updated) => { if (loadFacingSettings().characterId === characterId) setAssets(updated); },
   );
-  const current = character ? preferences.characters[character.id] ?? {} : {};
+  const settingsOwner = characters.find(item => item.id === settingsOwnerId && participantIds.includes(item.id)) ?? character;
+  const current = character ? facingEffectiveSettings(character.id, preferences) : {};
+  const referenceSettings = settingsOwner ? preferences.characters[settingsOwner.id]?.autoVisual : undefined;
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
-  const groups = useMemo(()=>groupFacingScenes(assets, current.portraitId),[assets,current.portraitId]);
+  const groups = useMemo(()=>facingCastScenes(draftMeeting && sheet === "new" ? facingParticipantIds(draftMeeting) : participantIds, Object.fromEntries(characters.map(item => [item.id, item.name]))),[assets,castNames,current.portraitId,draftMeeting,sheet]);
   const castKey = [...participantIds].sort().join("|");
   const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId, true)
-    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey) : [], [character, identityId, page, castKey, recordRevision]);
+    .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey && (!item.groupId || item.groupId === preferences.groupId)) : [], [character, identityId, page, castKey, recordRevision]);
   const latest = meetings[0];
   const initialAsset = assets.find(item => item.id === (current.useScene === false ? current.fullPortraitId ?? current.portraitId : current.sceneId ?? current.portraitId));
   const initialGroup = groups.find(group => group.name === (initialAsset ? facingAssetLocation(initialAsset) : undefined)) ?? groups[0];
@@ -132,16 +143,16 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const room = meeting ? resolveFacingScene(facingMeetingPosition(meeting), groups, assets) : homeScene;
   const records = page === "records" ? meetings.filter(item => item.type === recordType) : [];
 
-  async function selectCharacters() {
+  async function selectCharacters(ids = castDraft, groupId?: string) {
     setError("");
-    try { setPreferences(await saveFacingParticipants(castDraft)); setAssets(loadFacingUsableAssets(castDraft[0])); setSheet(null); }
+    try { setPreferences(await saveFacingParticipants(ids, groupId)); setAssets(loadFacingUsableAssets(ids[0])); setSheet(null); }
     catch { setError("角色选择保存失败。"); }
   }
 
   function openCharacters() { setCastDraft(participantIds); setSheet("characters"); }
 
   async function changeSetting(patch: Partial<FacingCharacterSettings>) {
-    if (character) {setPreferences(await saveFacingSettings(character.id, patch));setAssets(loadFacingUsableAssets(character.id));}
+    if (character) {setPreferences(await saveFacingCommon(patch));setAssets(loadFacingUsableAssets(character.id));}
   }
 
   function commitSetting(patch: Partial<FacingCharacterSettings>) {
@@ -150,7 +161,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   }
 
   function openAssets(from: "settings" | "home" | "room") {
-    setAssetEditId(undefined);setAssetOwnerId(character?.id);
+    setAssetEditId(undefined);setAssetOwnerId(from === "settings" ? settingsOwner?.id : character?.id);
     setAssetOrigin(from);
     setPage("assets");
   }
@@ -164,8 +175,8 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     if (item.characterId !== character?.id || [...facingParticipantIds(item)].sort().join("|")!==castKey) {
       setAssets(loadFacingUsableAssets(item.characterId));
       setPreferences(current => ({ ...current, characterId: item.characterId,
-        participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)] }));
-      void saveFacingParticipants([item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)])
+        groupId: item.groupId, participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)] }));
+      void saveFacingParticipants([item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)], item.groupId)
         .then(setPreferences).catch(() => setError("见面角色选择保存失败。"));
     }
     setRecordType(item.type);
@@ -178,7 +189,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     const preferred = parent ? facingMeetingPosition(parent).sceneName : homeScene.position.sceneName;
     setOpeningScene(groups.some(group => group.name === preferred) ? preferred : initialGroup?.name ?? FACING_DEFAULT_SCENE);
     const draft = createFacingMeeting(character.id, identityId, type, parent);
-    setDraftMeeting(parent ? draft : { ...draft, participantIds });
+    setDraftMeeting(parent ? draft : { ...draft, participantIds, groupId: preferences.groupId });
     setSheet("new");
   }
 
@@ -189,7 +200,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     try {
       const position = facingScenePosition(groups.find(group => group.name === openingScene));
       const started = await saveFacingMeetingStart(draftMeeting, position);
-      setPreferences(await saveFacingParticipants(facingParticipantIds(started)));
+      setPreferences(await saveFacingParticipants(facingParticipantIds(started), started.groupId));
       setSheet(null);
       openRoom(started);
     } catch {
@@ -249,9 +260,9 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
       initialDraft={roomDrafts.current.get(meeting.id)?.text} initialPhoto={roomDrafts.current.get(meeting.id)?.photo} onDraft={(text,photo)=>roomDrafts.current.set(meeting.id,{text,photo})}
-      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting} ambience={ambience} locationOptions={character?facingLocationCandidates(character.id):[]} onLocation={async location=>{const saved=await bindFacingLocation(meeting,location);setMeeting(saved);setAudioLocation(location);}}
+      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting} ambience={ambience} locationOptions={facingMeetingLocationCandidates(meeting)} onLocation={async location=>{const saved=await bindFacingLocation(meeting,location);setMeeting(saved);setAudioLocation(location);}}
       autoAsset={(meeting.visual??meeting.lastCg)?loadCgAssets((meeting.visual??meeting.lastCg)?.characterId??meeting.characterId).find(asset => asset.id === (meeting.visual??meeting.lastCg)?.assetId):undefined} autoProgress={autoVisual.progress[meeting.id]}
-      onCompleted={completed => autoVisual.check(completed, character)} onRetryCg={()=>autoVisual.retry(meeting.id)}
+      onCompleted={completed => autoVisual.check(completed, character)} onRetryCg={()=>setRetryCg(true)}
       onMap={() => { setMapOrigin("room"); setPage("map"); }}
       onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,loadUserIdentities().find(item=>item.id===meeting.identityId)??resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
       onScene={async name=>{const group=groups.find(item=>item.name===name);if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
@@ -260,15 +271,24 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
       <Header title="角色设置" onBack={() => setPage(settingOrigin)} />
-      <main className="facing-scroll facing-form">
-        <h2 className="facing-record-title">{character.name}</h2>
+      <main className="facing-scroll facing-form" key={`settings:${presetRevision}`}>
+        <h2 className="facing-record-title">统一参数 · {castNames}</h2>
+        <label>素材与语音所属角色<select aria-label="编辑角色" value={settingsOwner?.id ?? character.id} onChange={event => setSettingsOwnerId(event.target.value)}>{participantIds.map(id => <option key={id} value={id}>{characters.find(item => item.id === id)?.name}</option>)}</select></label>
+        <FacingVoiceBinding characterId={settingsOwner?.id ?? character.id} />
         <div className="facing-list">
           <button type="button" onClick={() => { setMapSettingsOrigin("settings"); setPage("map-settings"); }}><MapIcon size={18} /><span>地图设置</span><ChevronRight size={17} /></button>
           <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材</span><ChevronRight size={17} /></button>
           <button type="button" onClick={()=>{setAssetOrigin("settings");setAssetEditId(undefined);setPage("shared-assets");}}><Images size={18}/><span>通用场景素材</span><ChevronRight size={17}/></button>
           <button type="button" onClick={()=>setPage("products")}><Images size={18}/><span>生图成品</span><ChevronRight size={17}/></button>
         </div>
-        <section className="facing-form" key={character.id} aria-label="生成 CG 图（新画面）">
+        <section className="facing-form" key={`presets:${presetId}:${preferences.common ? JSON.stringify(preferences.common) : character.id}`} aria-label="参数预设">
+          <h2 className="facing-record-title">参数预设</h2>
+          <input aria-label="预设名称" value={presetName} placeholder="预设名称" onChange={event => setPresetName(event.target.value)} />
+          <button className="facing-small" disabled={!presetName.trim()} onClick={() => void saveFacingPreset(presetName).then(setPreferences).catch(cause => setError(String(cause)))}>保存当前参数</button>
+          <select aria-label="选择参数预设" value={presetId} onChange={event => setPresetId(event.target.value)}><option value="">选择预设</option>{preferences.presets?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+          <button className="facing-small" disabled={!presetId} onClick={() => void applyFacingPreset(presetId).then(saved=>{setPreferences(saved);setPresetRevision(value=>value+1);}).catch(cause => setError(String(cause)))}>应用预设</button>
+        </section>
+        <section className="facing-form" key={`cg:${presetId}`} aria-label="生成 CG 图（新画面）">
           <h2 className="facing-record-title">生成 CG 图（新画面）</h2>
           <div className="facing-list facing-settings-list facing-auto-settings">
             <label>每 N 轮生成 CG 图<input type="checkbox" role="switch" checked={current.autoVisual?.enabled === true}
@@ -285,13 +305,14 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
               }} /></label>
             <label>CG 自动展示轮数<input type="number" min={0} max={Math.max(0,(current.autoVisual?.interval??FACING_VISUAL_INTERVAL)-1)} step={1} key={`display:${current.autoVisual?.interval}:${current.autoVisual?.displayRounds}`} defaultValue={facingCgDisplayRounds(current.autoVisual)} onBlur={event=>{const value=event.currentTarget.valueAsNumber;const max=Math.max(0,(current.autoVisual?.interval??FACING_VISUAL_INTERVAL)-1);if(!Number.isSafeInteger(value)||value<0||value>max){event.currentTarget.value=String(facingCgDisplayRounds(current.autoVisual));return;}commitSetting({autoVisual:{displayRounds:value}});}}/></label>
             <p className="facing-auto-help">展示轮数必须小于生图间隔。0 表示仅手动查看；图片显示后开始计数，一次完整对话回复算一轮。</p>
-            <label>CG 生图额外要求<textarea key={`cg-prompt:${character.id}`} defaultValue={current.autoVisual?.extraPrompt??""} placeholder="例如：用户第一视角、真实摄影、温馨光线、增强代入感……" onBlur={e=>commitSetting({autoVisual:{extraPrompt:e.target.value}})}/></label>
+            <label>CG 生图额外要求<textarea key={`cg-prompt:${current.autoVisual?.extraPrompt}`} defaultValue={current.autoVisual?.extraPrompt??""} placeholder="例如：用户第一视角、真实摄影、温馨光线、增强代入感……" onBlur={e=>commitSetting({autoVisual:{extraPrompt:e.target.value}})}/></label>
+            <label>人物参考方式<select value={current.autoVisual?.referenceMode ?? "depicted"} onChange={event => commitSetting({autoVisual:{referenceMode:event.target.value as "text"|"depicted"}})}><option value="depicted">按本张画面的出镜角色</option><option value="text">纯文字生图</option></select></label>
             <label>人物参考图<select value={current.autoVisual?.referenceSource ?? "character"}
               onChange={event => commitSetting({ autoVisual: { referenceSource: event.target.value as "character" | "avatar" | "upload" } })}>
               <option value="character">角色参考图（没有时用头像）</option><option value="avatar">角色头像</option><option value="upload">自选图片</option>
             </select></label>
             {current.autoVisual?.referenceSource === "upload" && <div className="facing-auto-reference">
-              {current.autoVisual.referenceMediaRef && <ShownImage mediaRef={current.autoVisual.referenceMediaRef} />}
+              {referenceSettings?.referenceMediaRef && <ShownImage mediaRef={referenceSettings?.referenceMediaRef} />}
               <label>{savingReference ? "保存中…" : "选择参考图"}<input type="file" accept="image/*" disabled={savingReference}
                 onChange={event => {
                   const file = event.currentTarget.files?.[0];
@@ -299,7 +320,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
                   if (!file) return;
                   setSavingReference(true);
                   setError("");
-                  void storeShownImage(file).then(referenceMediaRef => changeSetting({ autoVisual: { referenceMediaRef } }))
+                  void storeShownImage(file).then(referenceMediaRef => saveFacingSettings(settingsOwner?.id ?? character.id, { autoVisual: { referenceMediaRef } }).then(setPreferences))
                     .catch(() => setError("人物参考图保存失败，请重新选择。"))
                     .finally(() => setSavingReference(false));
                 }} /></label>
@@ -311,7 +332,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
         <div className="facing-list facing-settings-list">
           <label>生成格式<select aria-label="生成格式" value={current.replyFormat??"alternating"} onChange={e=>commitSetting({replyFormat:e.target.value as FacingCharacterSettings["replyFormat"]})}>{Object.entries(FACING_REPLY_FORMATS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
           <label>对话符号<select aria-label="对话符号" value={current.dialogueNotation??"plain"} onChange={e=>commitSetting({dialogueNotation:e.target.value as FacingCharacterSettings["dialogueNotation"]})}>{Object.entries(FACING_DIALOGUE_NOTATIONS).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
-          <label>额外提示词<textarea key={`reply-prompt:${character.id}`} defaultValue={current.extraPrompt??""} placeholder="统一文风、人称、避免的套话等，每次生成回复时带入" onBlur={e=>commitSetting({extraPrompt:e.target.value})}/></label>
+          <label>额外提示词<textarea key={`reply-prompt:${current.extraPrompt}`} defaultValue={current.extraPrompt??""} placeholder="统一文风、人称、避免的套话等，每次生成回复时带入" onBlur={e=>commitSetting({extraPrompt:e.target.value})}/></label>
           <label>回复长度<select value={current.length ?? "short"} onChange={event => commitSetting({ length: event.target.value as FacingCharacterSettings["length"] })}>
             {Object.entries(FACING_REPLY_LENGTHS).map(([value, option]) => <option key={value} value={value}>{option.label} · 约 {option.characters} 字</option>)}
             <option value="custom">自定义字数</option>
@@ -355,7 +376,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
         setPreferences(loadFacingSettings());
       }} />}
     {page === "shared-assets" && <FacingAssets character={{id:FACING_SHARED_CHARACTER_ID,name:"通用场景",avatar:"",createdAt:"",updatedAt:""} as Character} assets={loadFacingAssets(FACING_SHARED_CHARACTER_ID)} groups={groupFacingScenes(loadFacingAssets(FACING_SHARED_CHARACTER_ID))} initialAssetId={assetEditId} onBack={()=>setPage(assetOrigin)} onChange={()=>{if(character)setAssets(loadFacingUsableAssets(character.id));setRecordRevision(v=>v+1);}} onDelete={async ids=>{await deleteFacingAssets(FACING_SHARED_CHARACTER_ID,ids);if(character)setAssets(loadFacingUsableAssets(character.id));}}/>}
-    {page === "products" && <FacingProducts assets={assets} onBack={()=>setPage("settings")}/>}
+    {page === "products" && <FacingProducts onChange={()=>{if(character)setAssets(loadFacingUsableAssets(character.id));}} assets={participantIds.flatMap(loadFacingAssets)} onBack={()=>setPage("settings")}/>}
     {page === "records" && character && <>
       <Header title="见面记录" onBack={() => setPage("home")} />
       <main className="facing-scroll facing-form">
@@ -383,15 +404,11 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     </>}
     {page === "record" && character && record && <MeetingTranscript record={record} character={character}
       onBack={() => setPage("records")} onContinue={() => openRoom(record)} onFork={() => prepareMeeting("branch", record)} />}
-    {sheet === "characters" && <FacingSheet title="选择见面角色 · 可多选" close={() => setSheet(null)}>
-      <p className="facing-hint">选择一位进入单人见面，选择多位进入多人见面，各自保留见面记录。</p>
-      <div className="facing-list">
-        {characters.map(item => <button type="button" key={item.id} aria-pressed={castDraft.includes(item.id)} onClick={() => setCastDraft(current => current.includes(item.id) ? current.filter(id => id !== item.id) : [...current, item.id])}>
-          <span className="facing-character-avatar">{item.avatar ? <img alt="" src={item.avatar} /> : <UserRound size={19} />}</span>
-          <span>{item.name}</span>{castDraft.includes(item.id) && <small>已选择 ✓</small>}
-        </button>)}
-      </div>
-      <button type="button" className="facing-primary" disabled={!castDraft.length} onClick={() => void selectCharacters()}>确认选择 · {castDraft.length}人</button>
+    {sheet === "characters" && <FacingSheet title="选择单人或多人组" close={() => setSheet(null)}>
+      <div className="facing-segments">{([["single","单人"],["groups","多人组"],["create","新建多人组"]] as const).map(([value,label]) => <button key={value} aria-pressed={castTab===value} onClick={()=>setCastTab(value)}>{label}</button>)}</div>
+      {castTab === "single" && <div className="facing-list">{characters.map(item => <button key={item.id} onClick={()=>void selectCharacters([item.id])}>{item.name}</button>)}</div>}
+      {castTab === "groups" && <div className="facing-list">{preferences.groups?.map(group => <button key={group.id} onClick={()=>void selectCharacters(group.participantIds.filter(id=>characters.some(item=>item.id===id)), group.id)}><strong>{group.name}</strong><small>{group.participantIds.map(id=>characters.find(item=>item.id===id)?.name).filter(Boolean).join("、")}</small></button>)}{!preferences.groups?.length && <p>尚未保存多人组，可在“新建多人组”中选择角色。</p>}</div>}
+      {castTab === "create" && <><input aria-label="多人组名称" value={groupName} onChange={event=>setGroupName(event.target.value)} placeholder="多人组名称"/><div className="facing-list">{characters.map(item => <button key={item.id} aria-pressed={castDraft.includes(item.id)} onClick={()=>setCastDraft(old=>old.includes(item.id)?old.filter(id=>id!==item.id):[...old,item.id])}>{item.name}{castDraft.includes(item.id)?" ✓":""}</button>)}</div><button className="facing-primary" disabled={castDraft.length<2||!groupName.trim()} onClick={()=>void saveFacingGroup(groupName,castDraft).then(saved=>{setPreferences(saved);setAssets(loadFacingUsableAssets(saved.characterId!));setSheet(null);}).catch(cause=>setError(String(cause)))}>保存并选择多人组</button></>}
     </FacingSheet>}
     {sheet === "new" && <FacingSheet title="选择开场场景" close={() => { if (!starting) setSheet(null); }}>
       <label className="facing-opening-scene">开场场景<select value={openingScene} disabled={starting} onChange={event => setOpeningScene(event.target.value)}>
@@ -410,6 +427,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       </fieldset>
       <button type="button" className="facing-primary" disabled={starting} onClick={() => void startMeeting()}>开始对话</button>
     </FacingSheet>}
+    {retryCg&&meeting&&<FacingSheet title="重试CG" close={()=>setRetryCg(false)}><FacingCgEditor initial={{description:meeting.turns.at(-1)?.visualDescription,depictedCharacterIds:meeting.turns.at(-1)?.depictedCharacterIds,userVisible:meeting.turns.at(-1)?.userVisible,referenceMode:meeting.turns.at(-1)?.visualReferenceMode??current.autoVisual?.referenceMode}} participantIds={facingParticipantIds(meeting)} onCancel={()=>setRetryCg(false)} onGenerate={async draft=>{await autoVisual.retry(meeting.id,draft);setRetryCg(false);}}/></FacingSheet>}
     {error && <p className="facing-global-error" role="alert">{error}</p>}
   </div>;
 }

@@ -235,6 +235,7 @@ function StoryIllustrationSettingsFields({ settings, onChange }: { settings: Sto
       <textarea value={settings.extraPrompt ?? ""} maxLength={3000} placeholder="例如偏冷的自然光，保留胶片质感"
         onChange={event => onChange({ ...settings, extraPrompt: event.target.value })} />
     </label>
+    <label>多人剧情人物参考<select value={settings.referenceMode ?? "text"} onChange={event=>onChange({...settings,referenceMode:event.target.value as "text"|"depicted"})}><option value="text">纯文字生图</option><option value="depicted">按本张画面的出镜角色</option></select></label>
     <ToggleRow title="合照时加入用户参考图" checked={settings.includeUserReference === true}
       onChange={includeUserReference => onChange({ ...settings, includeUserReference })} />
     <ToggleRow title="生图前跳过 NSFW 场景" checked={settings.skipNsfw === true}

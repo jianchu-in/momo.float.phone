@@ -11,7 +11,7 @@ export function isFavoriteBackupItem(value: unknown): value is FavoriteItem {
   const item = value as FavoriteItem;
   return [item.id, item.entityId, item.entityName, item.scopeKey, item.scopeLabel, item.containerId, item.containerName,
     item.createdAt, item.updatedAt, item.sourceCreatedAt, item.title, item.preview].every(field => typeof field === "string")
-    && (item.category === "chat" || item.category === "story")
+    && ["chat", "story", "facing", "dwelling"].includes(item.category)
     && (item.entityType === "character" || item.entityType === "group")
     && ["message", "bundle", "image", "moment"].includes(item.kind)
     && [item.tags, item.participantIds, item.participantNames, item.sourceItemIds].every(list => Array.isArray(list) && list.every(field => typeof field === "string"))
@@ -27,7 +27,7 @@ export function matchesFavoriteExportEntity(item: FavoriteItem, entity?: Favorit
 }
 
 const MEDIA_FIELD = /(?:mediaUrl|photoUrl|imageUrl|audioUrl|videoUrl|thumbnailUrl|stickerUrl|coverUrl|backgroundUrl|fileUrl|poster|src|assetId|mediaRef)$/i;
-const LOCAL_REF = /^(?:media-store:\/\/|asset:\/\/|blob:)/i;
+const LOCAL_REF = /^(?:media-store:\/\/|asset:\/\/|theme-asset:\/\/|blob:)/i;
 
 async function fetchMedia(ref: string, image: boolean): Promise<Blob> {
   const signal = AbortSignal.timeout(30_000);
@@ -64,7 +64,7 @@ export function createFavoriteExportTransform(entity?: FavoriteExportEntity, exc
     } else if (/^(?:https?:|blob:|\/)/i.test(ref)) {
       blob = await fetchMedia(ref, image);
     } else {
-      const dataUrl = await getChatImageFromIndexedDB(ref.replace(/^asset:\/\//, ""));
+      const dataUrl = await getChatImageFromIndexedDB(ref.replace(/^(?:asset|theme-asset):\/\//, ""));
       if (!dataUrl) throw new Error("收藏引用的本机素材不存在");
       const response = await fetch(dataUrl);
       blob = await response.blob();
@@ -76,7 +76,7 @@ export function createFavoriteExportTransform(entity?: FavoriteExportEntity, exc
 
   const richText = async (text: string): Promise<string> => {
     // HTML attributes, Markdown images and CSS images can also carry local/temporary URLs.
-    const pattern = /((?:\b(?:src|poster)\s*=\s*["']|!\[[^\]]*\]\(\s*|url\(\s*["']?))((?:https?:\/\/|blob:|asset:\/\/|media-store:\/\/)[^\s"'<>)]*)/gi;
+    const pattern = /((?:\b(?:src|poster)\s*=\s*["']|!\[[^\]]*\]\(\s*|url\(\s*["']?))((?:https?:\/\/|blob:|theme-asset:\/\/|asset:\/\/|media-store:\/\/)[^\s"'<>)]*)/gi;
     let result = "";
     let offset = 0;
     for (const match of text.matchAll(pattern)) {

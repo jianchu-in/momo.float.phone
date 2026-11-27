@@ -78,7 +78,7 @@ async function main(){
  await render({inspectionControl:undefined,inspectionViewer:undefined});assert.ok(rows().includes(sessions.other.id));assert.ok(!rows().includes(sessions.b.id),'ordinary chat still follows the user world filter');assert.ok(host.querySelector('.chat-list-tabs'));verifyScope();
  await act(async()=>root.unmount());
  // Real list renderer + inspection runner: disallowed pinned chats cannot occupy the visible page or reach the model.
- await reverse.updateReverseSettings(scope,value=>({...value,unified:{...value.unified,modes:{chat:'open',shopping:'hidden',browser:'hidden',reading:'hidden'},chat:{...value.unified.chat,assets:false}},characters:{a:{chat:{targets:['a','b','cross']}}}}));
+ await reverse.updateReverseSettings(scope,value=>({...value,unified:{...value.unified,modes:{favorites:'hidden',chat:'open',shopping:'hidden',browser:'hidden',reading:'hidden'},chat:{...value.unified.chat,assets:false}},characters:{a:{chat:{targets:['a','b','cross']}}}}));
  worlds.moveCharacterToWorld('cross',foreign.id);
  window.HTMLElement.prototype.getBoundingClientRect=function(){const nodes=[...document.querySelectorAll('[data-reverse-session]')];const index=nodes.indexOf(this),top=index<0?0:index*70;return{left:0,right:390,top,bottom:top+(index<0?350:60),width:390,height:index<0?350:60};};
  const {useReversePhone}=load('components/checkphone/use-reverse-phone.ts');let latest;root=createRoot(host);

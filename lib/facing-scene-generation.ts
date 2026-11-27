@@ -1,14 +1,20 @@
+import { depictedImageReferences } from "./depicted-image-references";
 import { throwIfAborted } from "./abort-utils";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import type { Character } from "./character-types";
-import { facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { facingParticipantIds, facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "./image-generation-service";
 import { canIllustrateScene, SCENE_IMAGE_ORIENTATION_GUIDANCE } from "./scene-image-analysis";
 import { loadShownImageDataUrl } from "./shown-image";
 import { getThemeAssetDataUrl } from "./theme-storage";
 import { fileToUserAvatarDataUrl } from "./user-avatar-image";
 
-type ScenePlan = {
+export type ScenePlan = {
+  referenceMode?: "text" | "depicted";
+  referenceSource?: "character" | "avatar" | "upload";
+  participantIds?: string[];
+  depictedCharacterIds?: string[];
+  userVisible?: boolean;
   location: string;
   name: string;
   mode: "scene" | "hold" | "brief" | "replacement";
@@ -31,9 +37,9 @@ export async function planFacingVisual(character: Character, meeting: FacingMeet
   throwIfAborted(signal);
   const turn = meeting.turns.at(-1);
   if (!turn?.sceneName) return;
-  const settings = (await import("./facing-storage")).loadFacingSettings().characters[meeting.characterId]?.autoVisual;
+  const settings = (await import("./facing-storage")).facingEffectiveSettings(meeting.characterId).autoVisual;
   if (settings?.skipNsfw && turn.visualRating !== "safe") return;
-  return { location: turn.sceneName, name: `${turn.sceneName} · CG`, mode: "replacement",
+  return { referenceMode: turn.visualReferenceMode, referenceSource: turn.visualReferenceSource, participantIds: facingParticipantIds(meeting), depictedCharacterIds: turn.depictedCharacterIds ?? (facingParticipantIds(meeting).length===1?[meeting.characterId]:undefined), userVisible: turn.userVisible, location: turn.sceneName, name: `${turn.sceneName} · CG`, mode: "replacement",
     description: turn.visualDescription?.trim() || `${character.name}，在「${turn.sceneName}」。${meeting.turns.slice(-4).map(facingTurnText).join("\n")}` };
 }
 
@@ -88,21 +94,22 @@ export async function renderFacingVisual(plan: ScenePlan, base: FacingAsset | un
   options: FacingAutoVisualSettings, signal: AbortSignal) {
   const config = resolveConfiguredImageGenerationSettings(character.id, "facing");
   if (!config.enabled) throw new Error("请先为面对面启用生图配置。");
-  if (config.provider === "novelai") throw new Error("自动补图需要支持参考图的生图配置。");
-  if (!base) throw new Error("请先给当前场景添加基础图。");
-  const sourceMode = options.referenceSource ?? "character";
-  const configured = config.characterReferences?.[character.id];
-  const custom = sourceMode === "upload" && options.referenceMediaRef ? await loadShownImageDataUrl(options.referenceMediaRef) : undefined;
-  const saved = sourceMode === "character" && configured?.assetId && configured.enabled !== false
-    ? await getChatImageFromIndexedDB(configured.assetId) : undefined;
-  const roleSource = sourceMode === "upload" ? custom : saved || character.avatar;
-  if (!roleSource) throw new Error("请在自动补图设置里选择一张角色参考图。");
-  const [sceneImage, roleImage] = await Promise.all([stillSceneReference(base, signal), prepareReference(roleSource, signal)]);
+  const textOnly = options.referenceMode === "text";
+  const participantIds = plan.participantIds ?? [character.id];
+  const roster = plan.depictedCharacterIds ?? (participantIds.length === 1 ? [character.id] : undefined);
+  const explicitReferenceImages = textOnly ? [] : await depictedImageReferences({ appId: "facing", leadId: character.id,
+    participantIds, depictedCharacterIds: roster, userVisible: plan.userVisible, includeUser: plan.userVisible,
+    source: options.referenceSource ?? "character", signal });
+  // A composite portrait can contain an off-camera character. Only background assets qualify.
+  if (!textOnly && base?.category === "scene" && base.composition !== "full") {
+    const sceneImage = await stillSceneReference(base, signal);
+    if (!sceneImage) throw new Error("场景参考图读取失败，请更换背景或选择纯文字生图。");
+    explicitReferenceImages.unshift({ dataUrl: sceneImage, label: "场景基础图（只参考环境，忽略其中人物）" });
+  }
   throwIfAborted(signal);
-  if (!sceneImage || !roleImage) throw new Error("场景图或角色参考图读取失败。");
   const description = [
     `生成一张适合手机面对面的 9:16 竖屏完整画面，地点是「${plan.location}」。只输出一幅连贯画面。`,
-    "参考板第一格「场景基础图」用于环境和视觉风格，第二格「角色外貌参考」用于人物身份与五官。",
+    `只画描述中的出镜角色。人物参考按标签ID对应，禁止添加未出镜人物。出镜ID：${JSON.stringify(textOnly ? plan.depictedCharacterIds ?? [] : roster)}。`,
     plan.mode === "scene"
       ? "按描述切换到新环境，延续场景参考的视觉风格。"
       : "沿用场景参考中的房间布局、物件和光线，按用户当前的位置与动作取景。",
@@ -112,7 +119,7 @@ export async function renderFacingVisual(plan: ScenePlan, base: FacingAsset | un
     options.extraPrompt?.trim() ? `用户的CG生图额外要求：${options.extraPrompt.trim()}` : "",
   ].join("\n");
   return generateImageFromConfiguredApi({ description, characterId: character.id, appId: "facing", settings: config,
-    explicitReferenceImages: [{ dataUrl: sceneImage, label: "场景基础图" }, { dataUrl: roleImage, label: "角色外貌参考" }],
+    explicitReferenceImages, persistResult: false,
     referenceSelection: { character: false, user: false }, portraitOutput: true, signal,
   });
 }

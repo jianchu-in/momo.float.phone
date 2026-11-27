@@ -284,6 +284,7 @@ export async function writeThemeAssetRecords(records: ThemeAssetRecord[]): Promi
 }
 
 export async function deleteThemeAsset(id: string): Promise<void> {
+  if (await (await import("./favorites-storage")).favoriteUsesMedia(id)) return;
   // 本地主题预设只保存资源引用；只要仍有预设使用该资源，就不能物理删除，
   // 否则用户切回预设时会出现壁纸、图标或字体丢失。
   if (themePresetUsesAsset(id)) {

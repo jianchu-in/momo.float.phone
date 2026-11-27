@@ -2614,7 +2614,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                               statusRenderHtml={activeStatusRenderHtml}
                               theaterRenderHtml={activeTheaterRenderHtml}
                               illustrationPosition={showIllustration ? storyGlobalSettings.illustration?.placement ?? "tail" : undefined}
-                              illustration={showIllustration ? <StoryIllustrationView textOnly={currentSession.ownerType === "group"} leadId={currentSession.characterId} illustration={message.illustration}
+                              illustration={showIllustration ? <StoryIllustrationView participantIds={currentSession.participantIds} sourceId={message.id} identityId={currentSession.facingIdentity !== undefined ? currentSession.facingIdentity?.id ?? null : resolveUserIdentity(currentSession.characterId,"story")?.id ?? null} leadId={currentSession.characterId} illustration={message.illustration}
                                 pending={illustrationPending} onRegenerate={details => storyIllustrations.regenerate(message, details)} selecting={storyMultiSelect} /> : undefined}
                               summaryTag={boundPreset?.story_summary_tag}
                               serifIframeFallback

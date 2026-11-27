@@ -1,3 +1,5 @@
+import { ImageFavoriteButton } from "@/components/favorites/image-favorite-button";
+import { loadCharacters } from "@/lib/character-storage";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { GeneratedImagePromptDialog } from "@/components/chat/generated-image-prompt-dialog";
@@ -8,8 +10,10 @@ import { loadMediaBlob } from "@/lib/media-cache-storage";
 import { resolveStoryIllustrationReferences } from "@/lib/story-illustration";
 import type { StoryIllustration, StoryIllustrationDetails } from "@/lib/story-storage";
 
-export function StoryIllustrationView({ leadId, illustration, pending, onRegenerate, selecting, textOnly = false }: {
-  textOnly?: boolean;
+export function StoryIllustrationView({ leadId, illustration, pending, onRegenerate, selecting, participantIds = [], sourceId, identityId }: {
+  participantIds?: string[];
+  sourceId?: string;
+  identityId?: string | null;
   leadId: string;
   illustration?: StoryIllustration;
   pending: boolean;
@@ -51,10 +55,11 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
     setError("");
     setDraft({
       characterId: focusId,
-      referenceMode: textOnly ? "text" : original?.referenceMode,
+      referenceMode: original?.referenceMode ?? (participantIds.length > 1 ? "text" : undefined),
+      participantIds: [leadId,...participantIds], depictedCharacterIds: original?.depictedCharacterIds, userVisible: original?.userVisible,
       description: original?.description ?? "",
-      useCharacterReference: !textOnly && original?.referenceMode !== "text" && hasCharacterReference && (original?.useCharacterReference ?? true),
-      useUserReference: !textOnly && original?.referenceMode !== "text" && hasUserReference && (original?.useUserReference ?? false),
+      useCharacterReference: original?.referenceMode !== "text" && hasCharacterReference && (original?.useCharacterReference ?? true),
+      useUserReference: original?.referenceMode !== "text" && hasUserReference && (original?.useUserReference ?? false),
     });
   }
 
@@ -63,8 +68,8 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
     setError("");
     try {
       await onRegenerate({ ...draft, description: draft.description.trim(),
-        useCharacterReference: draft.useCharacterReference && references?.hasCharacterReference === true,
-        useUserReference: draft.useUserReference && references?.hasUserReference === true,
+        useCharacterReference: draft.referenceMode === "depicted" || draft.useCharacterReference && references?.hasCharacterReference === true,
+        useUserReference: draft.referenceMode === "depicted" ? draft.useUserReference : draft.useUserReference && references?.hasUserReference === true,
       });
       setDraft(undefined);
       setShowPreview(true);
@@ -84,6 +89,7 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
         <span>剧情图未生成</span>
         {!selecting && <button type="button" onPointerDown={event => event.stopPropagation()} onClick={openEditor}>重试图片</button>}
       </div> : null}
+    {mediaRef && !selecting && <ImageFavoriteButton category="story" sourceId={`${sourceId ?? mediaRef}:${mediaRef}`} mediaUrl={mediaRef} title="剧情插图" description={original?.description} participantIds={[...new Set([leadId,...participantIds])]} chatAccountId={null} userIdentityId={identityId} />}
     {showPreview && <div onPointerDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
       <MediaPreviewOverlay imageUrl={loadedPreview?.url}
         description={displayedPreview && "missing" in displayedPreview ? "图片文件无法读取，可以重新生成。" : undefined}
@@ -94,6 +100,7 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
       value={draft.description}
       descriptionLabel="画面描述"
       textOnly={draft.referenceMode === "text"}
+      hideReferenceControls={draft.referenceMode === "depicted"}
       userReferenceLabel="使用用户参考图（用户出镜）"
       onChange={description => setDraft({ ...draft, description })}
       useReferenceImage={draft.useCharacterReference}
@@ -106,6 +113,6 @@ export function StoryIllustrationView({ leadId, illustration, pending, onRegener
       error={error}
       onConfirm={() => void regenerate()}
       onCancel={() => { if (!pending) setDraft(undefined); }}
-    />, document.body)}
+    >{(participantIds.length > 1 || draft.referenceMode === "depicted") && <fieldset disabled={pending}><legend>这张图的人物参考</legend><select aria-label="人物参考方式" value={draft.referenceMode??"text"} onChange={event=>setDraft({...draft,referenceMode:event.target.value as "text"|"depicted"})}><option value="text">纯文字</option><option value="depicted">按出镜角色</option></select>{draft.referenceMode === "depicted" && <>{[...new Set([leadId,...participantIds])].map(id=><label key={id}><input type="checkbox" checked={draft.depictedCharacterIds?.includes(id)===true} onChange={event=>setDraft({...draft,depictedCharacterIds:event.target.checked?[...(draft.depictedCharacterIds??[]),id]:(draft.depictedCharacterIds??[]).filter(value=>value!==id)})}/>{loadCharacters().find(item=>item.id===id)?.name ?? id}</label>)}<button type="button" onClick={()=>setDraft({...draft,depictedCharacterIds:[]})}>环境空镜（不附人物图）</button><label><input type="checkbox" checked={draft.userVisible===true} onChange={event=>setDraft({...draft,userVisible:event.target.checked})}/>用户本人出镜</label><label><input type="checkbox" checked={draft.useUserReference} onChange={event=>setDraft({...draft,useUserReference:event.target.checked})}/>使用用户参考图</label></>}</fieldset>}</GeneratedImagePromptDialog>, document.body)}
   </>;
 }

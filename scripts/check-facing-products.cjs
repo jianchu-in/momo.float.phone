@@ -58,7 +58,8 @@ async function main() {
   assert.ok(dialog); assert.equal(dialog.getAttribute("aria-modal"), "true");
   assert.equal(dialog.closest("main"), null, "the modal must escape the scrolling/clipped gallery");
   assert.equal(dialog.querySelector(".facing-product-full-description").textContent, description);
-  assert.equal(dialog.querySelector(".facing-product-full-description").nextElementSibling, button("下载原图"));
+  assert.equal(dialog.querySelector(".facing-product-full-description").nextElementSibling.textContent, "加入收藏");
+  assert.ok(button("调整画面与参考后重生"));
   assert.equal(focus.at(-1), button("关闭"));
   await click(button("下载原图"));
   assert.deepEqual(downloads[0], { bytes, filename: "客厅原图.png" }, "download original stored bytes without resizing or recompressing");

@@ -51,6 +51,7 @@ export type StoryGlobalSettings = {
 };
 
 export type StoryIllustrationSettings = {
+  referenceMode?: "text" | "depicted";
   enabled?: boolean;
   interval?: number;
   placement?: "tail" | "middle";
@@ -64,7 +65,7 @@ export const STORY_ILLUSTRATION_INTERVAL = 5;
 function normalizeStoryIllustration(value?: StoryIllustrationSettings): StoryIllustrationSettings | undefined {
   if (!value) return;
   const interval = value.interval;
-  return { enabled: value.enabled === true, interval: interval && Number.isSafeInteger(interval) && interval > 0 ? interval : STORY_ILLUSTRATION_INTERVAL,
+  return { referenceMode: value.referenceMode === "depicted" ? "depicted" : "text", enabled: value.enabled === true, interval: interval && Number.isSafeInteger(interval) && interval > 0 ? interval : STORY_ILLUSTRATION_INTERVAL,
     placement: value.placement === "middle" ? "middle" : "tail",
     descriptionPrompt: typeof value.descriptionPrompt === "string" ? value.descriptionPrompt.slice(0, 3000) : "",
     extraPrompt: typeof value.extraPrompt === "string" ? value.extraPrompt.slice(0, 3000) : "",
@@ -537,7 +538,10 @@ export type StoryMessage = {
 };
 
 export type StoryIllustrationDetails = {
-  referenceMode?: "text";
+  referenceMode?: "text" | "depicted";
+  participantIds?: string[];
+  depictedCharacterIds?: string[];
+  userVisible?: boolean;
   description: string;
   characterId: string;
   useCharacterReference: boolean;
