@@ -294,11 +294,13 @@ export async function saveMapArrival(atlasId: string, trip: MapTrip, visitId: st
   const arrival=facingArrival(visitId,trip.characterIds,roster), secret=arrival.companionIds.length?false:trip.secret;
   const meetingId=seed?.id??visitId;
   let result!:FacingMeeting;
+  let repeatedVisit=false;
   const updates: Record<string, (raw: string | null) => string> = {
     [FACING_MEETING_PREFIX + meetingId]: raw => {
       const current=parse<FacingMeeting|undefined>(raw,seed);
       if(raw&&!current)throw new Error("当前见面记录已移除。");
       if(current?.deletedAt)throw new Error("当前见面记录已移除。");
+      if(repeatedVisit){if(!current)throw new Error("原到达记录已移除，请重新前往。");result=current;return JSON.stringify(result);}
       if(raw&&(!seed||current?.mapContext?.arrival?.visitId===visitId)){
         if(current?.mapContext?.atlasId!==atlasId||current.mapContext.placeId!==trip.placeId)throw new Error("到达记录与当前目的地不一致，请重新前往。");
         result=current!;return JSON.stringify(result);
@@ -318,13 +320,15 @@ export async function saveMapArrival(atlasId: string, trip: MapTrip, visitId: st
     [MAP_PREFIX + atlasId]: raw => {
       const current = parse<FacingAtlas | null>(raw, null);
       if (!current || !mapPlace(current, trip.placeId)) throw new Error("目的地已移除，请重新选择。");
-      if (current.visits.some(visit => visit.id === visitId)) return JSON.stringify(current);
+      const existing=current.visits.find(visit=>visit.id===visitId);
+      if(existing){if(existing.placeId!==trip.placeId||existing.meetingId!==meetingId)throw new Error("到达记录与当前目的地不一致，请重新前往。");repeatedVisit=true;return JSON.stringify(current);}
       return JSON.stringify({ ...current, updatedAt: now, userPlaces: { ...current.userPlaces, [identityId ?? "default"]: trip.placeId },
         visits: [...current.visits, { id: visitId, identityId, placeId: trip.placeId, characterIds: arrival.companionIds, secret, at: now, meetingId }] });
     },
   };
   if (previousMeeting && previousMeeting.id !== meetingId) updates[FACING_MEETING_PREFIX + previousMeeting.id] = raw =>
     JSON.stringify({ ...parse(raw, previousMeeting), pausedAt: now });
-  await kvUpdatePersistedEntries(updates);
+  // Check the durable visit before updating the meeting so a delayed retry cannot rewind a later trip.
+  await kvUpdatePersistedEntries({[MAP_PREFIX+atlasId]:updates[MAP_PREFIX+atlasId],...updates});
   return result;
 }
