@@ -325,3 +325,11 @@
 @media (max-width: 340px) { .facing-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 .facing-personal-settings h3 { margin: 0; font-size: 13px; }
+.facing-settings-members > button { display: flex; align-items: center; gap: 12px; min-height: 76px; }
+.facing-app .facing-settings-members > button > .facing-target-avatar { flex: none; }
+.facing-settings-members > button > span:nth-child(2) { flex: 1; min-width: 0; text-align: left; }
+.facing-settings-members strong, .facing-settings-members small { display: block; overflow-wrap: anywhere; }
+.facing-settings-members small { margin-top: 4px; font-size: 12px; color: var(--facing-muted); }
+.facing-preset-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.facing-preset-row > :is(input,select) { min-width: 0; width: 100%; }
+.facing-preset-row > .facing-small { width: auto; min-height: 36px; padding: 7px 12px; white-space: nowrap; }

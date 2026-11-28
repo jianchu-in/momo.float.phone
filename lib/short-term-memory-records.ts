@@ -2,6 +2,7 @@ import { kvGet, kvSet, kvSetAsync, registerDynamicPrefix } from "./kv-db";
 import { getNativeTimelineEntryKey } from "./native-timeline-key";
 import type { NativeTimelineEntry } from "./short-term-assembler";
 import type { ChatMessage } from "./chat-storage";
+import { isNativeMemorySourceDeleted } from "./memory-source-deletions";
 
 const HIDDEN = "ai_phone_hidden_short_term_memory:";
 const MANUAL = "ai_phone_manual_short_term_memory:";
@@ -68,7 +69,7 @@ export function mergeShortMemoryEntries(characterId: string, native: NativeTimel
   const map = new Map(native.map(entry => [getNativeTimelineEntryKey(entry), entry]));
   loadManualShortMemories(characterId).forEach(entry => { if (!after || entry.timestamp > after) map.set(getNativeTimelineEntryKey(entry), entry); });
   const hidden = hiddenMemoryKeys(characterId);
-  return [...map.values()].filter(entry => includeDeleted || !isMemoryEntryDeleted(entry, hidden)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  return [...map.values()].filter(entry => !isNativeMemorySourceDeleted(characterId, entry) && (includeDeleted || !isMemoryEntryDeleted(entry, hidden))).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
 /** Exclude deleted current-chat turns too; the original visible chat remains intact. */

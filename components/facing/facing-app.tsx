@@ -13,10 +13,10 @@ import {FacingAmbience,type FacingAmbienceControl} from "./facing-ambience";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { createFacingMeeting, deleteFacingAssets, loadFacingUsableAssets, changeFacingScene, manageFacingMeetings, mergeFacingMeetings, FACING_SHARED_CHARACTER_ID, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
-  facingCgDisplayRounds, loadFacingAssets as loadCgAssets, type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
+  facingCgDisplayRounds, facingGroupSettingsKey, loadFacingAssets as loadCgAssets, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSettingsTarget } from "@/lib/facing-storage";
 import { continueFacingInStory } from "@/lib/story-storage";
 import { loadUserIdentities, resolveUserIdentity } from "@/lib/settings-storage";
-import { facingEffectiveSettings, saveFacingCommon, saveFacingGroup, deleteFacingGroup, saveFacingPreset, applyFacingPreset, saveFacingParticipants } from "@/lib/facing-storage";
+import { facingEffectiveSettings, saveFacingTargetSettings, saveFacingGroup, deleteFacingGroup, saveFacingPreset, applyFacingPreset, saveFacingParticipants } from "@/lib/facing-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
 import "@/styles/facing-life.css";
 import { FacingCgEditor } from "./facing-cg-editor";
@@ -83,6 +83,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const character = characters.find(item => item.id === preferences.characterId);
   const participantIds = [...new Set([preferences.characterId, ...(preferences.participantIds ?? [])])].filter((id): id is string => !!id && characters.some(item => item.id === id));
   const [settingsTab, setSettingsTab] = useState<"common" | "character">("common");
+  const [settingsTarget, setSettingsTarget] = useState<FacingSettingsTarget>();
   const [settingsOwnerId, setSettingsOwnerId] = useState<string>();
   const [presetName, setPresetName] = useState("");
   const [presetId, setPresetId] = useState("");
@@ -127,8 +128,18 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     updated => setMeeting(current => current?.id === updated.id ? updated : current),
     (characterId, updated) => { if (loadFacingSettings().characterId === characterId) setAssets(updated); },
   );
-  const settingsOwner = characters.find(item => item.id === settingsOwnerId && participantIds.includes(item.id)) ?? character;
-  const current = character ? facingEffectiveSettings(character.id, preferences) : {};
+  const activeTarget = { characterId: character?.id ?? "", participantIds };
+  const savedSettingsGroups = preferences.groups ?? [];
+  const extraSettingsTarget = participantIds.length > 1 && !savedSettingsGroups.some(group => facingGroupSettingsKey(group.participantIds) === facingGroupSettingsKey(participantIds))
+    ? activeTarget : undefined;
+  const editingTarget = page === "settings" && settingsTarget ? settingsTarget : activeTarget;
+  const editingIds = editingTarget.participantIds ?? [editingTarget.characterId];
+  const editingMulti = editingIds.length > 1;
+  const editingKey = editingMulti ? `group:${facingGroupSettingsKey(editingIds)}` : `character:${editingTarget.characterId}`;
+  const editingName = (editingMulti ? preferences.groups?.find(group => facingGroupSettingsKey(group.participantIds) === facingGroupSettingsKey(editingIds))?.name : undefined)
+    ?? editingIds.map(id => characters.find(item => item.id === id)?.name ?? "角色").join("、");
+  const settingsOwner = characters.find(item => item.id === settingsOwnerId && editingIds.includes(item.id)) ?? characters.find(item => item.id === editingTarget.characterId);
+  const current = character ? facingEffectiveSettings(editingTarget.characterId, preferences, editingTarget) : {};
   const referenceSettings = settingsOwner ? preferences.characters[settingsOwner.id]?.autoVisual : undefined;
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
   const groups = useMemo(()=>facingDestinationGroups(draftMeeting && sheet === "new" ? facingParticipantIds(draftMeeting) : participantIds, Object.fromEntries(characters.map(item => [item.id, item.name]))),[assets,castNames,current.portraitId,draftMeeting,sheet]);
@@ -151,7 +162,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   function openCharacters() { setSheet("characters"); }
 
   async function changeSetting(patch: Partial<FacingCharacterSettings>) {
-    if (character) {setPreferences(await saveFacingCommon(patch));setAssets(loadFacingUsableAssets(character.id));}
+    if (character) {setPreferences(await saveFacingTargetSettings(editingTarget,patch));setAssets(loadFacingUsableAssets(character.id));}
   }
 
   function commitSetting(patch: Partial<FacingCharacterSettings>) {
@@ -171,7 +182,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     setAudioLocation(location?{atlasId:location.atlas.id,placeId:location.place.id}:undefined);
     if(location&&(!item.mapContext||item.mapContext.placeId!==location.place.id))void bindFacingLocation(item,{atlasId:location.atlas.id,placeId:location.place.id}).then(saved=>setMeeting(current=>current?.id===saved.id?saved:current)).catch(()=>setError("地点关联保存失败，可在场景菜单重新选择。"));
     setMeeting(loadFacingMeeting(item.id) ?? item);
-    if (item.characterId !== character?.id || [...facingParticipantIds(item)].sort().join("|")!==castKey) {
+    if (item.characterId !== character?.id || item.groupId !== preferences.groupId || [...facingParticipantIds(item)].sort().join("|")!==castKey) {
       setAssets(loadFacingUsableAssets(item.characterId));
       setPreferences(current => ({ ...current, characterId: item.characterId,
         groupId: item.groupId, participantIds: [item.characterId, ...facingParticipantIds(item).filter(id => id !== item.characterId)] }));
@@ -213,6 +224,8 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
 
   function openSettings(origin: "home" | "room") {
     setSettingOrigin(origin);setSettingsTab("common");
+    setSettingsTarget(origin === "room" && meeting ? {characterId:meeting.characterId,participantIds:facingParticipantIds(meeting)} : activeTarget);
+    setSettingsOwnerId(undefined);setPresetId("");setPresetName("");
     setPage("settings");
   }
 
@@ -233,6 +246,30 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   }
 
   useEffect(()=>{if(!initialMeetingId)return;const saved=loadFacingMeeting(initialMeetingId);if(saved)openRoom(saved);else setError("原面对面记录已移除，可以从见面记录选择其他对话。");onLaunchConsumed?.();},[initialMeetingId]);
+  const personalSettings = settingsOwner && <section className="facing-form facing-personal-settings" aria-label={`${settingsOwner.name}的素材与语音`}>
+    {editingMulti && <button type="button" className="facing-small" onClick={()=>setSettingsOwnerId(undefined)}><ChevronLeft size={16}/>返回成员列表</button>}
+    <h2 className="facing-record-title">{settingsOwner.name}的素材与语音</h2>
+    {editingMulti && <p className="facing-auto-help">素材和语音随角色保存，进入其他多人组时也使用该角色自己的配置。</p>}
+    <div className="facing-list facing-settings-list">
+      <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材与立绘</span><ChevronRight size={17} /></button>
+      <FacingVoiceBinding key={settingsOwner.id} characterId={settingsOwner.id} />
+      <label>未配置立绘时的通用NPC<select aria-label="通用NPC性别" value={preferences.characters[settingsOwner.id]?.fallbackNpcGender??"male"} onChange={event=>void saveFacingSettings(settingsOwner.id,{fallbackNpcGender:event.target.value as "male"|"female"}).then(setPreferences).catch(()=>setError("角色设置保存失败。"))}><option value="male">男性立绘</option><option value="female">女性立绘</option></select></label>
+    </div>
+    <h3 className="facing-record-title">自选人物参考图</h3>
+    <p className="facing-auto-help">人物参考图来源选用“自选图片”时，使用该角色上传的图片。</p>
+    <div className="facing-auto-reference">
+      {referenceSettings?.referenceMediaRef && <ShownImage mediaRef={referenceSettings.referenceMediaRef} />}
+      <label>{savingReference ? "保存中…" : "选择参考图"}<input type="file" accept="image/*" disabled={savingReference}
+        onChange={event => {
+          const file=event.currentTarget.files?.[0];event.currentTarget.value="";
+          if(!file)return;
+          const ownerId=settingsOwner.id;
+          setSavingReference(true);setError("");
+          void storeShownImage(file).then(referenceMediaRef=>saveFacingSettings(ownerId,{autoVisual:{referenceMediaRef}})).then(setPreferences)
+            .catch(()=>setError("人物参考图保存失败，请重新选择。")).finally(()=>setSavingReference(false));
+        }}/></label>
+    </div>
+  </section>;
   return <div ref={appRef} className="facing-app" style={{ paddingBottom: pageInset }}>
     <FacingAmbience track={audioPlace?.ambience} location={audioPlace?.name} embedded={page==="room"} onControl={setAmbience}/>
     {page === "home" && <>
@@ -272,49 +309,50 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
       onSpeechInput={value => commitSetting({ speechInput: value })} />}
     {page === "settings" && character && <>
       <Header title="面对面设置" onBack={() => setPage(settingOrigin)} />
-      <main className="facing-scroll facing-form" key={`settings:${presetRevision}`}>
-        <nav className="facing-segments" role="tablist" aria-label="面对面设置范围">
-          <button type="button" role="tab" aria-selected={settingsTab==="common"} aria-pressed={settingsTab==="common"} onClick={()=>setSettingsTab("common")}>通用参数</button>
-          <button type="button" role="tab" aria-selected={settingsTab==="character"} aria-pressed={settingsTab==="character"} onClick={()=>setSettingsTab("character")}>角色素材与语音</button>
-        </nav>
+      <main className="facing-scroll facing-form" key={`settings:${editingKey}:${presetRevision}`}>
+        <label className="facing-setting-owner">当前设置对象<select aria-label="当前设置对象" value={editingKey} disabled={savingReference} onChange={event=>{
+          const value=event.target.value;
+          const group=preferences.groups?.find(item=>`group:${facingGroupSettingsKey(item.participantIds)}`===value);
+          if(group)setSettingsTarget({characterId:group.participantIds[0],participantIds:group.participantIds});
+          else if(extraSettingsTarget&&value===`group:${facingGroupSettingsKey(extraSettingsTarget.participantIds)}`)setSettingsTarget(extraSettingsTarget);
+          else if(value.startsWith("character:"))setSettingsTarget({characterId:value.slice(10),participantIds:[value.slice(10)]});
+          setSettingsOwnerId(undefined);setSettingsTab("common");setPresetId("");setPresetName("");setError("");
+        }}>
+          <optgroup label="单人">{characters.map(item=><option key={item.id} value={`character:${item.id}`}>{item.name}</option>)}</optgroup>
+          <optgroup label="多人组">{savedSettingsGroups.map(group=><option key={group.id} value={`group:${facingGroupSettingsKey(group.participantIds)}`}>{group.name}</option>)}
+            {extraSettingsTarget&&<option value={`group:${facingGroupSettingsKey(extraSettingsTarget.participantIds)}`}>{castNames}</option>}
+          </optgroup>
+        </select></label>
+        <p className="facing-settings-scope-note">{editingMulti?`这套参数只用于「${editingName}」这个多人组。`:`这套参数只用于与${editingName}的单人见面。`}</p>
+        {editingMulti && <nav className="facing-segments" role="tablist" aria-label="面对面设置范围">
+          <button type="button" role="tab" aria-selected={settingsTab==="common"} aria-pressed={settingsTab==="common"} onClick={()=>setSettingsTab("common")}>本组参数</button>
+          <button type="button" role="tab" aria-selected={settingsTab==="character"} aria-pressed={settingsTab==="character"} onClick={()=>{setSettingsTab("character");setSettingsOwnerId(undefined);}}>成员素材与语音</button>
+        </nav>}
         {settingsTab === "character" ? <section className="facing-form facing-personal-settings" role="tabpanel" aria-label="角色素材与语音">
-          <p className="facing-settings-scope-note">这里只修改所选角色的素材和语音，不会切换当前见面对象或地点。</p>
-          <label className="facing-setting-owner">选择要设置的角色<select aria-label="编辑角色" value={settingsOwner?.id ?? character.id} onChange={event => setSettingsOwnerId(event.target.value)}>{participantIds.map(id => <option key={id} value={id}>{characters.find(item => item.id === id)?.name}</option>)}</select></label>
-          <h2 className="facing-record-title">{settingsOwner?.name ?? character.name}</h2>
-          <div className="facing-list facing-settings-list">
-            <button type="button" onClick={() => openAssets("settings")}><Images size={18} /><span>场景素材与立绘</span><ChevronRight size={17} /></button>
-            <FacingVoiceBinding characterId={settingsOwner?.id ?? character.id} />
-          </div>
-          <h3 className="facing-record-title">该角色的自选人物参考图</h3>
-          <p className="facing-auto-help">通用参数选用“自选图片”时，各角色使用各自上传的图片。</p>
-            <div className="facing-auto-reference">
-              {referenceSettings?.referenceMediaRef && <ShownImage mediaRef={referenceSettings?.referenceMediaRef} />}
-              <label>{savingReference ? "保存中…" : "选择参考图"}<input type="file" accept="image/*" disabled={savingReference}
-                onChange={event => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-                  if (!file) return;
-                  setSavingReference(true);
-                  setError("");
-                  void storeShownImage(file).then(referenceMediaRef => saveFacingSettings(settingsOwner?.id ?? character.id, { autoVisual: { referenceMediaRef } }).then(setPreferences))
-                    .catch(() => setError("人物参考图保存失败，请重新选择。"))
-                    .finally(() => setSavingReference(false));
-                }} /></label>
-            </div>
-        </section> : <section className="facing-form" role="tabpanel" aria-label="通用参数">
-        <p className="facing-settings-scope-note">以下参数由所有单人、多人见面共用。保存或应用预设后，所有见面对象都使用这套参数。</p>
+          {settingsOwnerId ? personalSettings : <>
+            <p className="facing-auto-help">选择角色，进入该角色的素材与语音设置。</p>
+            <div className="facing-list facing-settings-members">{editingIds.map(id=>{
+              const member=characters.find(item=>item.id===id);if(!member)return null;
+              return <button type="button" key={id} aria-label={`设置${member.name}的素材与语音`} onClick={()=>setSettingsOwnerId(id)}>
+                <span className="facing-target-avatar">{member.avatar?<ShownImage mediaRef={member.avatar}/>:member.name.slice(0,1)}</span>
+                <span><strong>{member.name}</strong><small>立绘 · 场景素材 · 参考图 · 语音</small></span><ChevronRight size={17}/>
+              </button>;
+            })}</div>
+          </>}
+        </section> : <section className="facing-form" role={editingMulti?"tabpanel":undefined} aria-label={editingMulti?"本组参数":"个人设置"}>
+        {!editingMulti && personalSettings}
         <div className="facing-list">
           <button type="button" onClick={() => { setMapSettingsOrigin("settings"); setPage("map-settings"); }}><MapIcon size={18} /><span>地图设置</span><ChevronRight size={17} /></button>
           <button type="button" onClick={()=>{setAssetOrigin("settings");setAssetEditId(undefined);setPage("shared-assets");}}><Images size={18}/><span>通用场景素材</span><ChevronRight size={17}/></button>
           <button type="button" onClick={()=>setPage("products")}><Images size={18}/><span>生图成品</span><ChevronRight size={17}/></button>
         </div>
-        <section className="facing-form" key={`presets:${presetId}:${preferences.common ? JSON.stringify(preferences.common) : character.id}`} aria-label="参数预设">
+        <section className="facing-form" key={`presets:${editingKey}`} aria-label="参数预设">
           <h2 className="facing-record-title">参数预设</h2>
-          <p className="facing-auto-help">保存 CG、生成要求和外观参数；角色图片、素材和音色绑定单独保留。</p>
-          <input aria-label="预设名称" value={presetName} placeholder="预设名称" onChange={event => setPresetName(event.target.value)} />
-          <button className="facing-small" disabled={!presetName.trim()} onClick={() => void saveFacingPreset(presetName).then(setPreferences).catch(cause => setError(String(cause)))}>保存当前参数</button>
-          <select aria-label="选择参数预设" value={presetId} onChange={event => setPresetId(event.target.value)}><option value="">选择预设</option>{preferences.presets?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-          <button className="facing-small" disabled={!presetId} onClick={() => void applyFacingPreset(presetId).then(saved=>{setPreferences(saved);setPresetRevision(value=>value+1);}).catch(cause => setError(String(cause)))}>应用预设</button>
+          <p className="facing-auto-help">保存 CG、生成要求和外观数值。应用预设只修改当前{editingMulti?"多人组":"角色"}。</p>
+          <div className="facing-preset-row"><input aria-label="预设名称" value={presetName} placeholder="预设名称" onChange={event => setPresetName(event.target.value)} />
+            <button type="button" className="facing-small" aria-label="保存当前参数" disabled={!presetName.trim()} onClick={() => void saveFacingPreset(presetName,editingTarget).then(setPreferences).catch(cause => setError(String(cause)))}>保存</button></div>
+          <div className="facing-preset-row"><select aria-label="选择参数预设" value={presetId} onChange={event => setPresetId(event.target.value)}><option value="">选择预设</option>{preferences.presets?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+            <button type="button" className="facing-small" aria-label="应用预设" disabled={!presetId} onClick={() => void applyFacingPreset(presetId,editingTarget).then(saved=>{setPreferences(saved);setPresetRevision(value=>value+1);}).catch(cause => setError(String(cause)))}>应用</button></div>
         </section>
         <section className="facing-form" key={`cg:${presetId}`} aria-label="生成 CG 图（新画面）">
           <h2 className="facing-record-title">生成 CG 图（新画面）</h2>
@@ -339,7 +377,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
               onChange={event => commitSetting({ autoVisual: { referenceSource: event.target.value as "character" | "avatar" | "upload" } })}>
               <option value="character">角色参考图（没有时用头像）</option><option value="avatar">角色头像</option><option value="upload">自选图片</option>
             </select></label>
-            {current.autoVisual?.referenceSource === "upload" && <p className="facing-auto-help">请到“角色素材与语音”为各角色选择自己的参考图。</p>}
+            {current.autoVisual?.referenceSource === "upload" && <p className="facing-auto-help">{editingMulti?"请到“成员素材与语音”为出镜角色选择各自的参考图。":"请在本页选择该角色的自选人物参考图。"}</p>}
           </div>
           <p className="facing-auto-help">普通情绪只切换所选立绘。达到轮次后直接生成一张新的完整画面，使用当前场景背景、人物参考图和本轮描述；不复用旧图。CG 按展示轮数自动恢复，也可用顶部双人按钮手动打开或关闭；换地点时恢复新场景。底下的背景和立绘照常随对话更新。</p>
         </section>
@@ -356,7 +394,6 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
             onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
             onBlur={event => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= 1) commitSetting({ customReplyLength: Math.min(10000, Math.round(value)) }); }} /></label>}
           <label>播放角色语音<input type="checkbox" role="switch" checked={current.voice !== false} onChange={event => commitSetting({ voice: event.target.checked })} /></label>
-          <label>未配置立绘时的通用NPC<select value={current.fallbackNpcGender??"male"} onChange={event=>commitSetting({fallbackNpcGender:event.target.value as "male"|"female"})}><option value="male">男性立绘</option><option value="female">女性立绘</option></select></label>
           <label>读写角色记忆<input type="checkbox" role="switch" checked={current.memory !== false} onChange={event => commitSetting({ memory: event.target.checked })} /></label>
         </div>
         <section className="facing-form" aria-label="对话外观">
@@ -381,6 +418,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     {(page === "map" || (page === "map-settings" && mapSettingsOrigin === "map")) && character &&
       <div style={{ display: page === "map" ? "flex" : "none", flex: 1, minHeight: 0 }}>
         <FacingMapApp character={character} characters={characters} currentMeeting={mapOrigin==="room"?meeting:undefined} initialParticipantIds={participantIds}
+          onRecordsChanged={()=>{setMeeting(current=>current?loadFacingMeeting(current.id)??undefined:current);setRecordRevision(value=>value+1);}}
           onBack={() => setPage(mapOrigin)} onSettings={() => { setMapSettingsOrigin("map"); setPage("map-settings"); }} onArrive={arriveFromMap} onLocation={setAudioLocation} />
       </div>}
     {page === "map-settings" && <FacingMapSettings onBack={() => setPage(mapSettingsOrigin)} />}
@@ -405,7 +443,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
           <div className="facing-choices"><button disabled={recordBusy||recordSelection.length!==1||!recordName.trim()} onClick={()=>void (async()=>{setRecordBusy(true);try{await manageFacingMeetings(recordSelection,"rename",recordName);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>改名</button>
           <button disabled={recordBusy||recordSelection.length<2} onClick={()=>void(async()=>{setRecordBusy(true);try{const saved=await mergeFacingMeetings(recordSelection[0],recordSelection,removeMergedSources);setRecordSelection([saved.id]);setMeeting(current=>current?.id===saved.id?saved:current);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>合并到首条所选记录</button>
           <button disabled={recordBusy||!recordSelection.length} onClick={()=>setConfirmRecordDelete(true)}>删除所选</button></div>
-          {confirmRecordDelete&&<div role="alert"><p>移除这 {recordSelection.length} 条见面记录？</p><button disabled={recordBusy} onClick={()=>void(async()=>{setRecordBusy(true);try{await manageFacingMeetings(recordSelection,"delete");setMeeting(current=>current&&recordSelection.includes(current.id)?undefined:current);setRecordSelection([]);setConfirmRecordDelete(false);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>确认移除</button><button onClick={()=>setConfirmRecordDelete(false)}>取消</button></div>}
+          {confirmRecordDelete&&<div role="alert"><p>移除这 {recordSelection.length} 条见面记录及相关角色记忆？对应出行记录和包含这些消息的长期、核心摘要也会移除。</p><button disabled={recordBusy} onClick={()=>void(async()=>{setRecordBusy(true);try{await manageFacingMeetings(recordSelection,"delete");setMeeting(current=>current&&recordSelection.includes(current.id)?undefined:current);setRecordSelection([]);setConfirmRecordDelete(false);setRecordRevision(v=>v+1);}catch(e){setError(String(e));}finally{setRecordBusy(false);}})()}>确认移除</button><button disabled={recordBusy} onClick={()=>setConfirmRecordDelete(false)}>取消</button></div>}
         </section>
         <div className="facing-list">
           {records.map(item => <div className="facing-record-manage" key={item.id}><input type="checkbox" aria-label={`选择记录${item.title||item.id}`} checked={recordSelection.includes(item.id)} onChange={e=>setRecordSelection(old=>e.target.checked?[...old,item.id]:old.filter(id=>id!==item.id))}/>

@@ -2,6 +2,7 @@ import {facingVisibleSegments,type FacingDialogueNotation,type FacingReplyFormat
 import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, registerKvMigration } from "./kv-db";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 import type { VnAssetLayout } from "./vn-asset-storage";
+import { isNativeMemorySourceDeleted } from "./memory-source-deletions";
 
 export const FACING_SETTINGS_KEY = "ai_phone_facing_settings_v1";
 export const FACING_ASSETS_KEY = "ai_phone_facing_assets_v1";
@@ -210,52 +211,98 @@ export async function toggleFacingCg(meetingId: string, show: boolean): Promise<
 
 export type FacingGroup = { id: string; name: string; participantIds: string[] };
 export type FacingPreset = { id: string; name: string; values: FacingCharacterSettings };
+export type FacingSettingsTarget = { characterId: string; participantIds?: string[] };
 export type FacingSettings = { characterId?: string; participantIds?: string[]; groupId?: string;
-  groups?: FacingGroup[]; common?: FacingCharacterSettings; presets?: FacingPreset[];
+  groups?: FacingGroup[]; groupSettings?: Record<string, FacingCharacterSettings>;
+  /** Legacy global values, migrated to existing groups without overwriting individual settings. */
+  common?: FacingCharacterSettings; presets?: FacingPreset[];
   characters: Record<string, FacingCharacterSettings> };
 
-const COMMON_FIELDS = ["length", "customReplyLength", "extraPrompt", "replyFormat", "dialogueNotation", "voice", "speechInput", "fallbackNpcGender", "memory", "appearance", "touch", "touchMode"] as const;
-/** Only values are shared. Uploaded references, assets and voice bindings stay with their owner. */
+const PARAMETER_FIELDS = ["length", "customReplyLength", "extraPrompt", "replyFormat", "dialogueNotation", "voice", "speechInput", "memory", "appearance", "touch", "touchMode"] as const;
+/** Presets copy parameters; uploaded references, assets and voice bindings stay with their owner. */
 export function facingPresetValues(settings: FacingCharacterSettings): FacingCharacterSettings {
   const values: FacingCharacterSettings = {};
-  for (const field of COMMON_FIELDS) if (settings[field] !== undefined) Object.assign(values, { [field]: settings[field] });
+  for (const field of PARAMETER_FIELDS) if (settings[field] !== undefined) Object.assign(values, { [field]: settings[field] });
   if (settings.autoVisual) { const { referenceMediaRef: _private, ...autoVisual } = settings.autoVisual; values.autoVisual = autoVisual; }
   return values;
 }
-export function facingEffectiveSettings(characterId: string, settings = loadFacingSettings()): FacingCharacterSettings {
-  const own = settings.characters[characterId] ?? {};
-  // Until the first shared edit, migrate the selected character's previous values without losing private media.
-  const common = settings.common ?? facingPresetValues(settings.characters[settings.characterId ?? characterId] ?? own);
-  return { ...own, ...common, autoVisual: { ...own.autoVisual, ...common.autoVisual, referenceMediaRef: own.autoVisual?.referenceMediaRef } };
+
+export function facingGroupSettingsKey(ids: readonly string[]) {
+  return JSON.stringify([...new Set(ids)].sort());
 }
-export async function saveFacingCommon(patch: Partial<FacingCharacterSettings>) {
+
+function initializeFacingTarget(settings: FacingSettings, target: FacingSettingsTarget) {
+  const ids = [...new Set(target.participantIds ?? [target.characterId])];
+  if (ids.length < 2) return settings;
+  const key = facingGroupSettingsKey(ids);
+  if (settings.groupSettings?.[key]) return settings;
+  return { ...settings, groupSettings: { ...settings.groupSettings,
+    [key]: facingPresetValues(settings.characters[target.characterId] ?? {}) } };
+}
+
+function readFacingSettings(raw: string | null): FacingSettings {
+  const current = readJson<FacingSettings>(raw, { characters: {} });
+  let settings = { ...current, characters: current.characters ?? {}, groupSettings: { ...current.groupSettings } };
+  const rosters = [...(current.groups ?? []).map(group => group.participantIds), current.participantIds ?? []];
+  for (const ids of rosters) {
+    if (ids.length < 2 || settings.groupSettings[facingGroupSettingsKey(ids)]) continue;
+    settings = { ...settings, groupSettings: { ...settings.groupSettings,
+      [facingGroupSettingsKey(ids)]: facingPresetValues(current.common ?? settings.characters[ids[0]] ?? {}) } };
+  }
+  delete settings.common;
+  return settings;
+}
+
+export function facingEffectiveSettings(characterId: string, settings = loadFacingSettings(), target?: FacingSettingsTarget): FacingCharacterSettings {
+  const own = settings.characters[characterId] ?? {};
+  if (!target || new Set(target.participantIds ?? [target.characterId]).size < 2) return own;
+  const group = settings.groupSettings?.[facingGroupSettingsKey(target.participantIds!)] ?? {};
+  const personal = { ...own };
+  for (const field of PARAMETER_FIELDS) delete personal[field];
+  delete personal.autoVisual;
+  return { ...personal, ...group, autoVisual: { ...group.autoVisual, referenceMediaRef: own.autoVisual?.referenceMediaRef } };
+}
+
+function patchFacingTarget(settings: FacingSettings, target: FacingSettingsTarget, patch: Partial<FacingCharacterSettings>): FacingSettings {
+  settings = initializeFacingTarget(settings, target);
+  const ids = [...new Set(target.participantIds ?? [target.characterId])];
+  const groupKey = ids.length > 1 ? facingGroupSettingsKey(ids) : undefined;
+  const previous = groupKey ? settings.groupSettings?.[groupKey] : settings.characters[target.characterId];
+  const clean = facingPresetValues(patch);
+  const next = { ...previous, ...clean,
+    ...(clean.appearance ? { appearance: { ...previous?.appearance, ...clean.appearance } } : {}),
+    ...(clean.autoVisual ? { autoVisual: { ...previous?.autoVisual, ...clean.autoVisual } } : {}) };
+  return groupKey ? { ...settings, groupSettings: { ...settings.groupSettings, [groupKey]: next } }
+    : { ...settings, characters: { ...settings.characters, [target.characterId]: next } };
+}
+
+export async function saveFacingTargetSettings(target: FacingSettingsTarget, patch: Partial<FacingCharacterSettings>) {
   let saved!: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    const current = readJson<FacingSettings>(raw, { characters: {} });
-    const previous = current.common ?? facingPresetValues(current.characters[current.characterId ?? ""] ?? {});
-    const clean = facingPresetValues(patch);
-    saved = { ...current, common: { ...previous, ...clean, autoVisual: { ...previous.autoVisual, ...clean.autoVisual } } };
+    saved = patchFacingTarget(readFacingSettings(raw), target, patch);
     return JSON.stringify(saved);
   }); return saved;
 }
-export async function saveFacingPreset(name: string) {
+export async function saveFacingPreset(name: string, target?: FacingSettingsTarget) {
   if (!name.trim()) throw new Error("请输入预设名称。");
   let saved!: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const current = readFacingSettings(raw);
+    const owner = target ?? { characterId: current.characterId ?? "", participantIds: current.participantIds };
     const presets = current.presets ?? [];
     const old = presets.find(item => item.name === name.trim());
-    saved = { ...current, presets: [...presets.filter(item => item.id !== old?.id), { id: old?.id ?? facingId(), name: name.trim(), values: facingPresetValues(facingEffectiveSettings(current.characterId ?? "", current)) }] };
+    saved = { ...current, presets: [...presets.filter(item => item.id !== old?.id), { id: old?.id ?? facingId(), name: name.trim(), values: facingPresetValues(facingEffectiveSettings(owner.characterId, current, owner)) }] };
     return JSON.stringify(saved);
   }); return saved;
 }
-export async function applyFacingPreset(id: string) {
+export async function applyFacingPreset(id: string, target?: FacingSettingsTarget) {
   let saved!: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const current = readFacingSettings(raw);
     const preset = current.presets?.find(item => item.id === id);
     if (!preset) throw new Error("预设已移除。");
-    saved = { ...current, common: facingPresetValues(preset.values) }; return JSON.stringify(saved);
+    saved = patchFacingTarget(current, target ?? { characterId: current.characterId ?? "", participantIds: current.participantIds }, preset.values);
+    return JSON.stringify(saved);
   }); return saved;
 }
 export async function saveFacingGroup(name: string, participantIds: string[]) {
@@ -267,7 +314,7 @@ export async function saveFacingGroup(name: string, participantIds: string[]) {
   const automaticName=ids.map(id=>characters.find(item=>item.id===id)!.name).join("、");
   let saved!: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const current = initializeFacingTarget(readFacingSettings(raw), { characterId: ids[0], participantIds: ids });
     const match = current.groups?.find(item => [...item.participantIds].sort().join("|") === [...ids].sort().join("|"));
     const group = { id: match?.id ?? facingId(), name: name.trim() || match?.name?.trim() || automaticName || "多人见面", participantIds: ids };
     saved = { ...current, groups: [...(current.groups ?? []).filter(item => item.id !== group.id), group], groupId: group.id, characterId: ids[0], participantIds: ids };
@@ -280,7 +327,7 @@ export async function deleteFacingGroup(groupId: string): Promise<FacingSettings
   const meetingKeys=kvKeysWithPrefix(FACING_MEETING_PREFIX).filter(key=>readJson<FacingMeeting|null>(kvGet(key),null)?.groupId===groupId);
   await kvUpdatePersistedEntries({
     [FACING_SETTINGS_KEY]:raw=>{
-      const current=readJson<FacingSettings>(raw,{characters:{}});
+      const current=readFacingSettings(raw);
       saved={...current,groups:(current.groups??[]).filter(group=>group.id!==groupId),groupId:current.groupId===groupId?undefined:current.groupId};
       return JSON.stringify(saved);
     },
@@ -385,13 +432,13 @@ function readJson<T>(raw: string | null, fallback: T): T {
 }
 
 export function loadFacingSettings(): FacingSettings {
-  return readJson(kvGet(FACING_SETTINGS_KEY), { characters: {} });
+  return readFacingSettings(kvGet(FACING_SETTINGS_KEY));
 }
 
 export async function saveFacingSettings(characterId: string, patch?: Partial<FacingCharacterSettings>): Promise<FacingSettings> {
   let saved: FacingSettings = { characters: {} };
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    const current = readJson<FacingSettings>(raw, { characters: {} });
+    const current = readFacingSettings(raw);
     const previous = current.characters[characterId];
     const next = { ...previous, ...patch };
     if (patch?.autoVisual) next.autoVisual = { ...previous?.autoVisual, ...patch.autoVisual };
@@ -408,8 +455,8 @@ export async function saveFacingParticipants(ids: string[], groupId?: string): P
   if (!participantIds.length) throw new Error("请至少选择一位见面角色。");
   let saved: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
-    const previous = readJson<FacingSettings>(raw, { characters: {} });
-    saved = { ...previous, common: previous.common ?? (previous.characterId ? facingPresetValues(previous.characters[previous.characterId] ?? {}) : undefined), characterId: participantIds[0], participantIds, groupId };
+    const previous = initializeFacingTarget(readFacingSettings(raw), { characterId: participantIds[0], participantIds });
+    saved = { ...previous, characterId: participantIds[0], participantIds, groupId };
     return JSON.stringify(saved);
   });
   return saved!;
@@ -534,6 +581,7 @@ export function loadFacingMeeting(id: string): FacingMeeting | null {
 
 export function facingVisualMatches(meeting: FacingMeeting, anchor: FacingTurn, activityId: string, revision?: number) {
   if (meeting.deletedAt || (revision !== undefined && (meeting.sceneRevision ?? 0) !== revision)) return false;
+  if (facingParticipantIds(meeting).some(id => isNativeMemorySourceDeleted(id, { sourceApp: "facing", id: anchor.id }))) return false;
   const index = meeting.turns.findIndex(turn => turn.id === anchor.id);
   const original = meeting.turns[index];
   if (!original || original.versionIndex !== anchor.versionIndex || original.text !== anchor.text || original.action !== anchor.action || JSON.stringify(original.segments) !== JSON.stringify(anchor.segments)) return false;
@@ -572,6 +620,7 @@ export async function changeFacingTurns(meeting: FacingMeeting, update: (turns: 
   let saved = meeting;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
     const current = readJson(raw, meeting);
+    if (current.deletedAt) throw new Error("见面记录已移除。");
     const turns = update(current.turns);
     const last = turns.at(-1);
     const previousLast=current.turns.at(-1);
@@ -614,6 +663,12 @@ export function facingParticipantIds(meeting: FacingMeeting): string[] {
   return [...new Set(meeting.participantIds ?? meeting.mapContext?.participantIds ?? [meeting.characterId])];
 }
 
+/** A retained fork can display its old transcript without reintroducing deleted events to prompts. */
+export function facingPromptTurns(meeting: FacingMeeting): FacingTurn[] {
+  const participants = facingParticipantIds(meeting);
+  return meeting.turns.filter(turn => !participants.some(id => isNativeMemorySourceDeleted(id, { sourceApp: "facing", id: turn.id })));
+}
+
 export async function appendFacingTurn(meeting: FacingMeeting, turn: FacingTurn): Promise<FacingMeeting> {
   return appendFacingTurns(meeting, [turn]);
 }
@@ -623,11 +678,13 @@ export async function appendFacingTurns(meeting: FacingMeeting, incoming: Facing
   let saved = meeting;
   await kvUpdatePersisted(FACING_MEETING_PREFIX + meeting.id, raw => {
     const current = readJson(raw, meeting);
+    if (current.deletedAt) throw new Error("见面记录已移除。");
     const turns = current.turns.slice();
     const rounds = new Set(current.turns.filter(item => item.role === "assistant").map(item => item.replyTo ?? item.id));
     let addedRounds = 0;
     for (const incomingTurn of incoming) {
       const turn=incomingTurn.participantIds?incomingTurn:{...incomingTurn,participantIds:facingParticipantIds(current)};
+      if (turn.replyTo && facingParticipantIds(current).some(id => isNativeMemorySourceDeleted(id, { sourceApp: "facing", id: turn.replyTo! }))) throw new Error("对应消息已删除，已取消保存旧回复。");
       if (turns.some(item => item.id === turn.id || (turn.replyTo && item.replyTo === turn.replyTo && item.speakerId === turn.speakerId))) continue;
       const replyIndex = turn.replyTo ? turns.findIndex(item => item.id === turn.replyTo) : -1;
       let insert = replyIndex + 1;
@@ -674,11 +731,12 @@ export async function changeFacingScene(meetingId: string, scene: FacingScenePos
   return saved;
 }
 export async function manageFacingMeetings(ids: string[], operation: "delete" | "rename", title = "") {
+  if (operation === "delete") return (await import("./facing-memory-deletion")).deleteFacingMeetingsAndMemories(ids);
   if (operation === "rename" && !title.trim()) throw new Error("请填写记录名称。");
   await kvUpdatePersistedEntries(Object.fromEntries([...new Set(ids)].map(id => [FACING_MEETING_PREFIX + id, (raw: string | null) => {
     const current = readJson<FacingMeeting | null>(raw, null);
     if (!current) throw new Error("部分见面记录不存在。");
-    return JSON.stringify({ ...current, ...(operation === "delete" ? { deletedAt: new Date().toISOString() } : { title: title.trim() }), updatedAt: new Date().toISOString() });
+    return JSON.stringify({ ...current, title: title.trim(), updatedAt: new Date().toISOString() });
   }])));
 }
 export async function mergeFacingMeetings(targetId: string, ids: string[], removeSources = false): Promise<FacingMeeting> {
@@ -753,8 +811,8 @@ export async function addFacingParticipants(meetingId: string, characterIds: str
       return JSON.stringify(saved);
     },
     [FACING_SETTINGS_KEY]:raw=>{
-      const current=readJson<FacingSettings>(raw,{characters:{}});
       if(!saved)throw new Error("见面成员保存失败。");
+      const current=initializeFacingTarget(readFacingSettings(raw), {characterId:saved.characterId,participantIds:roster});
       return JSON.stringify({...current,characterId:saved.characterId,participantIds:roster,groupId:saved.groupId});
     },
   });

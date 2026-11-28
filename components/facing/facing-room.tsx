@@ -7,6 +7,7 @@ import { useHoldToTalk } from "@/components/chat/use-hold-to-talk";
 import { isIOSDevice } from "@/components/chat/voice-input-platform";
 import type { Character } from "@/lib/character-types";
 import { generateFacingReply } from "@/lib/facing-engine";
+import { deleteFacingMessages } from "@/lib/facing-memory-deletion";
 import { isFacingCgVisible, markFacingCgShown, toggleFacingCg, appendFacingTurn, appendFacingTurns, facingParticipantIds, loadFacingSettings, changeFacingTurns, facingCompletedRounds, facingId, facingReplyVersion, facingScenePosition, FACING_DEFAULT_APPEARANCE, shouldCheckFacingVisual, type FacingAsset, type FacingCharacterSettings, type FacingHotspot, type FacingMeeting, type FacingSceneGroup, type FacingScenePosition, type FacingTurn } from "@/lib/facing-storage";
 import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
 import { createSTTSession, isBrowserSpeechRecognitionSupported, type STTSession } from "@/lib/stt-service";
@@ -282,8 +283,8 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     void send(user.text, user.kind, { retry: user, previous, instruction });
   }
 
-  async function updateTurns(update: (turns: FacingTurn[]) => FacingTurn[]) {
-    if (controller.current) return;
+  async function updateTurns(update: (turns: FacingTurn[]) => FacingTurn[], removeIds?: string[]) {
+    if (controller.current) return false;
     speech.stop();
     const operation = new AbortController();
     controller.current = operation;
@@ -292,13 +293,15 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     setStopped(false);
     setError("");
     try {
-      const saved = await changeFacingTurns(meeting, update);
+      const saved = removeIds ? await deleteFacingMessages(meeting.id, removeIds) : await changeFacingTurns(meeting, update);
       if (!operation.signal.aborted) { stopReaction(); onMeeting(saved); }
-    } catch {
-      if (!operation.signal.aborted) setError("消息修改未保存，请重试。");
+      return !operation.signal.aborted;
+    } catch (cause) {
+      if (!operation.signal.aborted) setError(cause instanceof Error ? cause.message : "消息修改未保存，请重试。");
+      return false;
     } finally {
       if (controller.current === operation) controller.current = null;
-      if (!operation.signal.aborted) setBusy(false);
+      if (!operation.signal.aborted) { setBusy(false); setGenerating(false); }
     }
   }
 
@@ -393,7 +396,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
     "--facing-bubble-opacity": `${appearance?.opacity ?? FACING_DEFAULT_APPEARANCE.opacity}%`, "--facing-message-color": appearance?.textColor ?? FACING_DEFAULT_APPEARANCE.textColor,
     "--facing-user-bubble-color": appearance?.bubbleColor ?? "#3d2f50", "--facing-user-bubble-opacity": `${appearance?.opacity ?? 49}%`,
     "--facing-message-size": `${appearance?.textSize ?? FACING_DEFAULT_APPEARANCE.textSize}px` } as CSSProperties;
-  function closeMenu() { setMenuId(undefined); setMessageDialog(undefined); }
+  function closeMenu() { if(busy)return;setMenuId(undefined); setMessageDialog(undefined); }
   function applyMessageDialog() {
     if (!selectedMessage) return;
     let quotedEdit: ReturnType<typeof parseFacingReplyParts> | undefined;
@@ -402,8 +405,10 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       catch (cause) { setError(cause instanceof Error ? cause.message : "请检查对话符号。"); return; }
     }
     if (messageDialog === "instruction") retryMessage(selectedMessage, messageDraft);
-    if (messageDialog === "delete") void updateTurns(turns => turns.filter(turn => turn.id !== selectedMessage.id)
-      .map(turn => turn.replyTo === selectedMessage.id ? { ...turn, replyTo: undefined } : turn));
+    if (messageDialog === "delete") {
+      void updateTurns(turns => turns, [selectedMessage.id]).then(success=>{if(success)closeMenu();});
+      return;
+    }
     if (messageDialog === "edit") void updateTurns(turns => turns.map(turn => {
       if (turn.id !== selectedMessage.id) return turn;
       const action = splitVisibleCallActions(actionDraft);
@@ -546,14 +551,15 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         <header><h2>{messageDialog === "edit" ? "编辑消息" : messageDialog === "instruction" ? "指令重试" : messageDialog === "delete" ? "删除这条消息？" : "消息操作"}</h2>
           <button type="button" className="facing-icon" aria-label="关闭消息操作" onClick={closeMenu}><X size={18} /></button></header>
         {messageDialog ? <>
+          {messageDialog === "delete" && <p>同时删除在场角色中由这条消息产生的记忆。包含它的长期、核心摘要也会移除；如果是到达消息，对应出行记录一起删除。</p>}
           {messageDialog==="edit"&&!!selectedMessage.segments?.length&&<p>{selectedMessage.dialogueNotation === "quoted" ? "按展示顺序编辑：中文双引号内为台词，引号外为动作描述。" : "按展示顺序编辑：括号内为动作，括号外为台词。"}</p>}
           {messageDialog !== "delete" && <textarea className="facing-message-editor" aria-label={messageDialog === "edit" ? "消息内容" : "重试指令"}
             value={messageDraft} rows={4} maxLength={14000} onChange={event => {setMessageDraft(event.target.value);setError("");}} />}
-          {messageDialog === "edit" && error && <p className="facing-error" role="alert">{error}</p>}
+          {(messageDialog === "edit" || messageDialog === "delete") && error && <p className="facing-error" role="alert">{error}</p>}
           {messageDialog === "edit" && selectedMessage.role === "assistant" && !selectedMessage.segments?.length && <textarea className="facing-message-editor" aria-label="动作描述"
             placeholder="（动作描述）" value={actionDraft} rows={2} maxLength={2000} onChange={event => setActionDraft(event.target.value)} />}
           <button type="button" className="facing-primary" onClick={applyMessageDialog}
-            disabled={messageDialog === "instruction" && !messageDraft.trim()}>{messageDialog === "delete" ? "确认删除" : messageDialog === "edit" ? "保存" : "重新生成"}</button>
+            disabled={busy || messageDialog === "instruction" && !messageDraft.trim()}>{messageDialog === "delete" ? "确认删除" : messageDialog === "edit" ? "保存" : "重新生成"}</button>
         </> : <div className="facing-list">
           <button type="button" onClick={() => { closeMenu(); retryMessage(selectedMessage); }}>重试</button>
           <button type="button" onClick={() => { setMessageDraft(selectedMessage.segments?.length?facingVisibleSegments(selectedMessage).map(part=>facingSegmentText(part,selectedMessage.dialogueNotation)).join("\n"):selectedMessage.text); setActionDraft(selectedMessage.action ?? ""); setMessageDialog("edit"); }}>编辑</button>

@@ -32,7 +32,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
     const character = loadCharacters().find(item => item.id === meeting.characterId) ?? check.character;
     const anchor = meeting.turns.at(-1);
     const current = loadFacingMeeting(meeting.id);
-    const settings = facingEffectiveSettings(meeting.characterId);
+    const settings = facingEffectiveSettings(meeting.characterId, undefined, meeting);
     if (!anchor || !current || !settings?.autoVisual?.enabled || !facingVisualMatches(current, anchor, "", meeting.sceneRevision ?? 0)) return;
     const job: Job = { controller: new AbortController() };
     jobs.current.set(meeting.id, job);
@@ -47,7 +47,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
       const plan = planned && check.override ? {...planned,...check.override} : planned;
       const latest = loadFacingMeeting(meeting.id);
       if (!plan || signal.aborted || !latest || !facingVisualMatches(latest, anchor, "", meeting.sceneRevision ?? 0)) return;
-      const configured = facingEffectiveSettings(meeting.characterId).autoVisual;
+      const configured = facingEffectiveSettings(meeting.characterId, undefined, meeting).autoVisual;
       const options = configured ? {...configured,referenceMode:check.override?.referenceMode??plan.referenceMode??configured.referenceMode,referenceSource:plan.referenceSource??configured.referenceSource} : undefined;
       if (!options?.enabled) return;
       const activityId = facingId();
@@ -66,7 +66,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
       }, result.blob, facingMediaType(result.blob));
       if (signal.aborted) return;
       onAssets(character.id, loadFacingUsableAssets(character.id));
-      if (!facingEffectiveSettings(meeting.characterId).autoVisual?.enabled) return;
+      if (!facingEffectiveSettings(meeting.characterId, undefined, meeting).autoVisual?.enabled) return;
       const saved = await applyFacingVisual(meeting.id, anchor, activityId, plan.location, asset, plan.mode, meeting.sceneRevision ?? 0, facingCompletedRounds(meeting));
       if (saved && !signal.aborted) {
         if(check.override) {
@@ -94,7 +94,7 @@ export function useFacingSceneGeneration(onMeeting: (meeting: FacingMeeting) => 
   }
 
   function check(meeting: FacingMeeting, character: Character) {
-    const settings = facingEffectiveSettings(character.id).autoVisual;
+    const settings = facingEffectiveSettings(character.id, undefined, meeting).autoVisual;
     const round = facingCompletedRounds(meeting), key = `${meeting.id}:${round}`;
     if (!shouldCheckFacingVisual(round, settings) || meeting.visual?.round === round || startedRounds.current.has(key)) return;
     startedRounds.current.add(key);

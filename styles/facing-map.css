@@ -98,3 +98,10 @@
 .fmap-sheet .fmap-outline { border: 1px solid #b9c6b5; background: #f0f4ed; min-height: 44px; }
 .fmap-history-scroll { flex: 0 1 auto; min-height: 0; max-height: 65dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 12px; }
 .fmap-history-scroll > * { flex-shrink: 0; }
+.fmap-visit { padding: 12px; border: 1px solid var(--facing-line); border-radius: 12px; background: var(--facing-card); }
+.fmap-visit-row { display: flex; align-items: center; gap: 10px; }
+.fmap-visit-row > div { flex: 1; min-width: 0; }
+.fmap-visit-row strong, .fmap-visit-row small { display: block; overflow-wrap: anywhere; }
+.fmap-visit-row small { margin-top: 4px; color: var(--facing-muted); font-size: 12px; }
+.fmap-visit-confirm { margin-top: 12px; border-top: 1px solid var(--facing-line); padding-top: 10px; }
+.fmap-visit-confirm p { font-size: 13px; line-height: 1.7; }

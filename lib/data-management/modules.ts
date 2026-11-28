@@ -192,6 +192,7 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
           "ai_phone_mem_last_core_sum_",
           "ai_phone_manual_short_term_memory:",
           "ai_phone_hidden_short_term_memory:",
+          "ai_phone_memory_source_deletions_v1:",
           "note_wall_events_",
           "ai_phone_interview_magazine_events_",
           "ai_phone_cocreate_events_",

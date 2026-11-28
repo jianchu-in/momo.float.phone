@@ -82,7 +82,7 @@ function ProductPreview({ asset, opener, onClose, onChange }: { asset: FacingAss
       {editing&&<FacingCgEditor initial={{description:asset.description,depictedCharacterIds:asset.depictedCharacterIds,userVisible:asset.userVisible,referenceMode:asset.referenceMode==="none"?"text":"depicted"}} participantIds={asset.participantIds??[asset.characterId]} onCancel={()=>setEditing(false)} onGenerate={async draft=>{
         const character=loadCharacters().find(item=>item.id===(asset.participantIds?.[0]??asset.characterId));
         if(!character)throw new Error("原角色已移除。");
-        const options=facingEffectiveSettings(character.id).autoVisual??{};
+        const options=facingEffectiveSettings(character.id,undefined,{characterId:character.id,participantIds:asset.participantIds}).autoVisual??{};
         const base=(asset.participantIds??[asset.characterId]).flatMap(loadFacingAssets).find(item=>item.category==="scene"&&(item.location??item.name)===(asset.location?.split(" · ").at(-1)));
         const controller=new AbortController();generation.current=controller;
         const {renderFacingVisual}=await import("@/lib/facing-scene-generation");

@@ -2,7 +2,7 @@ import { depictedImageReferences } from "./depicted-image-references";
 import { throwIfAborted } from "./abort-utils";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import type { Character } from "./character-types";
-import { facingParticipantIds, facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { facingEffectiveSettings, facingParticipantIds, facingPromptTurns, facingTurnText, type FacingAsset, type FacingAutoVisualSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { generateImageFromConfiguredApi, resolveConfiguredImageGenerationSettings } from "./image-generation-service";
 import { canIllustrateScene, SCENE_IMAGE_ORIENTATION_GUIDANCE } from "./scene-image-analysis";
 import { loadShownImageDataUrl } from "./shown-image";
@@ -23,8 +23,9 @@ export type ScenePlan = {
 };
 
 function facingVisualContext(character: Character, meeting: FacingMeeting) {
-  return { 角色: character.name, 人设: character.persona?.slice(0, 1800), 当前地点: meeting.turns.at(-1)?.sceneName,
-    最近互动: meeting.turns.slice(-10).map(turn => ({ 说话者: turn.role, 地点: turn.sceneName, 内容: facingTurnText(turn).slice(0, 1600) })),
+  const turns = facingPromptTurns(meeting);
+  return { 角色: character.name, 人设: character.persona?.slice(0, 1800), 当前地点: turns.at(-1)?.sceneName,
+    最近互动: turns.slice(-10).map(turn => ({ 说话者: turn.role, 地点: turn.sceneName, 内容: facingTurnText(turn).slice(0, 1600) })),
   };
 }
 
@@ -35,9 +36,10 @@ export function canIllustrateFacingScene(character: Character, meeting: FacingMe
 
 export async function planFacingVisual(character: Character, meeting: FacingMeeting, _groups: FacingSceneGroup[], signal: AbortSignal): Promise<ScenePlan | undefined> {
   throwIfAborted(signal);
+  meeting = { ...meeting, turns: facingPromptTurns(meeting) };
   const turn = meeting.turns.at(-1);
   if (!turn?.sceneName) return;
-  const settings = (await import("./facing-storage")).facingEffectiveSettings(meeting.characterId).autoVisual;
+  const settings = facingEffectiveSettings(meeting.characterId, undefined, meeting).autoVisual;
   if (settings?.skipNsfw && turn.visualRating !== "safe") return;
   return { referenceMode: turn.visualReferenceMode, referenceSource: turn.visualReferenceSource, participantIds: facingParticipantIds(meeting), depictedCharacterIds: turn.depictedCharacterIds ?? (facingParticipantIds(meeting).length===1?[meeting.characterId]:undefined), userVisible: turn.userVisible, location: turn.sceneName, name: `${turn.sceneName} · CG`, mode: "replacement",
     description: turn.visualDescription?.trim() || `${character.name}，在「${turn.sceneName}」。${meeting.turns.slice(-4).map(facingTurnText).join("\n")}` };

@@ -8,6 +8,7 @@ import type { Character } from "@/lib/character-types";
 import { getCharacterWorldGroup, loadCharacterWorldGroups } from "@/lib/character-world-storage";
 import { loadChatScope } from "@/lib/chat-scope-storage";
 import { facingId, type FacingMeeting } from "@/lib/facing-storage";
+import { deleteMapVisitAndMemories } from "@/lib/facing-memory-deletion";
 import { loadWorldBooks, resolveUserIdentity, loadApiConfigs, loadBindingConfig, resolveBinding } from "@/lib/settings-storage";
 import { downloadFile } from "@/lib/download-utils";
 import { deleteThemeAsset, getThemeAssetDataUrl } from "@/lib/theme-storage";
@@ -35,7 +36,8 @@ import { loadMapPlans, saveMapPlan, formatMapPlan, mapPlanPlaces, validateMapPla
 registerDynamicPrefix("ai_phone_facing_map_draft_v1:");
 type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | "scene-match" | "place-life" | null;
 type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile; uploaded?: boolean };
-export function FacingMapApp({ character, characters, currentMeeting, initialParticipantIds, onBack, onSettings, onArrive, onLocation }: {
+export function FacingMapApp({ character, characters, currentMeeting, initialParticipantIds, onBack, onSettings, onArrive, onLocation, onRecordsChanged }: {
+  onRecordsChanged?: () => void;
   onLocation?: (location:{atlasId:string;placeId:string}|undefined)=>void;
   character: Character; characters: Character[]; currentMeeting?: FacingMeeting; initialParticipantIds?: string[];
   onBack: () => void; onSettings: () => void;
@@ -65,6 +67,7 @@ export function FacingMapApp({ character, characters, currentMeeting, initialPar
   const [planName, setPlanName] = useState("");
   const [notice, setNotice] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [visitDeleteId, setVisitDeleteId] = useState<string>();
   const [extension, setExtension] = useState<MapExtension>();
   const [candidate, setCandidate] = useState<MapCandidate>();
   const [placeDraft, setPlaceDraft] = useState<MapPlace>();
@@ -117,7 +120,7 @@ export function FacingMapApp({ character, characters, currentMeeting, initialPar
   }
   function closeSheet() {
     if (busy) return;
-    setSheet(null); setError("");
+    setSheet(null); setError(""); setVisitDeleteId(undefined);
   }
   function toggle(list: string[], value: string) { return list.includes(value) ? list.filter(id => id !== value) : [...list, value]; }
   function openGenerate(direction?: MapExtension["direction"]) {
@@ -592,8 +595,19 @@ export function FacingMapApp({ character, characters, currentMeeting, initialPar
       <button type="button" className="facing-small" onClick={() => { setSnapshotId(undefined); setSheet(null); }}>查看最新动向</button>
       {[...atlas.snapshots].reverse().map(item => <button type="button" key={item.id} className="facing-soft" onClick={() => { setSnapshotId(item.id); setSheet(null); }}>
         {new Date(item.createdAt).toLocaleString("zh-CN")} · {item.entries.length}位角色</button>)}
-      <h3>出行记录</h3>{[...atlas.visits].reverse().filter(item => item.identityId === identityId).map(item => <p key={item.id}>
-        {new Date(item.at).toLocaleString("zh-CN")} · {mapPlacePath(atlas, item.placeId)}{item.secret ? " · 偷偷前往" : ""}</p>)}
+      <h3>出行记录</h3>{[...atlas.visits].reverse().filter(item => item.identityId === identityId).map(item => <article className="fmap-visit" key={item.id} data-visit-id={item.id}>
+        <div className="fmap-visit-row"><div><strong>{mapPlacePath(atlas, item.placeId)||"已移除的地点"}</strong><small>{new Date(item.at).toLocaleString("zh-CN")}{item.secret ? " · 偷偷前往" : ""}</small>
+          <small>{item.characterIds.length?`与${item.characterIds.map(id=>characters.find(character=>character.id===id)?.name??"角色").join("、")}同行`:"独自前往"}</small></div>
+          <button type="button" className="facing-small facing-delete" disabled={!!busy} aria-label={`删除出行记录到${mapPlacePath(atlas,item.placeId)||"已移除的地点"}`} onClick={()=>{setVisitDeleteId(item.id);setError("");}}>删除</button></div>
+        {visitDeleteId===item.id&&<div className="fmap-visit-confirm" role="group" aria-label="删除出行记录">
+          <p>删除这条出行记录、对应的到达消息及相关角色记忆？包含这些内容的长期、核心摘要也会移除。</p>
+          <div className="facing-choices"><button type="button" className="facing-small facing-delete" disabled={!!busy} onClick={()=>void run("正在删除出行记录和记忆…",async()=>{
+            setAtlas(await deleteMapVisitAndMemories(atlas.id,item.id,identityId));setVisitDeleteId(undefined);onRecordsChanged?.();
+          })}>删除记录及相关记忆</button><button type="button" className="facing-small" disabled={!!busy} onClick={()=>{setVisitDeleteId(undefined);setError("");}}>取消</button></div>
+          {error&&<p className="facing-error" role="alert">{error}</p>}
+        </div>}
+      </article>)}
+      {!atlas.visits.some(item=>item.identityId===identityId)&&<p className="fmap-note">暂无出行记录</p>}
       <h3>邀请记录</h3>{[...atlas.invitations].reverse().filter(item => item.identityId === identityId).map(item => <button key={item.id} type="button" className="facing-soft"
         onClick={() => { setInvitationId(item.id); setSheet("invitations"); }}>
         {mapPlacePath(atlas, item.placeId)} · {new Date(item.createdAt).toLocaleString("zh-CN")}</button>)}

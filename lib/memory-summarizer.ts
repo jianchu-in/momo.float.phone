@@ -14,12 +14,15 @@ import {
     getLastSummarizedTimestamp,
     setLastSummarizedTimestamp,
     incrementCoreMemoryCounter,
+    DeletedMemorySourceError,
 } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { loadNativeTimeline, formatTimelineForSummarization, filterTimelineByAllowedSources } from "./short-term-assembler";
 import { generateEmbedding, resolveEmbeddingModel } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
 import { maybeRunCoreMemoryPipeline } from "./core-memory-builder";
+import { getNativeTimelineEntryKey } from "./native-timeline-key";
+import { memorySourceEventKey } from "./memory-source-deletions";
 
 /** Per-character lock to prevent concurrent summarization. */
 const summarizingSet = new Set<string>();
@@ -158,13 +161,20 @@ export async function runSummarizationPipeline(
         importance: 0.8,
         createdAt: now,
         updatedAt: now,
+        sourceMessageIds: allEntries.map(entry => entry.id),
         metadata: {
             summarizedEvents: allEntries.length,
             timeSpan: `${earliest} ~ ${latest}`,
             sourceSessionIds,
+            sourceEntryKeys: allEntries.map(getNativeTimelineEntryKey),
+            sourceEventKeys: allEntries.map(memorySourceEventKey),
         },
     };
-    await saveMemoryEntry(longTermEntry);
+    try { await saveMemoryEntry(longTermEntry); }
+    catch (error) {
+        if (error instanceof DeletedMemorySourceError) return { success: false, error: error.message };
+        throw error;
+    }
 
     // Update last summarized timestamp + reset counter
     setLastSummarizedTimestamp(characterId, latest);

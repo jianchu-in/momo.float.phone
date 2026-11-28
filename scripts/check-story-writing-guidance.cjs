@@ -105,7 +105,7 @@ async function main() {
   await assert.rejects(engine.generateStoryCompletion("a",[old],options),/开启识图/);assert.equal(requests.length,beforeNoVision);imageRecognition=true;
 
   const facingFormats=load("lib/facing-reply-format.ts",{"./call-action-text":load("lib/call-action-text.ts",{})});
-  const facingStorage=load("lib/facing-storage.ts",{"./facing-reply-format":facingFormats}),facingRequests=[];
+  const facingStorage=load("lib/facing-storage.ts",{"./facing-reply-format":facingFormats,"./memory-source-deletions":{isNativeMemorySourceDeleted:()=>false}}),facingRequests=[];
   const facing=load("lib/facing-engine.ts",{
     "./facing-reply-format":facingFormats,
     "./shown-image":{...images,loadShownImageDataUrl:async()=>"data:image/png;base64,cmVmZXJlbmNl"},

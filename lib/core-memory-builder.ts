@@ -8,6 +8,7 @@ import {
     resetCoreMemoryCounter,
     getLastCoreSummarizedTimestamp,
     setLastCoreSummarizedTimestamp,
+    DeletedMemorySourceError,
 } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { simpleLLMCall } from "./api-helpers";
@@ -20,6 +21,8 @@ type CoreTimelineItem = {
     content: string;
     sourceApp: MemoryEntry["sourceApp"];
     sourceSessionIds: string[];
+    sourceEntryKeys: string[];
+    sourceEventKeys: string[];
 };
 
 function formatCoreTimelineForSummarization(
@@ -62,6 +65,8 @@ export async function runCoreMemoryPipeline(
             sourceSessionIds: Array.isArray(entry.metadata?.sourceSessionIds)
                 ? entry.metadata.sourceSessionIds.map(String)
                 : [],
+            sourceEntryKeys: Array.isArray(entry.metadata?.sourceEntryKeys) ? entry.metadata.sourceEntryKeys.filter((key): key is string => typeof key === "string") : [],
+            sourceEventKeys: Array.isArray(entry.metadata?.sourceEventKeys) ? entry.metadata.sourceEventKeys.filter((key): key is string => typeof key === "string") : [],
         }))
         .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
@@ -128,9 +133,17 @@ export async function runCoreMemoryPipeline(
             summarizedLongTermEntries: entries.length,
             timeSpan: `${earliest} ~ ${latest}`,
             sourceSessionIds,
+            sourceMemoryIds: entries.map(entry => entry.id),
+            // Only claim complete exact provenance when every input has it; otherwise retain the legacy session fallback.
+            ...(entries.every(entry => entry.sourceEntryKeys.length > 0)
+                ? { sourceEntryKeys: [...new Set(entries.flatMap(entry => entry.sourceEntryKeys))], sourceEventKeys: [...new Set(entries.flatMap(entry => entry.sourceEventKeys))] } : {}),
         },
     };
-    await saveMemoryEntry(coreEntry);
+    try { await saveMemoryEntry(coreEntry); }
+    catch (error) {
+        if (error instanceof DeletedMemorySourceError) return { success: false, error: error.message };
+        throw error;
+    }
 
     setLastCoreSummarizedTimestamp(characterId, latest);
     if (!options?.force) {

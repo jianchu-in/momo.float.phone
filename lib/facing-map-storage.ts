@@ -4,7 +4,8 @@ import { facingArrival, facingArrivalText } from "./facing-arrival";
 import { facingParticipantIds, facingId, FACING_MEETING_PREFIX, type FacingMeeting, type FacingScenePosition } from "./facing-storage";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 
-const MAP_PREFIX = "ai_phone_facing_map_v1:";
+export const FACING_MAP_PREFIX = "ai_phone_facing_map_v1:";
+const MAP_PREFIX = FACING_MAP_PREFIX;
 export const FACING_MAP_SETTINGS_KEY = "ai_phone_facing_map_settings_v1";
 export const FACING_RESIDENTS_KEY = "ai_phone_facing_residents_v1";
 registerKvMigration(FACING_RESIDENTS_KEY);
@@ -39,6 +40,7 @@ export type MapTrip = { placeId: string; characterIds: string[]; secret: boolean
 export type FacingAtlas = {
   id: string; worldId: string; name: string; characterIds: string[]; worldBookIds: string[];
   pages: FacingMapPage[]; snapshots: MapSnapshot[]; invitations: MapInvitation[]; visits: MapVisit[];
+  deletedVisitIds?: string[];
   userPlaces: Record<string, string>; createdAt: string; updatedAt: string;
 };
 export type MapPreferences = {
@@ -320,6 +322,7 @@ export async function saveMapArrival(atlasId: string, trip: MapTrip, visitId: st
     [MAP_PREFIX + atlasId]: raw => {
       const current = parse<FacingAtlas | null>(raw, null);
       if (!current || !mapPlace(current, trip.placeId)) throw new Error("目的地已移除，请重新选择。");
+      if (current.deletedVisitIds?.includes(visitId)) throw new Error("这条出行记录已删除，请重新前往。");
       const existing=current.visits.find(visit=>visit.id===visitId);
       if(existing){if(existing.placeId!==trip.placeId||existing.meetingId!==meetingId)throw new Error("到达记录与当前目的地不一致，请重新前往。");repeatedVisit=true;return JSON.stringify(current);}
       return JSON.stringify({ ...current, updatedAt: now, userPlaces: { ...current.userPlaces, [identityId ?? "default"]: trip.placeId },

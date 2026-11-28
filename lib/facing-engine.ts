@@ -8,7 +8,7 @@ import {facingReplyFormatInstruction,parseFacingReplyParts,type FacingSegment} f
 import type { ChatMessage } from "./chat-storage";
 import { sendLLMRequest } from "./chat-engine";
 import type { Character } from "./character-types";
-import { facingReplyLength, facingParticipantIds, groupFacingScenes, loadFacingUsableAssets, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
+import { facingReplyLength, facingParticipantIds, facingPromptTurns, groupFacingScenes, loadFacingUsableAssets, facingTurnText, type FacingAsset, type FacingCharacterSettings, type FacingMeeting, type FacingSceneGroup } from "./facing-storage";
 import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
@@ -118,7 +118,10 @@ export async function generateFacingReply(options: {
   illustrate?: boolean;
   deferVisual?: boolean;
 }): Promise<{ replies: FacingReply[] }> {
-  const { character, meeting, settings, scene, scenes, signal } = options;
+  const { character, settings, scene, scenes, signal } = options;
+  const turns = facingPromptTurns(options.meeting);
+  const visibleIds = new Set(turns.map(turn => turn.id));
+  const meeting = { ...options.meeting, turns, castEvents: options.meeting.castEvents?.filter(event => visibleIds.has(event.turnId)) };
   const participantIds = facingParticipantIds(meeting);
   const cast = loadCharacters().filter(item => participantIds.includes(item.id));
   const multi = cast.length > 1;

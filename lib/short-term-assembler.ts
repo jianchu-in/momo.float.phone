@@ -1,4 +1,4 @@
-import { facingTurnText, loadFacingMeetings, loadFacingSettings } from "./facing-storage";
+import { facingEffectiveSettings, facingTurnText, loadFacingMeetings, loadFacingSettings } from "./facing-storage";
 // lib/short-term-assembler.ts
 // Reads native app data (chat messages, moments posts/comments) and provides
 // a unified timeline. Replaces the old ShortTermEvent IndexedDB approach.
@@ -851,13 +851,15 @@ function* assembleNativeTimeline(
         });
     }
 
-    if (loadFacingSettings().characters[characterId]?.memory !== false) {
+    {
+        const facingSettings = loadFacingSettings();
         const identity = options?.appId ? resolveUserIdentity(characterId, options.appId)?.id ?? null : undefined;
         const seen = new Set<string>();
         const meetings = loadFacingMeetings(characterId, identity, true)
             .filter(meeting => meeting.type !== "independent" && meeting.id !== options?.excludeFacingMeetingId)
             .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         for (const meeting of meetings) {
+            if (facingEffectiveSettings(characterId, facingSettings, meeting).memory === false) continue;
             for (const turn of meeting.turns) {
                 if (turn.participantIds && !turn.participantIds.includes(characterId)) continue;
                 if (++processedMessages % 100 === 0) yield;
