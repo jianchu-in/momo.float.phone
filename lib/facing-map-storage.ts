@@ -30,6 +30,7 @@ export type FacingMapPage = {
 };
 export type MapActivity = { characterId: string; placeId: string; activity: string; time: string };
 export type MapSnapshot = { id: string; createdAt: string; entries: MapActivity[] };
+export const FACING_MAP_SNAPSHOT_LIMIT = 10;
 export type MapInvitation = {
   id: string; placeId: string; createdAt: string; identityId: string | null;
   chatAccountId?: string | null;
@@ -58,12 +59,18 @@ export function loadMapPreferences(): MapPreferences {
 export async function saveMapPreferences(patch: Partial<MapPreferences>) {
   await kvUpdatePersisted(FACING_MAP_SETTINGS_KEY, raw => JSON.stringify({ ...DEFAULTS, ...parse(raw, {}), ...patch }));
 }
+function recentMapSnapshots(snapshots: MapSnapshot[]) {
+  const time = (item: MapSnapshot) => Date.parse(item.createdAt) || 0;
+  return [...snapshots].sort((a, b) => time(a) - time(b)).slice(-FACING_MAP_SNAPSHOT_LIMIT);
+}
 export function loadFacingAtlas(id: string) {
-  return parse<FacingAtlas | null>(kvGet(MAP_PREFIX + id), null);
+  const atlas = parse<FacingAtlas | null>(kvGet(MAP_PREFIX + id), null);
+  return atlas ? { ...atlas, snapshots: recentMapSnapshots(atlas.snapshots) } : null;
 }
 export function loadFacingAtlases(worldId: string) {
   return kvKeysWithPrefix(MAP_PREFIX).map(key => parse<FacingAtlas | null>(kvGet(key), null))
     .filter((atlas): atlas is FacingAtlas => !!atlas && atlas.worldId === worldId)
+    .map(atlas => ({ ...atlas, snapshots: recentMapSnapshots(atlas.snapshots) }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 type ResidentRegistry = Record<string, { characterIds: string[]; atlasIds: string[]; name: string }>;
@@ -104,10 +111,19 @@ export async function updateFacingAtlas(id: string, update: (atlas: FacingAtlas)
   await kvUpdatePersisted(MAP_PREFIX + id, raw => {
     const current = parse<FacingAtlas | null>(raw, null);
     if (!current) throw new Error("找不到这张地图。");
-    result = { ...update(current), updatedAt: new Date().toISOString() };
+    const next = update(current);
+    result = { ...next, snapshots: recentMapSnapshots(next.snapshots), updatedAt: new Date().toISOString() };
     return JSON.stringify(result);
   });
   return result!;
+}
+/** Persist the limit for older/imported maps without changing the map's activity timestamp. */
+export async function trimFacingMapSnapshots(id: string) {
+  await kvUpdatePersisted(MAP_PREFIX + id, raw => {
+    const current = parse<FacingAtlas | null>(raw, null);
+    if (!current) throw new Error("找不到这张地图。");
+    return JSON.stringify({ ...current, snapshots: recentMapSnapshots(current.snapshots) });
+  });
 }
 export async function renameFacingAtlas(id: string, name: string) {
   if (!name.trim()) throw new Error("请填写地图名称。");

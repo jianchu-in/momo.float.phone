@@ -15,7 +15,7 @@ import { deleteThemeAsset, getThemeAssetDataUrl } from "@/lib/theme-storage";
 import { answerMapInvitation, enrichMapGenerationSources, calibrateFacingMap, extensionPosition, planFacingMap, refreshMapActivities, renderFacingMap, polishMapTilePlan, refineFacingMapPlan,
   type MapExtension, type MapPlan } from "@/lib/facing-map-engine";
 import { commitMapTile, createFacingAtlas, createMapInterior, loadFacingAtlases, loadFacingAtlas, loadMapPreferences,
-  mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas,
+  mapPlace, mapPlacePath, mapJourneyRoute, mapJourneyFrame, mapActivitySnapshot, mapBoundaryTile, placeOnMapPage, saveMapPage, saveMapPreferences, storeMapTile, updateFacingAtlas, trimFacingMapSnapshots,
   type FacingAtlas, type MapTile, type MapPlace, type MapPoint, type MapPreferences, type MapTrip } from "@/lib/facing-map-storage";
 import { MapSceneMatcher } from "./facing-map-scene-matcher";
 import { FacingPlaceSettings } from "./facing-place-settings";
@@ -103,6 +103,13 @@ export function FacingMapApp({ character, characters, currentMeeting, initialPar
   const books = loadWorldBooks();
 
   useEffect(() => () => controller.current?.abort(), []);
+  useEffect(()=>{
+    if(!atlas)return;
+    let active=true;const id=atlas.id;
+    void trimFacingMapSnapshots(id).then(()=>{if(active)setAtlas(current=>current?.id===id?loadFacingAtlas(id)??current:current);})
+      .catch(()=>{if(active)setError("旧动向记录整理失败，下一次刷新时会重试。 ");});
+    return()=>{active=false;};
+  },[atlas?.id]);
   useEffect(() => () => { if (candidate) URL.revokeObjectURL(candidate.url); }, [candidate]);
   useEffect(()=>{
     if(sheet!=="generate"||!atlas||!page||replacement)return;
@@ -591,7 +598,7 @@ export function FacingMapApp({ character, characters, currentMeeting, initialPar
     </MapSheet>}
     {sheet === "history" && atlas && <MapSheet title="地图记录" onClose={closeSheet}>
       <div className="fmap-history-scroll" role="region" aria-label="地图历史记录" tabIndex={0}>
-      <h3>角色动向</h3>
+      <h3>角色动向</h3><p className="fmap-note">仅保留最近 10 次动向，超出后自动清除最旧记录。</p>
       <button type="button" className="facing-small" onClick={() => { setSnapshotId(undefined); setSheet(null); }}>查看最新动向</button>
       {[...atlas.snapshots].reverse().map(item => <button type="button" key={item.id} className="facing-soft" onClick={() => { setSnapshotId(item.id); setSheet(null); }}>
         {new Date(item.createdAt).toLocaleString("zh-CN")} · {item.entries.length}位角色</button>)}

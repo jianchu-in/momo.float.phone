@@ -186,12 +186,16 @@ export async function refreshMapActivities(lead: Character, atlas: FacingAtlas, 
   for(let index=0;index<members.length;index+=4){throwIfAborted(signal);memory.push(...await Promise.all(members.slice(index,index+4).map(characterMemory)));await new Promise<void>(resolve=>setTimeout(resolve,0));}
   throwIfAborted(signal);
   const createdAt = new Date().toISOString();
-  const input = { 当前时间: createdAt, 角色资料与记忆: memory, 上次动向: atlas.snapshots.at(-1),
-    已实际到达: atlas.visits.slice(-12), 可选地点: atlas.pages.flatMap(page => page.places.map(place => ({ id: place.id, path: mapPlacePath(atlas, place.id), description: place.description }))) };
+  // Map history is independently stored and can outlive deleted character memories.
+  // Never feed previous generated locations or the visit table back into a memory-based refresh.
+  const input = { 当前时间: createdAt, 角色资料与记忆: memory,
+    可选地点: atlas.pages.flatMap(page => page.places.map(place => ({ id: place.id, path: mapPlacePath(atlas, place.id), description: place.description }))) };
   if (!input.可选地点.length) throw new Error("先添加地图地点，再刷新角色动向。");
   const raw = await request(lead, [
-    "根据所有角色的近期记忆、设定、上次动向、已实际到达记录和当前时间，一次生成他们此刻在本世界中的合理位置与活动。",
-    "每人返回一条，characterId取自角色资料，placeId必须使用可选地点ID，可定位到内部房间。time填写此活动的ISO时间。不确定的行程保持连贯，不把未来计划当成已发生。",
+    "只根据本次提供的各角色有效记忆、设定和当前时间，一次推算他们此刻在本世界中的合理位置与活动。",
+    "逐个角色独立判断。记忆中曾一起出行，不代表现在仍同行或停在原目的地；结合事件时间、后续记忆和各自作息判断。没有可靠现状依据时按角色设定与当前时刻推算，并在activity中标明是推测。",
+    "旧地图动向和独立保存的出行记录不作为本次推算依据，不补回未提供或已删除的经历，不把未来计划当成已发生。",
+    "每人返回一条，characterId取自角色资料，placeId必须使用可选地点ID，可定位到内部房间。time填写此活动的ISO时间。",
     '返回 {"entries":[{"characterId":"角色ID","placeId":"地点ID","activity":"正在做什么","time":"ISO时间"}]}。',
   ].join("\n"), JSON.stringify(input), signal);
   const data = object(JSON.parse(jsonrepair(raw))).entries;
