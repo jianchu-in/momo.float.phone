@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, ChevronLeft, Code, Image as ImageIcon, MessageSquare, MoreHorizontal, RotateCcw, Sparkles, Trash2, UserRound } from "lucide-react";
+import { AlertCircle, ChevronLeft, Code, FileText, Image as ImageIcon, MessageSquare, MoreHorizontal, Paperclip, RotateCcw, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
@@ -462,6 +462,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     const [backgroundUrl, setBackgroundUrl] = useState("");
     const [inputText, setInputText] = useState("");
     const [pendingImages, setPendingImages] = useState<string[]>([]);
+    const [pendingFiles, setPendingFiles] = useState<{ name: string; content: string }[]>([]);
     const [imagePreviewCache, setImagePreviewCache] = useState<Record<string, string>>({});
     const [showEmojiPanel, setShowEmojiPanel] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
@@ -481,7 +482,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
     const longPressStartRef = useRef<ContextMenuAnchor | null>(null);
     const longPressTriggeredRef = useRef(false);
     const identity = useMemo(() => resolveUserIdentity(), []);
-    useChatBottomReserve(wrapperRef, scrollRef, `${showEmojiPanel}:${pendingImages.length}`);
+    useChatBottomReserve(wrapperRef, scrollRef, `${showEmojiPanel}:${pendingImages.length}:${pendingFiles.length}`);
     const allVisibleMessageEntries = useMemo(() => (
         chat.messages
             .map((msg, rawIndex) => ({ msg, rawIndex }))
@@ -665,6 +666,32 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
         }
     }, []);
 
+    const handlePickTextFiles = useCallback((files: File[] | FileList | null) => {
+        if (!files || files.length === 0) return;
+        const allowedExts = [".txt", ".md", ".json", ".csv", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".yaml", ".yml"];
+        for (const file of Array.from(files)) {
+            const lowerName = file.name.toLowerCase();
+            const isAllowed = allowedExts.some((ext) => lowerName.endsWith(ext));
+            if (!isAllowed) {
+                alert(`暂不支持 ${file.name}，请选择 CSS / JSON / 代码或纯文本文件。`);
+                continue;
+            }
+            if (file.size > 1024 * 1024) {
+                alert(`文件“${file.name}”超过 1MB，请裁剪后再试。`);
+                continue;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                const content = String(reader.result || "");
+                setPendingFiles((prev) => {
+                    if (prev.some((f) => f.name === file.name)) return prev;
+                    return [...prev, { name: file.name, content }];
+                });
+            };
+            reader.readAsText(file);
+        }
+    }, []);
+
     const resizeTextarea = () => {
         const ta = textareaRef.current;
         if (!ta) return;
@@ -685,14 +712,25 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
             stopMascotGeneration();
             return;
         }
-        const text = inputText.trim();
-        if (!text && pendingImages.length === 0) return;
+        const rawText = inputText.trim();
+        if (!rawText && pendingImages.length === 0 && pendingFiles.length === 0) return;
+
+        let fullText = rawText;
+        if (pendingFiles.length > 0) {
+            const filesPrompt = pendingFiles.map((f) => {
+                const ext = f.name.split(".").pop()?.toLowerCase() || "";
+                return `【附件文件：${f.name}】\n\`\`\`${ext}\n${f.content}\n\`\`\``;
+            }).join("\n\n");
+            fullText = fullText ? `${fullText}\n\n${filesPrompt}` : filesPrompt;
+        }
+
         setInputText("");
+        setPendingFiles([]);
         textareaRef.current?.style.setProperty("height", "auto");
         const images = pendingImages;
         setPendingImages([]);
         setShowEmojiPanel(false);
-        await sendMascotMessage({ text, images, context });
+        await sendMascotMessage({ text: fullText, images, context });
     };
 
     const handleGenerateReply = async () => {
@@ -961,6 +999,37 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                     padding: 8px 12px 0;
                     overflow-x: auto;
                 }
+                .mascot-pending-file-strip {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                    padding: 8px 12px 0;
+                }
+                .mascot-pending-file-chip {
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                    padding: 4px 8px;
+                    border-radius: 8px;
+                    background: color-mix(in srgb, var(--c-text) 8%, transparent);
+                    font-size: 12px;
+                    color: var(--c-text);
+                    max-width: 200px;
+                }
+                .mascot-pending-file-chip button {
+                    border: none;
+                    background: transparent;
+                    cursor: pointer;
+                    opacity: 0.6;
+                    display: flex;
+                    align-items: center;
+                    color: inherit;
+                    padding: 0;
+                    margin-left: 2px;
+                }
+                .mascot-pending-file-chip button:hover {
+                    opacity: 1;
+                }
                 .mascot-pending-thumb {
                     width: 52px;
                     height: 52px;
@@ -1108,6 +1177,19 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
             </div>
 
             <div className="chat-input-bar chat-room-main-pane flex flex-col" data-ui="input">
+                {pendingFiles.length > 0 && (
+                    <div className="mascot-pending-file-strip">
+                        {pendingFiles.map((file, idx) => (
+                            <div key={`${file.name}-${idx}`} className="mascot-pending-file-chip">
+                                <FileText size={14} />
+                                <span className="truncate max-w-[120px]">{file.name}</span>
+                                <button type="button" onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== idx))} aria-label="移除文件">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
                 {pendingImages.length > 0 && (
                     <div className="mascot-pending-strip">
                         {pendingImages.map((ref, idx) => {
@@ -1155,7 +1237,28 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                 />
                 <div className="chat-input-actions">
                     <label
-                        className="ui-bare-btn text-[var(--c-text)]"
+                        className="ui-bare-btn text-[var(--c-text)] cursor-pointer"
+                        aria-disabled={chat.isThinking}
+                        title="添加 CSS / JSON / 代码等文件附件"
+                        onClick={(event) => {
+                            if (chat.isThinking) event.preventDefault();
+                        }}
+                    >
+                        <Paperclip size={24} strokeWidth={1.5} />
+                        <input
+                            type="file"
+                            accept=".txt,.md,.json,.csv,.js,.ts,.tsx,.jsx,.html,.css,.yaml,.yml"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => {
+                                const files = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+                                event.currentTarget.value = "";
+                                handlePickTextFiles(files);
+                            }}
+                        />
+                    </label>
+                    <label
+                        className="ui-bare-btn text-[var(--c-text)] cursor-pointer"
                         aria-disabled={chat.isThinking || pendingImages.length >= 4}
                         title={pendingImages.length >= 4 ? "最多 4 张图" : "添加图片"}
                         onClick={(event) => {
@@ -1186,7 +1289,7 @@ export function MascotChatRoom({ onBack, onDeleted }: MascotChatRoomProps) {
                     <button
                         type="button"
                         onClick={() => void handleSend()}
-                        disabled={!chat.isThinking && !inputText.trim() && pendingImages.length === 0}
+                        disabled={!chat.isThinking && !inputText.trim() && pendingImages.length === 0 && pendingFiles.length === 0}
                         className="ui-bare-btn text-[var(--c-text)]"
                         aria-label={chat.isThinking ? "停止生成" : "发送"}
                     >

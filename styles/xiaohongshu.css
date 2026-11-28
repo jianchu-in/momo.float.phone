@@ -1952,10 +1952,12 @@ button.xhs-secondary-btn:hover {
 
 /* Publish Modal — editorial refinement */
 .xhs-publish-sheet {
-  width: min(720px, 95vw);
-  max-height: min(80dvh, 640px);
+  width: 100%;
+  max-width: min(390px, 100%);
+  max-height: min(88dvh, 680px);
+  box-sizing: border-box;
   background: #ffffff;
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: 0 24px 56px rgba(20, 24, 32, 0.18);
   display: flex;
   flex-direction: column;
@@ -2023,26 +2025,32 @@ button.xhs-secondary-btn:hover {
 }
 
 .xhs-publish-content {
-  display: grid;
-  grid-template-columns: 1fr 1.2fr;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   overflow-y: auto;
   scrollbar-width: none;
+  box-sizing: border-box;
+  min-height: 0;
 }
 .xhs-publish-content::-webkit-scrollbar { display: none; }
 
 .xhs-publish-left {
-  padding: 4px 16px 14px;
+  padding: 4px 16px 12px;
   border-right: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   background: transparent;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .xhs-image-upload-area {
-  flex: 1;
-  min-height: 200px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160px;
   background: #f1f2f4;
   border: 0;
   border-radius: 12px;
@@ -2053,6 +2061,7 @@ button.xhs-secondary-btn:hover {
   position: relative;
   overflow: hidden;
   transition: background-color 180ms ease;
+  padding: 16px 12px;
 }
 
 .xhs-image-upload-area:hover {
@@ -2150,11 +2159,13 @@ button.xhs-secondary-btn:hover {
 }
 
 .xhs-publish-right {
-  padding: 4px 16px 14px;
+  padding: 8px 16px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   background: #ffffff;
+  box-sizing: border-box;
+  flex: 1;
 }
 
 .xhs-publish-title-input {
@@ -2169,6 +2180,8 @@ button.xhs-secondary-btn:hover {
   caret-color: #ff2442;
   transition: border-color 180ms ease;
   background: transparent;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .xhs-publish-title-input::placeholder {
@@ -2182,7 +2195,7 @@ button.xhs-secondary-btn:hover {
 
 .xhs-publish-body-input {
   flex: 1;
-  min-height: 120px;
+  min-height: 100px;
   border: 0;
   resize: none;
   outline: none;
@@ -2195,6 +2208,8 @@ button.xhs-secondary-btn:hover {
   letter-spacing: 0.2px;
   background: transparent;
   caret-color: #ff2442;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .xhs-publish-body-input::placeholder {
@@ -2207,6 +2222,8 @@ button.xhs-secondary-btn:hover {
   gap: 8px;
   padding: 10px 2px;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .xhs-publish-tag-input span {
@@ -2237,6 +2254,8 @@ button.xhs-secondary-btn:hover {
   display: flex;
   justify-content: flex-end;
   padding-top: 4px;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .xhs-publish-submit-btn {
@@ -2247,8 +2266,8 @@ button.xhs-secondary-btn:hover {
   background: #ff2442;
   color: #ffffff;
   border: 0;
-  padding: 0 22px;
-  height: 38px;
+  padding: 0 20px;
+  height: 36px;
   border-radius: 999px;
   font: inherit;
   font-size: calc(13px*var(--app-text-scale,1));
@@ -2260,6 +2279,7 @@ button.xhs-secondary-btn:hover {
     background-color 180ms ease,
     transform 160ms ease,
     box-shadow 180ms ease;
+  flex-shrink: 0;
 }
 
 .xhs-publish-submit-btn svg {
@@ -2287,8 +2307,12 @@ button.xhs-secondary-btn:hover {
 /* Image Mode Selector — twin pill chips */
 .xhs-placeholder-actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   margin-top: 14px;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .xhs-placeholder-actions button {
@@ -2303,6 +2327,7 @@ button.xhs-secondary-btn:hover {
   font-weight: 500;
   letter-spacing: 0.4px;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background-color 180ms ease,
     color 180ms ease,
@@ -2352,20 +2377,6 @@ button.xhs-secondary-btn:hover {
   line-height: 1.6;
   letter-spacing: 0.4px;
   text-shadow: none;
-}
-
-@media (max-width: 768px) {
-  .xhs-publish-content {
-    grid-template-columns: 1fr;
-  }
-  .xhs-publish-left {
-    border-right: none;
-    border-bottom: 1px solid rgba(0,0,0,0.06);
-    min-height: auto;
-  }
-  .xhs-image-upload-area {
-    min-height: 180px;
-  }
 }
 
 /* ============================================================

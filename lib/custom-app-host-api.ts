@@ -1581,6 +1581,12 @@ export async function saveCustomAppMedia(record: Record<string, unknown>): Promi
   const dataUrl = cleanText(record.dataUrl, 25_000_000);
   if (!dataUrl) throw new Error("media.save 需要 dataUrl。");
   const blob = dataUrlToBlob(dataUrl);
+  const filename = cleanText(record.filename ?? record.name, 200);
+  if (filename) {
+    const { downloadFile } = await import("./download-utils");
+    await downloadFile(blob, filename);
+    return { ok: true, filename, size: blob.size, mimeType: blob.type || "application/octet-stream" };
+  }
   const type = cleanText(record.type, 80) || "custom_app_media";
   const assetId = await saveThemeAssetFromBlob(blob, type as ThemeAssetType, cleanText(record.id, 160) || undefined);
   return {

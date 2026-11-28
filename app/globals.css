@@ -23,6 +23,7 @@
 @import "../styles/game.css";
 @import "../styles/app-market.css";
 @import "../styles/reality-bridge.css";
+@import "../styles/perception.css";
 @import "../styles/xiaohongshu.css";
 @import "../styles/world-builder.css";
 @import "../styles/interview-magazine.css";
@@ -228,3 +229,144 @@
 .story-multi-select-bar button:disabled { opacity: .42; }
 .story-multi-select-bar button.is-danger { color: #b84e4e; }
 .story-multi-select-bar .story-multi-select-icon { width: 36px; padding: 0; color: var(--c-story-text, #594d40); background: transparent; }
+
+/* ══════════════════════════════════════════
+   Reading Highlight & Selection Tools
+   ══════════════════════════════════════════ */
+.reading-app-surface,
+.reading-page-stage,
+.reading-page-surface,
+.reading-page-content,
+.reading-scroll-content,
+.reading-line,
+.reading-seg {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+.reading-seg {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.reading-seg.hl-human {
+  border-bottom: 2px solid rgba(233, 96, 155, 0.85);
+  background-color: rgba(233, 96, 155, 0.12);
+}
+.reading-seg.hl-ai {
+  border-bottom: 2px solid rgba(229, 182, 110, 0.9);
+  background-color: rgba(229, 182, 110, 0.18);
+}
+.reading-bub {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin: 0 2px;
+  vertical-align: super;
+}
+.reading-bub.by-human {
+  background: #e9609b;
+}
+.reading-bub.by-ai {
+  background: #e5b66e;
+}
+.reading-selection-tools {
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--c-panel, #ffffff);
+  border: 1px solid var(--c-border, #e5e5e5);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(16px);
+  transform: translate(-50%, 0);
+  margin-top: 8px;
+}
+.reading-selection-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--c-text-title);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reading-selection-btn:active {
+  opacity: 0.7;
+}
+.reading-selection-btn-primary {
+  background: var(--c-icon-active, #2b6fad);
+  color: #ffffff;
+}
+
+.reading-chat-launch {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--safe-bottom, 24px) + 72px);
+  z-index: 60;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.reading-highlight-mode-bar {
+  position: absolute;
+  top: calc(var(--page-header-safe-top, 48px) + 48px);
+  left: 12px;
+  right: 12px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: rgba(45, 45, 42, 0.92);
+  color: #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: modalSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reading-highlight-mode-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.reading-highlight-mode-colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.reading-color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.reading-color-dot.is-active {
+  transform: scale(1.2);
+  border-color: #ffffff;
+}
+.reading-highlight-mode-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-size: 11px;
+  cursor: pointer;
+}

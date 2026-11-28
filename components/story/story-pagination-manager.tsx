@@ -415,11 +415,19 @@ export function StoryPaginationManager(props: StoryPaginationManagerProps) {
               {props.characters.map((character) => {
                 const checked = selectedCharacterIds.includes(character.id);
                 return (
-                  <label key={character.id} data-selected={checked ? "true" : undefined}>
-                    <input type="checkbox" checked={checked} onChange={(event) => setSelectedCharacterIds((current) => event.target.checked ? [...current, character.id] : current.filter((id) => id !== character.id))} />
+                  <button
+                    key={character.id}
+                    type="button"
+                    data-selected={checked ? "true" : undefined}
+                    onClick={() =>
+                      setSelectedCharacterIds((current) =>
+                        checked ? current.filter((id) => id !== character.id) : [...current, character.id]
+                      )
+                    }
+                  >
                     <Avatar src={character.avatar || undefined} name={character.name} size="md" />
                     <span>{character.name}</span>
-                  </label>
+                  </button>
                 );
               })}
             </div>

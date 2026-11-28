@@ -14,6 +14,7 @@ import {
     searchNetease, getNeteasePlayInfo, getNeteaseLyrics, getNeteaseSongDetail,
     testNeteaseConnection, getQrKey, getQrImage, checkQrStatus, checkLoginStatus,
     getUserPlaylists, getPlaylistTracks, saveNeteaseCookie, clearNeteaseCookie,
+    loadNeteaseUser, clearNeteaseUser,
     getDailyRecommendSongs, getHotSearchDetail, getPersonalizedPlaylists,
     getRecommendResource, getToplists, getUserRecordWithCounts,
     getPlaylistDetail, getUserDetail, subscribePlaylist,
@@ -30,14 +31,22 @@ import {
     loadMusicBg, saveMusicBg, clearMusicBg, fileToCompressedDataUrl, appBgStyle,
     MUSIC_BG_EVENT, type MusicBgConfig, type MusicPlayerBgMode,
 } from "@/lib/music-bg";
+import ListeningLibrary from "./listening-library";
+import { ChevronLeft, ChevronRight, Settings, Headphones, Search, Music, Sun, Moon, Monitor } from "lucide-react";
+import {
+    loadMusicThemeMode, saveMusicThemeMode, resolveMusicTheme,
+    MUSIC_THEME_EVENT, type MusicThemeMode, type ResolvedMusicTheme,
+} from "@/lib/music-theme";
+import privateStyles from "./music-private.module.css";
+import { MUSIC_HOME_EVENT, consumeMusicHomeRequest } from "@/lib/music-navigation";
 
-type Props = { onClose: () => void };
-type TabId = "recommend" | "mine" | "search" | "local";
+type Props = { onClose: () => void; headerAccessory?: ReactNode; initialTogether?: boolean; listeningSessionId?: string };
+type TabId = "recommend" | "mine" | "search" | "local" | "together";
 
-export default function MusicApp({ onClose }: Props) {
+export default function MusicApp({ onClose, headerAccessory, initialTogether = false, listeningSessionId }: Props) {
     const [tracks, setTracks] = useState<MusicTrack[]>([]);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState<TabId>("local");
+    const [tab, setTab] = useState<TabId>(initialTogether ? "together" : "mine");
     const [hasNetease, setHasNetease] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showCssEditor, setShowCssEditor] = useState(false);
@@ -52,12 +61,47 @@ export default function MusicApp({ onClose }: Props) {
     const musicToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const musicLoadingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [bgCfg, setBgCfg] = useState<MusicBgConfig>(() => loadMusicBg());
+    const [themeMode, setThemeMode] = useState<MusicThemeMode>(() => loadMusicThemeMode());
+    const [resolvedTheme, setResolvedTheme] = useState<ResolvedMusicTheme>(() => resolveMusicTheme(loadMusicThemeMode()));
     const player = useMusicControls();
 
     useEffect(() => {
         const handleBgChange = () => setBgCfg(loadMusicBg());
         window.addEventListener(MUSIC_BG_EVENT, handleBgChange);
         return () => window.removeEventListener(MUSIC_BG_EVENT, handleBgChange);
+    }, []);
+
+    useEffect(() => {
+        const updateTheme = () => {
+            const mode = loadMusicThemeMode();
+            setThemeMode(mode);
+            setResolvedTheme(resolveMusicTheme(mode));
+        };
+        const media = window.matchMedia("(prefers-color-scheme: dark)");
+        const handleMedia = () => {
+            if (loadMusicThemeMode() === "auto") {
+                setResolvedTheme(media.matches ? "dark" : "light");
+            }
+        };
+        window.addEventListener(MUSIC_THEME_EVENT, updateTheme);
+        media.addEventListener("change", handleMedia);
+        return () => {
+            window.removeEventListener(MUSIC_THEME_EVENT, updateTheme);
+            media.removeEventListener("change", handleMedia);
+        };
+    }, []);
+
+    const handleToggleTheme = useCallback(() => {
+        const next: MusicThemeMode = resolvedTheme === "light" ? "dark" : "light";
+        saveMusicThemeMode(next);
+        setThemeMode(next);
+        setResolvedTheme(next);
+    }, [resolvedTheme]);
+
+    const handleThemeModeChange = useCallback((mode: MusicThemeMode) => {
+        saveMusicThemeMode(mode);
+        setThemeMode(mode);
+        setResolvedTheme(resolveMusicTheme(mode));
     }, []);
 
     // kv cache hydrates asynchronously — re-read the custom background until settled
@@ -73,9 +117,20 @@ export default function MusicApp({ onClose }: Props) {
 
     useEffect(() => {
         loadAllTracks().then(t => { setTracks(t); setLoading(false); });
+        const returnHome = () => {
+            if (!consumeMusicHomeRequest()) return;
+            setTab("mine");
+            setActivePlaylist(null);
+            setDailyView(null);
+            setShowSettings(false);
+            setShowCssEditor(false);
+        };
+        window.addEventListener(MUSIC_HOME_EVENT, returnHome);
+        returnHome();
+
         const neteaseOk = isNeteaseConfigured();
         setHasNetease(neteaseOk);
-        if (neteaseOk) setTab("recommend");
+        if (neteaseOk && !initialTogether) setTab("recommend");
         setCustomCss(kvGet("music-custom-css") || "");
         // Load cached playlists immediately, then refresh from API
         if (neteaseOk) {
@@ -142,6 +197,15 @@ export default function MusicApp({ onClose }: Props) {
         if (!pendingPlayTrackId || player.currentTrack?.id !== pendingPlayTrackId) return;
         clearMusicToast();
     }, [clearMusicToast, pendingPlayTrackId, player.currentTrack?.id]);
+
+    useEffect(() => {
+        const handlePlaybackFailed = (e: Event) => {
+            const customEvent = e as CustomEvent<{ message?: string }>;
+            showMusicToast(customEvent.detail?.message || "音频加载失败", 3000);
+        };
+        window.addEventListener("music-playback-failed", handlePlaybackFailed);
+        return () => window.removeEventListener("music-playback-failed", handlePlaybackFailed);
+    }, [showMusicToast]);
 
     useEffect(() => () => {
         if (musicToastTimerRef.current) clearTimeout(musicToastTimerRef.current);
@@ -278,7 +342,13 @@ export default function MusicApp({ onClose }: Props) {
     };
 
     return (
-        <div className="music-app" style={appBgStyle(bgCfg)} {...(player.currentTrack ? { "data-nowbar": "" } : {})}>
+        <div
+            className={`music-app ${privateStyles.app}`}
+            data-theme={resolvedTheme}
+            data-music-theme={resolvedTheme}
+            style={appBgStyle(bgCfg, resolvedTheme)}
+            {...(player.currentTrack ? { "data-nowbar": "" } : {})}
+        >
             {customCss && <SessionCustomCSS css={customCss} scope=".music-app" />}
             {musicToast && (
                 <div className="music-toast-overlay">
@@ -294,31 +364,29 @@ export default function MusicApp({ onClose }: Props) {
             )}
 
             {/* Header */}
+            {headerAccessory}
             <div className="music-header">
                 <div className="music-header-left">
                     <button className="music-header-action" onClick={() => {
                         if (dailyView) { setDailyView(null); }
                         else if (activePlaylist) { setActivePlaylist(null); }
                         else { onClose(); }
-                    }} title="返回">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="15 18 9 12 15 6" />
-                        </svg>
+                    }} title="返回" aria-label="返回">
+                        <ChevronLeft size={24} strokeWidth={1.5} />
                     </button>
                 </div>
                 <div className="music-header-title">
-                    {dailyView ? "每日推荐" : activePlaylist && tab === "recommend" ? "歌单详情" : tab === "recommend" ? "" : tab === "search" ? "搜索" : tab === "mine" ? "我的" : "本地音乐"}
+                    {dailyView ? "每日推荐" : activePlaylist && tab === "recommend" ? "歌单详情" : tab === "recommend" ? "发现" : tab === "search" ? "搜索" : tab === "mine" ? "我的" : tab === "together" ? "一起听" : "本地音乐"}
                 </div>
                 <div className="music-header-right">
-                    <button className="music-header-action" onClick={() => setShowSettings(true)} title="设置">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                        </svg>
+                    <button className="music-header-action" onClick={() => setShowSettings(true)} title="设置" aria-label="设置">
+                        <Settings size={20} strokeWidth={1.5} />
                     </button>
                 </div>
             </div>
 
             {/* Tab content */}
+            {tab === "together" && <ListeningLibrary heroActions={headerAccessory} heroSessionId={listeningSessionId} />}
             {tab === "recommend" && hasNetease && (dailyView ? (
                 <DailySongsPage
                     songs={dailyView}
@@ -418,12 +486,6 @@ export default function MusicApp({ onClose }: Props) {
             <div className="music-bottom-dock">
             {player.currentTrack && (
                 <div className="music-now-bar" onClick={player.openFullPlayer}>
-                    <div className="music-birds">
-                        <img src="/birds/小鸟1.png" className="music-bird bird-1" alt="bird" />
-                        <img src="/birds/小鸟2.png" className="music-bird bird-2" alt="bird" />
-                        <img src="/birds/小鸟3.png" className="music-bird bird-3" alt="bird" />
-                        <img src="/birds/小鸟4.png" className="music-bird bird-4" alt="bird" />
-                    </div>
                     <div className="music-now-bar-cover" {...(player.isPlaying ? { "data-playing": "" } : {})}>
                         {player.currentTrack.coverUrl ? (
                             <img src={player.currentTrack.coverUrl} alt="" />
@@ -457,38 +519,26 @@ export default function MusicApp({ onClose }: Props) {
                 </div>
             )}
 
-            {/* Bottom tab bar */}
-            <div className="music-tabbar">
-                {hasNetease && (
-                    <button className="music-tabbar-item" {...(tab === "recommend" ? { "data-active": "" } : {})} onClick={() => { setTab("recommend"); setActivePlaylist(null); setDailyView(null); }}>
-                        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><path d="M3 10.5 12 3l9 7.5V21h-6v-6h-6v6H3z" /></svg>
-                        <span>推荐</span>
-                    </button>
-                )}
-                {hasNetease && (
-                    <button className="music-tabbar-item" {...(tab === "search" ? { "data-active": "" } : {})} onClick={() => setTab("search")}>
-                        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-                        <span>搜索</span>
-                    </button>
-                )}
-                {hasNetease && (
-                    <button className="music-tabbar-item" {...(tab === "mine" ? { "data-active": "" } : {})} onClick={() => { setTab("mine"); setActivePlaylist(null); }}>
-                        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 5-5.5 8-5.5s6.5 1.5 8 5.5" /></svg>
-                        <span>我的</span>
-                    </button>
-                )}
-                <button className="music-tabbar-item" {...(tab === "local" ? { "data-active": "" } : {})} onClick={() => { setTab("local"); setActivePlaylist(null); }}>
-                    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
-                    <span>本地</span>
-                </button>
-            </div>
+            {/* Three primary destinations; search and local remain child pages. */}
+            <nav className={"music-tabbar " + privateStyles.dockGlass} aria-label="音乐导航" data-selection={tab === "together" ? "1" : tab === "mine" || tab === "local" ? "2" : "0"}>
+                {([{ id: "recommend", name: "发现", icon: <Search size={20} /> }, { id: "together", name: "一起听", icon: <Headphones size={20} /> }, { id: "mine", name: "我的", icon: <Music size={20} /> }] as const).map(item => (
+                    <button key={item.id} className="music-tabbar-item" aria-current={(tab === item.id || (item.id === "recommend" && tab === "search") || (item.id === "mine" && tab === "local")) ? "page" : undefined}
+                        {...((tab === item.id || (item.id === "recommend" && tab === "search") || (item.id === "mine" && tab === "local")) ? { "data-active": "" } : {})}
+                        onClick={() => { setTab(item.id); setActivePlaylist(null); setDailyView(null); }}>{item.icon}<span>{item.name}</span></button>
+                ))}
+            </nav>
             </div>
 
             {/* Settings Modal */}
             {showSettings && (
                 <div className="music-settings-modal-overlay" onClick={() => setShowSettings(false)}>
                     <div className="music-settings-modal-dialog" onClick={(e) => e.stopPropagation()}>
-                        <MusicSettingsTab onBack={() => setShowSettings(false)} onSaved={onSettingsSaved} />
+                        <MusicSettingsTab
+                            onBack={() => setShowSettings(false)}
+                            onSaved={onSettingsSaved}
+                            themeMode={themeMode}
+                            onThemeModeChange={handleThemeModeChange}
+                        />
                     </div>
                 </div>
             )}
@@ -1496,7 +1546,14 @@ function PlaylistsTab({ player, formatTime, onPlayNetease, onPlayAll, activePlay
 }
 
 // ── Settings Tab ──
-function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: () => void }) {
+function MusicSettingsTab({
+    onBack, onSaved, themeMode, onThemeModeChange
+}: {
+    onBack: () => void;
+    onSaved: () => void;
+    themeMode: MusicThemeMode;
+    onThemeModeChange: (mode: MusicThemeMode) => void;
+}) {
     const [config, setConfig] = useState<MusicApiConfig>(() => loadMusicApiConfig());
     const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
     const [testing, setTesting] = useState(false);
@@ -1506,7 +1563,7 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
     const [qrKey, setQrKey] = useState<string | null>(null);
     const [qrStatus, setQrStatus] = useState<string>("");
     const [qrPolling, setQrPolling] = useState(false);
-    const [loginNickname, setLoginNickname] = useState<string | null>(null);
+    const [loginNickname, setLoginNickname] = useState<string | null>(() => loadNeteaseUser()?.nickname || null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Custom background state (app pages + player each have their own image)
@@ -1520,6 +1577,17 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
         const cfg = loadMusicBg();
         return cfg.playerImage.startsWith("data:") ? "" : cfg.playerImage;
     });
+    const [lyricSize, setLyricSize] = useState<number>(() => {
+        const stored = parseInt(kvGet("music-lyric-font-size") || "15", 10);
+        return Number.isFinite(stored) && stored >= 10 && stored <= 32 ? stored : 15;
+    });
+
+    const handleLyricSize = (size: number) => {
+        const clamped = Math.max(12, Math.min(26, size));
+        setLyricSize(clamped);
+        kvSet("music-lyric-font-size", String(clamped));
+        window.dispatchEvent(new CustomEvent("music-lyric-size-change", { detail: clamped }));
+    };
     const bgFileRef = useRef<HTMLInputElement>(null);
     const playerFileRef = useRef<HTMLInputElement>(null);
 
@@ -1651,6 +1719,7 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
         setQrStatus("");
         setLoginNickname(null);
         clearNeteaseCookie();
+        clearNeteaseUser();
         clearMusicCloudSyncData();
         onSaved();
     };
@@ -1665,6 +1734,68 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
             </div>
 
             <div className="music-settings-body">
+                <div className="music-settings-section">
+                    <div className="music-settings-label">外观主题</div>
+                    <div className="music-settings-hint">切换日间或夜间视觉风格，也可以跟随系统自动切换</div>
+                    <div className="music-theme-segment" role="radiogroup" aria-label="外观主题">
+                        <button
+                            type="button"
+                            className="music-theme-btn"
+                            data-active={themeMode === "light"}
+                            onClick={() => onThemeModeChange("light")}
+                            aria-checked={themeMode === "light"}
+                            role="radio"
+                        >
+                            <Sun size={15} strokeWidth={1.8} aria-hidden="true" />
+                            <span>日间</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="music-theme-btn"
+                            data-active={themeMode === "dark"}
+                            onClick={() => onThemeModeChange("dark")}
+                            aria-checked={themeMode === "dark"}
+                            role="radio"
+                        >
+                            <Moon size={15} strokeWidth={1.8} aria-hidden="true" />
+                            <span>夜间</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="music-theme-btn"
+                            data-active={themeMode === "auto"}
+                            onClick={() => onThemeModeChange("auto")}
+                            aria-checked={themeMode === "auto"}
+                            role="radio"
+                        >
+                            <Monitor size={15} strokeWidth={1.8} aria-hidden="true" />
+                            <span>跟随系统</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div className="music-settings-section">
+                    <div className="music-settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div className="music-settings-label">播放页歌词字号</div>
+                        <span style={{ fontSize: "calc(11.5px*var(--app-text-scale,1))", color: "var(--c-music-primary)", fontWeight: 600 }}>{lyricSize}px</span>
+                    </div>
+                    <div className="music-settings-hint">拖动滑块调整播放器歌词大小（默认 15px）</div>
+                    <input
+                        type="range"
+                        className="music-bg-range"
+                        min={12}
+                        max={26}
+                        step={1}
+                        value={lyricSize}
+                        onChange={e => handleLyricSize(parseInt(e.target.value, 10))}
+                    />
+                    <div className="music-settings-actions" style={{ marginTop: 6, display: "flex", gap: "6px" }}>
+                        <button className="music-settings-btn" onClick={() => handleLyricSize(13)}>较小 13px</button>
+                        <button className="music-settings-btn" onClick={() => handleLyricSize(15)}>标准 15px</button>
+                        <button className="music-settings-btn" onClick={() => handleLyricSize(18)}>较大 18px</button>
+                    </div>
+                </div>
+
                 <div className="music-settings-section">
                     <div className="music-settings-label">网易云 API 地址</div>
                     <div className="music-settings-hint">默认使用公共服务，也可以改成自己的 NeteaseCloudMusicApi 地址</div>
@@ -1744,7 +1875,7 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
 
                     {bg.image && (
                         <div className="music-bg-preview" style={{ backgroundImage: `url("${bg.image}")` }}>
-                            <span style={{ opacity: bg.dim / 100 }} />
+                            <span style={{ opacity: bg.dim / 100, background: resolveMusicTheme(themeMode) === "light" ? "#f8f7f5" : "#08090e" }} />
                         </div>
                     )}
 
@@ -1768,7 +1899,7 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
                     {bg.image && (
                         <>
                             <div className="music-settings-row" style={{ marginTop: 4 }}>
-                                <span className="music-settings-label">背景暗化 {bg.dim}%</span>
+                                <span className="music-settings-label">{resolveMusicTheme(themeMode) === "light" ? "白透遮罩" : "背景暗化"} {bg.dim}%</span>
                             </div>
                             <input
                                 type="range"
@@ -1796,7 +1927,7 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
                         <>
                             {bg.playerImage && (
                                 <div className="music-bg-preview" style={{ backgroundImage: `url("${bg.playerImage}")` }}>
-                                    <span style={{ opacity: bg.playerDim / 100 }} />
+                                    <span style={{ opacity: bg.playerDim / 100, background: resolveMusicTheme(themeMode) === "light" ? "#f8f7f5" : "#08090e" }} />
                                 </div>
                             )}
 
@@ -1820,7 +1951,7 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
                             {bg.playerImage && (
                                 <>
                                     <div className="music-settings-row" style={{ marginTop: 4 }}>
-                                        <span className="music-settings-label">背景暗化 {bg.playerDim}%</span>
+                                        <span className="music-settings-label">{resolveMusicTheme(themeMode) === "light" ? "白透遮罩" : "背景暗化"} {bg.playerDim}%</span>
                                     </div>
                                     <input
                                         type="range"

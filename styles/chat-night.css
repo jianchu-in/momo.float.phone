@@ -1,0 +1,203 @@
+/* Chat-only appearance overlay with L1 Semantic Tokens & L2 Beauty Preset Compatibility */
+
+/* ==========================================================================
+   L1: Base Theme Tokens
+   ========================================================================== */
+.chat-app[data-chat-theme="light"] {
+  color-scheme: light;
+  --chat-bg-base: #f5f6f8;
+  --chat-bg-surface: #ffffff;
+  --chat-bg-header: #f8f9fa;
+  --chat-text-primary: #191b1e;
+  --chat-text-secondary: #70757d;
+  --chat-border-color: #e5e7eb;
+
+  --chat-bubble-self-bg: #95ec69;
+  --chat-bubble-self-text: #000000;
+  --chat-bubble-other-bg: #ffffff;
+  --chat-bubble-other-text: #191b1e;
+}
+
+.chat-app[data-chat-theme="dark"] {
+  color-scheme: dark;
+  --chat-bg-base: #191b1e;
+  --chat-bg-surface: #24272b;
+  --chat-bg-header: #1e2024;
+  --chat-text-primary: #dbdde1;
+  --chat-text-secondary: #a3a8b0;
+  --chat-border-color: #303338;
+
+  --c-header-bg: #1e2024 !important;
+  --c-page-body-bg: #191b1e !important;
+  --c-card: #24272b !important;
+  --c-card-border: #303338 !important;
+  --c-panel: #24272b !important;
+  --c-panel-border: #34383e !important;
+  --c-text-title: #dbdde1 !important;
+  --c-text: #b4b8bf !important;
+  --c-icon: #93979f !important;
+  --c-icon-active: #e2e4e8 !important;
+  --c-input: #292d32 !important;
+  --c-input-border: #353a42 !important;
+
+  --chat-bubble-self-bg: #34454a;
+  --chat-bubble-self-text: #dbdde1;
+  --chat-bubble-other-bg: #292d32;
+  --chat-bubble-other-text: #dbdde1;
+
+  background-color: var(--chat-bg-base);
+  color: var(--chat-text-primary);
+}
+
+/* ==========================================================================
+   1. 主页 (Tab: me / UserProfilePanel) 夜间模式深色卡片适配
+   ========================================================================== */
+.chat-app[data-chat-theme="dark"] .user-profile-page-root {
+  background-color: #191b1e !important;
+  color: #dbdde1 !important;
+}
+
+.chat-app[data-chat-theme="dark"] .user-profile-page-root::before {
+  display: none !important;
+}
+
+.chat-app[data-chat-theme="dark"] .user-profile-page-root :is(.bg-white, .bg-white\/70, [class*="bg-white"]) {
+  background-color: #24272b !important;
+  color: #dbdde1 !important;
+}
+
+.chat-app[data-chat-theme="dark"] .user-profile-page-root button[style*="background"] {
+  background: #24272b !important;
+  color: #dbdde1 !important;
+  border-color: #303338 !important;
+}
+
+/* 移除通用 White 浅色背景残留 */
+.chat-app[data-chat-theme="dark"] :is(.kkt-search-bar, .chat-search-bar, .menu-card, .menu-section, .modal-dialog, .modal-content) {
+  background-color: #24272b !important;
+  color: #dbdde1 !important;
+  border-color: #303338 !important;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.page-shell, .page-body, .chat-main-content, .kkt-list-page) {
+  background-color: var(--chat-bg-base);
+  color: var(--chat-text-primary);
+}
+
+.chat-app[data-chat-theme="dark"] :is(.page-header, .chat-tab-bar, .chat-input-bar, .chat-composer) {
+  background-color: var(--chat-bg-header);
+  border-color: var(--chat-border-color);
+}
+
+.chat-app[data-chat-theme="dark"] :is(input, textarea, select) {
+  color: var(--chat-text-primary);
+  background-color: #292d32;
+  border-color: #353a42;
+}
+
+/* ==========================================================================
+   2. 消息列表页面 & 联系人页面文字颜色适配 (不包含聊天室)
+   ========================================================================== */
+.chat-app[data-chat-theme="dark"] :is(.chat-message-list, .kkt-list-page, .chat-contacts-list) {
+  background-color: #191b1e !important;
+  color: #dbdde1 !important;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.chat-message-list, .kkt-list-page, .chat-contacts-list) :is(h1, h2, h3, .page-title, .kkt-list-title, .kkt-contact-name, .kkt-session-name, .chat-session-name, .kkt-own-text strong, [class*="font-semibold"]) {
+  color: #dbdde1 !important;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.chat-message-list, .kkt-list-page, .chat-contacts-list) :is(.kkt-contact-status, .kkt-session-preview, .kkt-session-time, .chat-session-preview, .chat-session-time, .kkt-own-text span, p) {
+  color: #a3a8b0 !important;
+}
+
+/* ==========================================================================
+   3. 朋友圈动态页面 (MomentsFeed) 文字颜色适配 (不包含聊天室)
+   ========================================================================== */
+.chat-app[data-chat-theme="dark"] :is(.moments-feed-page, .moments-feed-list, .moments-post) {
+  background-color: #191b1e !important;
+  color: #dbdde1 !important;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.moments-feed-page, .moments-feed-list, .moments-post) :is(.moments-post-author, .moments-post-content, .moments-post-text, .moments-comment-author, .moments-comment-text, .moments-comment-content, [class*="text-gray-900"], [class*="text-slate-900"], [class*="text-black"]) {
+  color: #dbdde1 !important;
+}
+
+.chat-app[data-chat-theme="dark"] :is(.moments-feed-page, .moments-feed-list, .moments-post) :is(.moments-post-time, .moments-comment-list, .moments-comments, [class*="text-gray-500"], [class*="text-slate-500"], [class*="text-gray-600"]) {
+  color: #a3a8b0 !important;
+}
+
+.chat-app[data-chat-theme="dark"] .moments-feed-page .moments-profile-hero {
+  background-color: #191b1e !important;
+}
+
+/* Classic Mode Default Message Bubbles in Night Mode */
+.chat-app[data-chat-theme="dark"] .chat-room-wrapper[data-beauty-preset="classic"] .chat-bubble-role-user {
+  background-color: var(--chat-bubble-self-bg);
+  color: var(--chat-bubble-self-text);
+}
+
+.chat-app[data-chat-theme="dark"] .chat-room-wrapper[data-beauty-preset="classic"] .chat-bubble-role-assistant {
+  background-color: var(--chat-bubble-other-bg);
+  color: var(--chat-bubble-other-text);
+}
+
+/* ==========================================================================
+   L2: Glass Mode (iMessage Style) Compatibility
+   ========================================================================== */
+/* Glass Mode must keep transparent/blur backgrounds; do not force solid paint. */
+.chat-app[data-chat-theme="dark"] .chat-room-wrapper[data-beauty-preset="glass"]:not([data-has-bg-image]) {
+  background-color: #121316;
+}
+
+/* Scrim & Dialog Styling for Appearance Switcher */
+.chat-appearance-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 24px;
+}
+
+.chat-appearance-dialog {
+  width: 100%;
+  max-width: 280px;
+  overflow: hidden;
+  background: var(--chat-bg-surface, #ffffff);
+  color: var(--chat-text-primary, #30343e);
+  border-radius: 16px;
+  box-shadow: 0 12px 45px rgba(0, 0, 0, 0.3);
+}
+
+.chat-appearance-dialog h2 {
+  font-size: 16px;
+  margin: 0;
+  padding: 26px 20px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.chat-appearance-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--chat-border-color, #eee);
+}
+
+.chat-appearance-actions button {
+  border: 0;
+  background: none;
+  color: var(--chat-text-primary, #30343e);
+  font: inherit;
+  font-size: 14px;
+  padding: 15px 8px;
+  cursor: pointer;
+}
+
+.chat-appearance-actions button:first-child {
+  color: #246bfd;
+  font-weight: 600;
+  border-right: 1px solid var(--chat-border-color, #eee);
+}

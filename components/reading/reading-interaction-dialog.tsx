@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenText, LocateFixed, Minus, Plus, Repeat2, Rocket, RotateCcw, Settings } from "lucide-react";
+import { BookOpenText, LocateFixed, RotateCcw, Settings } from "lucide-react";
 import { ContentDialog } from "@/components/ui/modal";
 import { Toggle } from "@/components/ui/form";
 import {
@@ -34,14 +34,11 @@ const VIEW_MODE_OPTIONS: { value: ReadingViewMode; label: string; desc: string }
     { value: "scroll", label: "滚动", desc: "连续滚动阅读，上下滑动翻读" },
 ];
 
-const RETRY_MIN = 0;
-const RETRY_MAX = 5;
-
 type Props = {
     onClose: () => void;
 };
 
-/** 阅读交互设置：导入段落划分 / 阅读模式 / 自动批注失败静默重试次数 */
+/** 阅读交互设置：导入段落划分 / 阅读模式 */
 export function ReadingInteractionDialog({ onClose }: Props) {
     const [config, setConfig] = useState<ReadingInteractionConfig>(() => loadReadingInteractionConfig());
     const [saving, setSaving] = useState(false);
@@ -55,13 +52,6 @@ export function ReadingInteractionDialog({ onClose }: Props) {
             window.dispatchEvent(new CustomEvent("reading-interaction-config-changed"));
         }
         onClose();
-    };
-
-    const setRetry = (delta: number) => {
-        setConfig((prev) => ({
-            ...prev,
-            annotationRetryCount: Math.max(RETRY_MIN, Math.min(RETRY_MAX, prev.annotationRetryCount + delta)),
-        }));
     };
 
     return (
@@ -142,87 +132,7 @@ export function ReadingInteractionDialog({ onClose }: Props) {
                     </div>
                 </section>
 
-                <section className="reading-settings-group">
-                    <div className="reading-settings-heading">
-                        <Repeat2 size={15} />
-                        <span>自动批注失败重试</span>
-                    </div>
-                    <p className="reading-settings-inline-note">
-                        <span>生成失败时静默重试的次数，全部失败后才提示错误。</span>
-                    </p>
-                    <div className="reading-retry-row">
-                        <button
-                            type="button"
-                            className="reading-retry-btn"
-                            onClick={() => setRetry(-1)}
-                            disabled={config.annotationRetryCount <= RETRY_MIN}
-                            aria-label="减少重试次数"
-                        >
-                            <Minus size={15} strokeWidth={2} />
-                        </button>
-                        <span className="reading-retry-value">
-                            {config.annotationRetryCount}
-                            <em>次</em>
-                        </span>
-                        <button
-                            type="button"
-                            className="reading-retry-btn"
-                            onClick={() => setRetry(1)}
-                            disabled={config.annotationRetryCount >= RETRY_MAX}
-                            aria-label="增加重试次数"
-                        >
-                            <Plus size={15} strokeWidth={2} />
-                        </button>
-                    </div>
-                </section>
 
-                <section className="reading-settings-group">
-                    <div className="reading-settings-heading">
-                        <Rocket size={15} />
-                        <span>批注预生成</span>
-                    </div>
-                    <div className="reading-settings-toggle-row">
-                        <span className="reading-settings-toggle-label">
-                            TXT 预批注
-                        </span>
-                        <Toggle
-                            checked={config.autoAnnotatePrefetch === true}
-                            onChange={(next) => setConfig((prev) => ({ ...prev, autoAnnotatePrefetch: next }))}
-                        />
-                    </div>
-                    <div className="reading-settings-toggle-row">
-                        <span className="reading-settings-toggle-label">
-                            PDF 预批注
-                        </span>
-                        <Toggle
-                            checked={config.autoAnnotatePrefetchPdf === true}
-                            onChange={(next) => setConfig((prev) => ({ ...prev, autoAnnotatePrefetchPdf: next }))}
-                        />
-                    </div>
-                    {(config.autoAnnotatePrefetch || config.autoAnnotatePrefetchPdf) && (
-                        <>
-                            <div className="reading-settings-inline-note">
-                                <span>读到当前批的多少时预生成下一批</span>
-                                <span>{Math.round((config.annotationPrefetchThreshold ?? 2 / 3) * 100)}%</span>
-                            </div>
-                            <input
-                                type="range"
-                                className="w-full my-1"
-                                min={0.05}
-                                max={0.95}
-                                step={0.05}
-                                value={config.annotationPrefetchThreshold ?? 2 / 3}
-                                onChange={(e) => setConfig((prev) => ({ ...prev, annotationPrefetchThreshold: Number(e.target.value) }))}
-                            />
-                            <p className="reading-settings-inline-note">
-                                <span>百分比越低，越早开始预生成下一批——设得很低（如 5%）时，刚开始读当前批，下一批批注就已经在生成/已生成，阅读不等待。默认 2/3。</span>
-                            </p>
-                        </>
-                    )}
-                    <p className="reading-settings-inline-note">
-                        <span>TXT 预批注按段落分批，PDF 预批注按页分批，批次大小与自动批注一致（可在批注对话框里调整）。利用读上一批批注的时间生成下一批，不会重复批注。</span>
-                    </p>
-                </section>
 
                 <section className="reading-settings-group">
                     <div className="reading-settings-heading">

@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm";
 // （** 后跟标点时要求前面是空格/标点，中文里前面通常是汉字），中文消息大量中招。
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
-import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, FileCode2, FileText, Gamepad2, Github, Image as ImageIcon, Loader2, Menu, MoreVertical, Paperclip, Pencil, Pin, PinOff, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
+import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Drama, FileCode2, FileText, Gamepad2, Github, Image as ImageIcon, Loader2, Menu, MoreVertical, Paperclip, Pencil, Pin, PinOff, Play, Plus, ScrollText, Square, Trash2, Wrench, X } from "lucide-react";
 import { getQaApiLogs, clearQaApiLogs, type DebugInfo } from "@/lib/api-log-store";
 import { QaFileCard } from "@/components/qa-file-card";
 import { parseQaFileMarker } from "@/lib/qa-computer-tools";
@@ -21,6 +21,7 @@ import type { QaCreatedContent } from "@/lib/qa-agent-tools";
 import {
   applyQaCommit,
   cancelQaCommit,
+  carryOverQaSession,
   clearQaToolHistory,
   createQaSession,
   deleteQaSession,
@@ -309,7 +310,7 @@ const QaMessageItem = memo(function QaMessageItem({
   // 生成中不显示（内容还不完整，复制/编辑都没有意义）。
   const showActions = !isStreaming && !thinkingOnly;
   const msgWrap = (node: ReactNode) => (
-    <div className="qa-msg-wrap">
+    <div className="qa-msg-wrap" id={`qa-msg-${msg.id}`}>
       {node}
       {showActions && (
         <div className="qa-msg-actions" data-role={msg.role}>
@@ -436,19 +437,23 @@ const QaMessageItem = memo(function QaMessageItem({
 function QaSessionDrawer({
   sessions,
   activeId,
+  carryingId,
   onSelect,
   onDelete,
   onCreate,
   onOpenSettings,
   onRenameRequest,
+  onCarryOver,
 }: {
   sessions: QaSession[];
   activeId: string | null;
+  carryingId?: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onCreate: () => void;
   onOpenSettings: () => void;
   onRenameRequest: (id: string, title: string) => void;
+  onCarryOver: (id: string) => void;
 }) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
@@ -470,75 +475,95 @@ function QaSessionDrawer({
         onClick={() => { if (menuOpenId) setMenuOpenId(null); }}
       >
         {sortedSessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
-        {sortedSessions.map((session) => (
-          <div
-            key={session.id}
-            className={`qa-drawer-item ${session.id === activeId ? "is-active" : ""}`}
-            onClick={() => onSelect(session.id)}
-          >
-            <div className="qa-drawer-item-main">
-              <span className="qa-drawer-item-title">
-                {session.isPinned && <Pin size={12} className="qa-drawer-pin-mark" aria-label="已置顶" />}
-                {session.title}
-              </span>
-              <span className="qa-drawer-item-time">{formatRelativeTime(session.updatedAt)}</span>
-            </div>
-            <button
-              type="button"
-              className="qa-icon-btn qa-drawer-item-more"
-              aria-label="更多操作"
-              aria-expanded={menuOpenId === session.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpenId(menuOpenId === session.id ? null : session.id);
-              }}
+        {sortedSessions.map((session) => {
+          const isCarrying = carryingId === session.id;
+          return (
+            <div
+              key={session.id}
+              className={`qa-drawer-item ${session.id === activeId ? "is-active" : ""} ${isCarrying ? "is-carrying" : ""}`}
+              onClick={() => { if (!isCarrying) onSelect(session.id); }}
             >
-              <MoreVertical size={14} />
-            </button>
-
-            {menuOpenId === session.id && (
-              <div className="qa-drawer-item-menu" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="qa-drawer-menu-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleQaSessionPin(session.id);
-                    setMenuOpenId(null);
-                  }}
-                >
-                  {session.isPinned ? <PinOff size={14} /> : <Pin size={14} />}
-                  {session.isPinned ? "取消置顶" : "置顶"}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="qa-drawer-menu-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRenameRequest(session.id, session.title);
-                    setMenuOpenId(null);
-                  }}
-                >
-                  <Pencil size={14} /> 重命名
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="qa-drawer-menu-btn is-danger"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(session.id);
-                    setMenuOpenId(null);
-                  }}
-                >
-                  <Trash2 size={14} /> 删除
-                </button>
+              {isCarrying && <div className="qa-drawer-item-progress" />}
+              <div className="qa-drawer-item-main">
+                <span className="qa-drawer-item-title">
+                  {session.isPinned && <Pin size={12} className="qa-drawer-pin-mark" aria-label="已置顶" />}
+                  {session.title}
+                </span>
+                <span className="qa-drawer-item-time">
+                  {isCarrying ? "正在结转记忆..." : formatRelativeTime(session.updatedAt)}
+                </span>
               </div>
-            )}
-          </div>
-        ))}
+              <button
+                type="button"
+                className="qa-icon-btn qa-drawer-item-more"
+                aria-label="更多操作"
+                aria-expanded={menuOpenId === session.id}
+                disabled={isCarrying}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpenId(menuOpenId === session.id ? null : session.id);
+                }}
+              >
+                {isCarrying ? <Loader2 size={14} className="qa-spin" /> : <MoreVertical size={14} />}
+              </button>
+
+              {menuOpenId === session.id && (
+                <div className="qa-drawer-item-menu" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="qa-drawer-menu-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleQaSessionPin(session.id);
+                      setMenuOpenId(null);
+                    }}
+                  >
+                    {session.isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+                    {session.isPinned ? "取消置顶" : "置顶"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="qa-drawer-menu-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRenameRequest(session.id, session.title);
+                      setMenuOpenId(null);
+                    }}
+                  >
+                    <Pencil size={14} /> 重命名
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="qa-drawer-menu-btn"
+                    disabled={isCarrying}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenId(null);
+                      onCarryOver(session.id);
+                    }}
+                  >
+                    <Square size={14} /> 结转新会话
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="qa-drawer-menu-btn is-danger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(session.id);
+                      setMenuOpenId(null);
+                    }}
+                  >
+                    <Trash2 size={14} /> 删除
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div className="qa-drawer-foot">
         <button type="button" className="qa-drawer-new qa-drawer-settings" onClick={onOpenSettings}>
@@ -806,6 +831,46 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   );
 }
 
+function scrollToElementSafely(container: HTMLElement | null, targetEl: HTMLElement | null) {
+  if (!container || !targetEl) return;
+  try {
+    const header = document.querySelector(".qa-header");
+    const topOffset = header && (header as HTMLElement).offsetParent !== null
+      ? (header as HTMLElement).getBoundingClientRect().height + 14
+      : 88;
+    const cRect = container.getBoundingClientRect();
+    const tRect = targetEl.getBoundingClientRect();
+    const relativeTop = tRect.top - cRect.top;
+    const finalScrollTop = Math.max(0, container.scrollTop + relativeTop - topOffset);
+
+    container.scrollTo({
+      top: finalScrollTop,
+      behavior: "smooth",
+    });
+  } catch {
+    try { targetEl.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+  }
+}
+
+function pulseHighlight(el: HTMLElement | null) {
+  if (!el) return;
+  try {
+    el.classList.remove("xf-highlight-anchor");
+    void el.offsetWidth;
+    el.classList.add("xf-highlight-anchor");
+    setTimeout(() => {
+      try { el.classList.remove("xf-highlight-anchor"); } catch {}
+    }, 1500);
+  } catch {}
+}
+
+type QaRoundItem = {
+  roundNum: number;
+  title: string;
+  userMsgId?: string;
+  assistantMsgId?: string;
+};
+
 // ── App 本体 ─────────────────────────────────────────
 
 export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
@@ -830,6 +895,7 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const [editFiles, setEditFiles] = useState<QaTextAttachment[]>([]);
   const [editAttachMenuOpen, setEditAttachMenuOpen] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
+  const [carryingSessionId, setCarryingSessionId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const editImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -899,12 +965,85 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
     [previewItem],
   );
 
-  // 自动滚动：用户上滚阅读时不拉回底部
+  const [capsuleVisible, setCapsuleVisible] = useState(false);
+  const [activeRoundNum, setActiveRoundNum] = useState(1);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+
+  // 纯响应式轮次数据派生：根据 messages 实时生成大纲，AI 流式打字亦平滑自适应
+  const rounds = useMemo(() => {
+    const list: QaRoundItem[] = [];
+    let current: QaRoundItem | null = null;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        if (current) list.push(current);
+        const raw = (msg.content || "").replace(/\s+/g, " ").trim();
+        current = {
+          roundNum: list.length + 1,
+          title: raw || `第 ${list.length + 1} 轮提问`,
+          userMsgId: msg.id,
+        };
+      } else if (msg.role === "assistant") {
+        if (!current) {
+          current = {
+            roundNum: list.length + 1,
+            title: `第 ${list.length + 1} 轮对话`,
+            assistantMsgId: msg.id,
+          };
+        } else {
+          current.assistantMsgId = msg.id;
+        }
+      }
+    }
+    if (current) list.push(current);
+    return list;
+  }, [messages]);
+
+  // 自动滚动 & 胶囊可见性与当前视口轮次计算（带完整防御，绝不抛异常）
   const handleScroll = useCallback(() => {
     const el = bodyRef.current;
     if (!el) return;
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  }, []);
+    try {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      stickToBottomRef.current = atBottom;
+
+      if (rounds.length === 0) {
+        setCapsuleVisible(false);
+        return;
+      }
+      // 贴底阅读时自然隐去，往上翻阅历史消息时浮现
+      setCapsuleVisible(!atBottom);
+
+      if (atBottom) {
+        setActiveRoundNum(rounds.length);
+      } else {
+        const header = document.querySelector(".qa-header");
+        const topOffset = header && (header as HTMLElement).offsetParent !== null
+          ? (header as HTMLElement).getBoundingClientRect().height + 14
+          : 88;
+        const cRect = el.getBoundingClientRect();
+        const effectiveTop = cRect.top + topOffset;
+
+        let detected = rounds.length;
+        for (let i = 0; i < rounds.length; i++) {
+          const r = rounds[i];
+          const targetId = r.userMsgId || r.assistantMsgId;
+          if (targetId) {
+            const dom = document.getElementById(`qa-msg-${targetId}`);
+            if (dom) {
+              const b = dom.getBoundingClientRect();
+              if (b.bottom >= effectiveTop + 10) {
+                detected = r.roundNum;
+                break;
+              }
+            }
+          }
+        }
+        setActiveRoundNum(detected);
+      }
+    } catch {
+      // 保护性静默
+    }
+  }, [rounds]);
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -912,6 +1051,70 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages]);
+
+  const handleCarryOverSession = useCallback(async (targetSessionId?: string) => {
+    const targetId = typeof targetSessionId === "string" && targetSessionId ? targetSessionId : snapshot.activeSessionId;
+    if (!targetId) return;
+    if (snapshot.isGenerating || snapshot.isCompacting) {
+      onNotice?.("小坊正在执行任务或整理上下文，完成后再结转。");
+      return;
+    }
+    setCarryingSessionId(targetId);
+    try {
+      const newId = await carryOverQaSession(targetId);
+      if (newId) {
+        onNotice?.("已提取关键记忆并结转到新会话！Token 空间已恢复 100%");
+        setDrawerOpen(false);
+        setOutlineOpen(false);
+      } else {
+        onNotice?.("所选会话暂无内容或结转失败。");
+      }
+    } finally {
+      setCarryingSessionId(null);
+    }
+  }, [snapshot.activeSessionId, snapshot.isGenerating, snapshot.isCompacting, onNotice]);
+
+  const handleDirectToLastReply = useCallback(() => {
+    setOutlineOpen(false);
+    const el = bodyRef.current;
+    if (!el) return;
+
+    try {
+      const assistantMsgs = messages.filter((m) => m.role === "assistant");
+      const lastAssistant = assistantMsgs.length > 0 ? assistantMsgs[assistantMsgs.length - 1] : null;
+
+      if (lastAssistant) {
+        const dom = document.getElementById(`qa-msg-${lastAssistant.id}`);
+        if (dom) {
+          scrollToElementSafely(el, dom);
+          pulseHighlight(dom);
+          return;
+        }
+      }
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } catch {
+      try { el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); } catch {}
+    }
+  }, [messages]);
+
+  const handleSelectRound = useCallback((round: QaRoundItem) => {
+    setOutlineOpen(false);
+    const el = bodyRef.current;
+    if (!el) return;
+
+    try {
+      const targetId = round.userMsgId || round.assistantMsgId;
+      if (targetId) {
+        const dom = document.getElementById(`qa-msg-${targetId}`);
+        if (dom) {
+          scrollToElementSafely(el, dom);
+          pulseHighlight(dom);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const autoGrow = useCallback(() => {
     const el = textareaRef.current;
@@ -1045,6 +1248,7 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
       <QaSessionDrawer
         sessions={snapshot.sessions}
         activeId={snapshot.activeSessionId}
+        carryingId={carryingSessionId}
         onSelect={(id) => {
           switchQaSession(id);
           setDrawerOpen(false);
@@ -1062,9 +1266,17 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           setRenameTarget({ id, title });
           setRenameTitle(title);
         }}
+        onCarryOver={handleCarryOverSession}
       />
       <div className={`qa-stage ${drawerOpen ? "is-pushed" : ""}`}>
       <div className="qa-ambient" aria-hidden />
+      {(carryingSessionId || snapshot.isCompacting) && (
+        <div className="qa-global-carrying-bar" role="status">
+          <div className="qa-global-carrying-progress" />
+          <Loader2 size={13} className="qa-spin" />
+          <span>正在提炼并结转会话记忆…</span>
+        </div>
+      )}
       <header className="qa-header">
         <div className="qa-header-left">
           <button type="button" className="qa-icon-btn" onClick={onClose} aria-label="返回">
@@ -1076,6 +1288,17 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           {repoConnected && <span className="qa-header-sub">已连接仓库</span>}
         </div>
         <div className="qa-header-right">
+          {rounds.length > 0 && (
+            <button
+              type="button"
+              className={`qa-icon-btn ${outlineOpen ? "is-active" : ""}`}
+              onClick={() => setOutlineOpen((v) => !v)}
+              aria-label="对话大纲"
+              title="查看工坊对话大纲"
+            >
+              <ScrollText size={17} strokeWidth={1.75} />
+            </button>
+          )}
           <button
             type="button"
             className="qa-icon-btn"
@@ -1300,8 +1523,85 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
               {snapshot.isCompacting ? "压缩中" : `${Math.min(999, Math.round(snapshot.contextUsage * 100))}%`}
             </span>
           </div>
+
+          {/* ── 吸附微光淡紫胶囊（置于输入框内，基准稳固，常驻可见） ── */}
+          {rounds.length > 0 && (
+            <div className={`xf-qa-capsule ${capsuleVisible ? "is-active-scrolled" : "is-bottom"}`}>
+              <button
+                type="button"
+                className="xf-qa-round-btn"
+                title="查看对话大纲"
+                onClick={() => setOutlineOpen((v) => !v)}
+              >
+                <span className="xf-qa-round-icon-badge">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" />
+                  </svg>
+                </span>
+                <span className="xf-qa-round-label">{`${activeRoundNum}/${rounds.length} 轮`}</span>
+              </button>
+              <div className="xf-qa-capsule-divider" />
+              <button
+                type="button"
+                className="xf-qa-direct-btn"
+                title="定位最后一次回复"
+                onClick={handleDirectToLastReply}
+              >
+                <ChevronDown size={12} strokeWidth={2.6} />
+              </button>
+            </div>
+          )}
         </div>
       </footer>
+
+      {/* ── 大纲气泡弹窗（挂载在 qa-stage，z-index 50，避开顶栏遮挡） ── */}
+      {outlineOpen && (
+        <>
+          <div
+            className="xf-qa-outline-backdrop"
+            onClick={() => setOutlineOpen(false)}
+            aria-hidden
+          />
+          <div className="xf-qa-outline-modal is-open" role="dialog" aria-label="工坊对话大纲">
+            <div className="xf-qa-outline-header">
+              <span>工坊对话大纲</span>
+              <button
+                type="button"
+                className={`xf-qa-outline-carryover-btn ${carryingSessionId || snapshot.isCompacting ? "is-loading" : ""}`}
+                title="将当前记忆结转至新窗口，重置 Token 空间"
+                disabled={Boolean(carryingSessionId || snapshot.isCompacting)}
+                onClick={() => handleCarryOverSession()}
+              >
+                {(carryingSessionId || snapshot.isCompacting) && <div className="xf-qa-carry-progress" />}
+                <span style={{ position: "relative", zIndex: 1 }}>
+                  {carryingSessionId || snapshot.isCompacting ? "⚡ 正在结转中..." : "⚡ 结转新会话"}
+                </span>
+              </button>
+            </div>
+            <div className="xf-qa-outline-list hide-scrollbar">
+              {rounds.map((r) => {
+                const isActive = r.roundNum === activeRoundNum;
+                return (
+                  <button
+                    key={r.roundNum}
+                    type="button"
+                    className={`xf-qa-outline-item ${isActive ? "is-active" : ""}`}
+                    onClick={() => handleSelectRound(r)}
+                  >
+                    <span className="xf-qa-outline-num">{r.roundNum}</span>
+                    <span className="xf-qa-outline-text">{r.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
 
       {drawerOpen && (
         <button

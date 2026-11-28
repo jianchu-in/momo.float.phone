@@ -87,6 +87,46 @@
   cursor: pointer;
 }
 
+/* ── 全局记忆结转浮动提示条 ── */
+.qa-global-carrying-bar {
+  position: absolute;
+  top: calc(var(--qa-header-safe-top) + 48px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.8);
+  border: 1px solid rgba(115, 89, 230, 0.3);
+  box-shadow: 0 4px 16px rgba(115, 89, 230, 0.18), inset 0 1px 1px #fff;
+  color: #583ec7;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  animation: qa-carrying-slide-down 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+  pointer-events: none;
+}
+.qa-global-carrying-progress {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(115, 89, 230, 0.08), rgba(115, 89, 230, 0.28), rgba(115, 89, 230, 0.08));
+  background-size: 200% 100%;
+  animation: qa-carrying-shimmer 1.2s infinite linear;
+}
+@keyframes qa-carrying-slide-down {
+  from { opacity: 0; transform: translate(-50%, -8px) scale(0.95); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@keyframes qa-carrying-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── 顶栏 ── */
 /* 顶栏：与页面同色的不透明底 + 底缘柔和渐隐，内容滑上去在其后干净淡出（非毛玻璃） */
 .qa-header {
@@ -1478,6 +1518,21 @@
 .qa-drawer-item.is-active {
   background: rgba(0, 0, 0, 0.06);
 }
+.qa-drawer-item.is-carrying {
+  position: relative;
+  overflow: hidden;
+  background: rgba(115, 89, 230, 0.08);
+}
+.qa-drawer-item-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.5px;
+  background: linear-gradient(90deg, rgba(115, 89, 230, 0.2), #7359e6, rgba(115, 89, 230, 0.2));
+  background-size: 200% 100%;
+  animation: qa-carrying-shimmer 1.2s infinite linear;
+}
 .qa-drawer-item-main {
   flex: 1;
   min-width: 0;
@@ -2042,3 +2097,273 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* ── 工坊原生对话大纲与吸附微光淡紫胶囊 ── */
+
+/* 吸附微光淡紫胶囊：居于输入框右上角上方，常驻优雅展示，top: -48px 避开 top: -18px 的 Token 进度条 */
+.xf-qa-capsule {
+  position: absolute;
+  right: 10px;
+  top: -48px;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 4px 0 5px;
+  border-radius: 999px;
+  z-index: 20;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 0.9;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(1.7);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    0 4px 14px rgba(40, 34, 20, 0.08),
+    0 0 10px rgba(115, 89, 230, 0.16),
+    inset 0 1px 1px #ffffff;
+}
+
+.xf-qa-capsule.is-active-scrolled {
+  opacity: 1;
+  box-shadow: 
+    0 5px 16px rgba(40, 34, 20, 0.12),
+    0 0 14px rgba(115, 89, 230, 0.24),
+    inset 0 1px 1px #ffffff;
+}
+
+.xf-qa-capsule.is-bottom {
+  opacity: 0.82;
+}
+
+.xf-qa-capsule:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 
+    0 6px 18px rgba(40, 34, 20, 0.14),
+    0 0 16px rgba(115, 89, 230, 0.28),
+    inset 0 1px 1px #ffffff;
+  transform: translateY(-1px) scale(1.02);
+}
+.xf-qa-capsule:active {
+  transform: scale(0.96);
+}
+
+/* 轮次按钮 */
+.xf-qa-round-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 4px 0 1px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #2b2a26;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 轮次图标小标（工坊淡紫） */
+.xf-qa-round-icon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: rgba(115, 89, 230, 0.12);
+  color: #7359e6;
+}
+
+/* 分割线 */
+.xf-qa-capsule-divider {
+  width: 1px;
+  height: 12px;
+  background: rgba(40, 34, 20, 0.12);
+  margin: 0 2px;
+}
+
+/* 直达按钮（工坊淡紫） */
+.xf-qa-direct-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(115, 89, 230, 0.08);
+  color: #7359e6;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.xf-qa-direct-btn:hover {
+  background: rgba(115, 89, 230, 0.18);
+  transform: translateY(1px);
+}
+.xf-qa-direct-btn:active {
+  transform: scale(0.88);
+}
+
+/* 大纲弹窗背景全透明遮罩（点击收起） */
+.xf-qa-outline-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  background: transparent;
+  cursor: default;
+}
+
+/* 大纲气泡弹窗：定位在 stage 底部上方，层级 50，避开顶栏遮挡 */
+.xf-qa-outline-modal {
+  position: absolute;
+  right: 12px;
+  bottom: 84px;
+  width: min(86vw, 300px);
+  max-height: 48vh;
+  border-radius: 18px;
+  z-index: 50;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(24px) saturate(1.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 12px 36px rgba(40, 34, 20, 0.18), inset 0 1.5px 1px #fff;
+}
+
+.xf-qa-outline-modal.is-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.xf-qa-outline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px 8px;
+  border-bottom: 1px solid rgba(40, 34, 20, 0.07);
+  font-size: 13px;
+  font-weight: 700;
+  color: #2b2a26;
+}
+
+/* 结转新会话按钮 */
+.xf-qa-outline-carryover-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(115, 89, 230, 0.28);
+  background: rgba(115, 89, 230, 0.08);
+  color: #7359e6;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.18s ease;
+}
+.xf-qa-outline-carryover-btn:hover {
+  background: rgba(115, 89, 230, 0.16);
+  border-color: rgba(115, 89, 230, 0.45);
+}
+.xf-qa-outline-carryover-btn.is-loading {
+  pointer-events: none;
+  background: rgba(115, 89, 230, 0.14);
+  border-color: #7359e6;
+  color: #583ec7;
+}
+.xf-qa-carry-progress {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(115, 89, 230, 0.12), rgba(115, 89, 230, 0.42), rgba(115, 89, 230, 0.12));
+  background-size: 200% 100%;
+  animation: xf-carry-shimmer 1.2s infinite linear;
+}
+
+.xf-qa-outline-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overscroll-behavior: contain;
+}
+
+.xf-qa-outline-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.xf-qa-outline-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.xf-qa-outline-item.is-active {
+  background: rgba(115, 89, 230, 0.1);
+}
+
+.xf-qa-outline-num {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  font-weight: 700;
+  color: #6a685f;
+}
+.xf-qa-outline-item.is-active .xf-qa-outline-num {
+  background: #7359e6;
+  color: #fff;
+}
+
+.xf-qa-outline-text {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #2b2a26;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 定位跳转柔和脉冲呼吸微光 */
+@keyframes xf-target-pulse {
+  0% { outline: 2.5px solid rgba(115, 89, 230, 0.85); background: rgba(115, 89, 230, 0.12); border-radius: 12px; }
+  50% { outline: 2.5px solid rgba(115, 89, 230, 0.35); background: rgba(115, 89, 230, 0.05); }
+  100% { outline: 2.5px solid transparent; background: transparent; }
+}
+.xf-highlight-anchor {
+  animation: xf-target-pulse 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+

@@ -492,6 +492,15 @@ function isBlacklistEventHistoryMessage(message: ChatMessage): boolean {
         && (message.mediaData?.blacklistEvent === "block" || message.mediaData?.blacklistEvent === "unblock");
 }
 
+/** history 末尾是一起听相关系统通知或卡片 → 允许角色针对新开启的一起听事件作出自然反应，不被续写提示压制。 */
+function isListeningEventHistoryMessage(message: ChatMessage): boolean {
+    if (message.mediaType === "listening_invite") return true;
+    if (message.role === "system" && typeof message.content === "string" && message.content.includes("一起听")) {
+        return true;
+    }
+    return false;
+}
+
 /** 日志分流：工坊（appId === "qa"）经聊天引擎发出的调用（答疑 Agent 原生工具循环）归工坊环，
  *  其余归底层调用日志环。channel 不能硬编码——工坊的 Agent 循环复用 sendLLMToolStreamRequest，
  *  旧逻辑靠 characterName === "工坊" 分流，改成显式字段后必须从 appId 派生，否则工坊记录漏进主环。 */
@@ -527,6 +536,10 @@ export function appendEmptyGenerateGuardMessage(
     // 仿真拉黑事件豁免：末尾是拉黑/解除拉黑事件时，角色必须对此作出反应——
     // 续写压制提示里的「禁止引用或复述系统消息」会把这次知情反应整个压掉
     if (lastHistoryMessage && isBlacklistEventHistoryMessage(lastHistoryMessage)) {
+        return;
+    }
+    // 一起听开启/邀请事件豁免：末尾刚发起或开始一起听，角色应能自然对这首歌或共同聆听作出表达
+    if (lastHistoryMessage && isListeningEventHistoryMessage(lastHistoryMessage)) {
         return;
     }
 
@@ -831,7 +844,7 @@ export async function sendLLMStreamRequest(
     const request = buildProviderRequest(config, effectivePreset, requestMessages, { stream: true });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "completion" });
     const llmAbort = new AbortController();
-    const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
+    const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
 
     try {
@@ -892,7 +905,7 @@ export async function sendLLMStreamRequest(
     } catch (error: unknown) {
         if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
             if (options?.signal?.aborted) throw error;
-            throw new ChatEngineError("AI 流式回复超时（500秒），请重试。");
+            throw new ChatEngineError("AI 流式回复超时，请重试。");
         }
         if (error instanceof ChatEngineError) throw error;
         const detail = error instanceof Error ? error.message : String(error);
@@ -998,7 +1011,7 @@ export async function sendLLMRequest(
     console.log("[ChatEngine] Request:", requestDebugInfo);
 
     const llmAbort = new AbortController();
-    const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
+    const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
 
     try {

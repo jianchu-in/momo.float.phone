@@ -4,6 +4,8 @@ export type Book = {
     id: string;
     title: string;
     author?: string;
+    coverUrl?: string;
+    status?: "reading" | "finished" | "unread";
     format: "txt" | "epub" | "pdf";
     totalChapters: number;
     createdAt: string;
@@ -39,13 +41,30 @@ export type ReadingProgress = {
     lastReadAt: string;
 };
 
+export type AnnotationComment = {
+    id: string;
+    author: string;
+    isAi: boolean;
+    characterId?: string;
+    text: string;
+    createdAt: string;
+};
+
 export type ReadingAnnotation = {
     id: string;
     bookId: string;
     chapterIndex: number;
     paragraphIndex: number;
+    startOff?: number;
+    endOff?: number;
+    color?: string;
+    style?: "highlight" | "underline" | "wavy" | "strike";
+    createdBy?: "human" | "ai";
+    chapterTitle?: string;
+    quote?: string;
     characterId: string;
     characterName: string;
     content: string;
+    comments?: AnnotationComment[];
     createdAt: string;
 };
