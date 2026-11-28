@@ -3,9 +3,10 @@
 import {FACING_DIALOGUE_NOTATIONS,FACING_REPLY_FORMATS,facingSegmentText,facingVisibleSegments} from "@/lib/facing-reply-format";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, History, Images, Map as MapIcon, Plus, Settings2, UserRound, X } from "lucide-react";
+import { enterFacingMapPlace, facingDestinationGroups, facingSceneChoiceId } from "@/lib/facing-map-entry";
 import { FacingMapApp } from "./facing-map-app";
 import { FacingMapSettings } from "./facing-map-panels";
-import { loadFacingAtlas, mapActivitySnapshot, mapPlacePath, saveMapArrival, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
+import { loadFacingAtlas, type FacingAtlas, type MapTrip } from "@/lib/facing-map-storage";
 import {bigMapPlace} from "@/lib/facing-place-life";
 import {resolveFacingLocation,bindFacingLocation,facingMeetingLocationCandidates} from "@/lib/facing-location";
 import {FacingAmbience,type FacingAmbienceControl} from "./facing-ambience";
@@ -13,10 +14,9 @@ import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { createFacingMeeting, deleteFacingAssets, loadFacingUsableAssets, changeFacingScene, manageFacingMeetings, mergeFacingMeetings, FACING_SHARED_CHARACTER_ID, FACING_DEFAULT_APPEARANCE, FACING_DEFAULT_SCENE, FACING_REPLY_LENGTHS, FACING_VISUAL_INTERVAL, facingAssetLocation, facingParticipantIds, facingId, facingMeetingPosition, facingScenePosition, groupFacingScenes, loadFacingAssets, loadFacingMeeting, loadFacingMeetings, loadFacingSettings, resolveFacingScene, saveFacingMeetingStart, saveFacingSettings,
   facingCgDisplayRounds, loadFacingAssets as loadCgAssets, type FacingAsset, type FacingCharacterSettings, type FacingMeeting } from "@/lib/facing-storage";
-import { sceneForMapPlace } from "@/lib/facing-map-scenes";
 import { continueFacingInStory } from "@/lib/story-storage";
 import { loadUserIdentities, resolveUserIdentity } from "@/lib/settings-storage";
-import { facingCastScenes, facingEffectiveSettings, saveFacingCommon, saveFacingGroup, saveFacingPreset, applyFacingPreset, saveFacingParticipants } from "@/lib/facing-storage";
+import { facingEffectiveSettings, saveFacingCommon, saveFacingGroup, saveFacingPreset, applyFacingPreset, saveFacingParticipants } from "@/lib/facing-storage";
 import { unlockAudioPlayback } from "@/lib/tts-service";
 import "@/styles/facing-life.css";
 import { FacingCgEditor } from "./facing-cg-editor";
@@ -132,7 +132,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   const current = character ? facingEffectiveSettings(character.id, preferences) : {};
   const referenceSettings = settingsOwner ? preferences.characters[settingsOwner.id]?.autoVisual : undefined;
   const identityId = character ? resolveUserIdentity(character.id, "facing")?.id ?? null : null;
-  const groups = useMemo(()=>facingCastScenes(draftMeeting && sheet === "new" ? facingParticipantIds(draftMeeting) : participantIds, Object.fromEntries(characters.map(item => [item.id, item.name]))),[assets,castNames,current.portraitId,draftMeeting,sheet]);
+  const groups = useMemo(()=>facingDestinationGroups(draftMeeting && sheet === "new" ? facingParticipantIds(draftMeeting) : participantIds, Object.fromEntries(characters.map(item => [item.id, item.name]))),[assets,castNames,current.portraitId,draftMeeting,sheet]);
   const castKey = [...participantIds].sort().join("|");
   const meetings = useMemo(() => character ? loadFacingMeetings(character.id, identityId, true)
     .filter(item => [...facingParticipantIds(item)].sort().join("|") === castKey && (!item.groupId || item.groupId === preferences.groupId)) : [], [character, identityId, page, castKey, recordRevision]);
@@ -187,7 +187,9 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     if (!character) return;
     setError("");
     const preferred = parent ? facingMeetingPosition(parent).sceneName : homeScene.position.sceneName;
-    setOpeningScene(groups.some(group => group.name === preferred) ? preferred : initialGroup?.name ?? FACING_DEFAULT_SCENE);
+    const previousMap=parent?parent.mapContext:latest?.mapContext;
+    const preferredGroup=groups.find(group=>previousMap&&group.choiceId===`map:${previousMap.atlasId}|${previousMap.placeId}`)??groups.find(group=>group.name===preferred)??initialGroup;
+    setOpeningScene(preferredGroup?facingSceneChoiceId(preferredGroup):FACING_DEFAULT_SCENE);
     const draft = createFacingMeeting(character.id, identityId, type, parent);
     setDraftMeeting(parent ? draft : { ...draft, participantIds, groupId: preferences.groupId });
     setSheet("new");
@@ -198,13 +200,15 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     setStarting(true);
     setError("");
     try {
-      const position = facingScenePosition(groups.find(group => group.name === openingScene));
-      const started = await saveFacingMeetingStart(draftMeeting, position);
+      const selected=groups.find(group=>facingSceneChoiceId(group)===openingScene);
+      if(groups.length&&!selected)throw new Error("请选择一个可用地点。");
+      const position = facingScenePosition(selected);
+      const started = selected?.mapLocation ? await enterFacingMapPlace({atlasId:selected.mapLocation.atlasId,trip:{placeId:selected.mapLocation.placeId,characterIds:facingParticipantIds(draftMeeting),secret:false},visitId:draftMeeting.id,leadId:draftMeeting.characterId,identityId:draftMeeting.identityId,seed:draftMeeting}) : await saveFacingMeetingStart(draftMeeting, position);
       setPreferences(await saveFacingParticipants(facingParticipantIds(started), started.groupId));
       setSheet(null);
       openRoom(started);
-    } catch {
-      setError("新对话保存失败，请重试。");
+    } catch (cause) {
+      setError(cause instanceof Error?cause.message:"新对话保存失败，请重试。");
     } finally { setStarting(false); }
   }
 
@@ -214,21 +218,19 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
   }
 
   async function arriveFromMap(atlas: FacingAtlas, trip: MapTrip, visitId: string) {
-    const activity = mapActivitySnapshot(atlas)?.entries.filter(entry => entry.placeId === trip.placeId) ?? [];
-    const participants = Array.from(new Set([...trip.characterIds, ...(trip.targetCharacterId ? [trip.targetCharacterId] : activity.map(entry => entry.characterId))]));
-    const primaryId = trip.characterIds[0] ?? trip.targetCharacterId ?? participants[0] ?? character?.id;
-    if (!primaryId) throw new Error("请先选择一位角色。");
-    const target = characters.find(item => item.id === primaryId);
-    if (!target) throw new Error("这位角色已被移除。");
-    const targetAssets = loadFacingUsableAssets(primaryId);
-    const destination = mapPlacePath(atlas, trip.placeId);
-    const matched=sceneForMapPlace(atlas,trip.placeId,primaryId);
-    const scene = { ...matched, sceneName: destination };
-    const identity = resolveUserIdentity(character?.id, "facing")?.id ?? null;
-    const started = await saveMapArrival(atlas.id, trip, visitId, primaryId, identity, participants, scene, meeting);
-    setPreferences(await saveFacingParticipants([primaryId, ...participants.filter(id => id !== primaryId)]));
-    setAssets(targetAssets);
-    openRoom(started);
+    const started=await enterFacingMapPlace({atlasId:atlas.id,trip,visitId,leadId:character?.id??trip.characterIds[0],identityId:mapOrigin==="room"&&meeting?meeting.identityId:identityId,
+      seed:mapOrigin==="room"?meeting:undefined,previousMeeting:mapOrigin==="room"?undefined:meeting});
+    setPreferences(await saveFacingParticipants(facingParticipantIds(started).length?facingParticipantIds(started):[started.characterId],started.groupId));
+    setAssets(loadFacingUsableAssets(started.characterId));openRoom(started);
+  }
+
+  async function goToLocation(location?:{atlasId:string;placeId:string}) {
+    if(!meeting)return;
+    if(!location){setMeeting(await bindFacingLocation(meeting));setAudioLocation(undefined);return;}
+    if(meeting.mapContext?.atlasId===location.atlasId&&meeting.mapContext.placeId===location.placeId)return;
+    const saved=await enterFacingMapPlace({atlasId:location.atlasId,trip:{placeId:location.placeId,characterIds:facingParticipantIds(meeting),secret:false},visitId:facingId(),leadId:meeting.characterId,identityId:meeting.identityId,seed:meeting});
+    setPreferences(await saveFacingParticipants(facingParticipantIds(saved).length?facingParticipantIds(saved):[saved.characterId],saved.groupId));
+    setMeeting(saved);setAssets(loadFacingUsableAssets(saved.characterId));setAudioLocation(location);
   }
 
   useEffect(()=>{if(!initialMeetingId)return;const saved=loadFacingMeeting(initialMeetingId);if(saved)openRoom(saved);else setError("原面对面记录已移除，可以从见面记录选择其他对话。");onLaunchConsumed?.();},[initialMeetingId]);
@@ -260,12 +262,12 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     </>}
     {page === "room" && character && meeting && <FacingRoom key={meeting.id} character={character} meeting={meeting} settings={current}
       initialDraft={roomDrafts.current.get(meeting.id)?.text} initialPhoto={roomDrafts.current.get(meeting.id)?.photo} onDraft={(text,photo)=>roomDrafts.current.set(meeting.id,{text,photo})}
-      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting} ambience={ambience} locationOptions={facingMeetingLocationCandidates(meeting)} onLocation={async location=>{const saved=await bindFacingLocation(meeting,location);setMeeting(saved);setAudioLocation(location);}}
+      portrait={room.portrait} scene={room.backdrop} position={room.position} scenes={groups} onMeeting={setMeeting} onParticipantsChange={()=>{setPreferences(loadFacingSettings());if(character)setAssets(loadFacingUsableAssets(character.id));}} ambience={ambience} locationOptions={facingMeetingLocationCandidates(meeting)} onLocation={goToLocation}
       autoAsset={(meeting.visual??meeting.lastCg)?loadCgAssets((meeting.visual??meeting.lastCg)?.characterId??meeting.characterId).find(asset => asset.id === (meeting.visual??meeting.lastCg)?.assetId):undefined} autoProgress={autoVisual.progress[meeting.id]}
       onCompleted={completed => autoVisual.check(completed, character)} onRetryCg={()=>setRetryCg(true)}
       onMap={() => { setMapOrigin("room"); setPage("map"); }}
       onStory={async()=>{await continueFacingInStory(loadFacingMeeting(meeting.id)??meeting,loadUserIdentities().find(item=>item.id===meeting.identityId)??resolveUserIdentity(character.id,"facing"));window.dispatchEvent(new CustomEvent("open-app",{detail:{appId:"story"}}));}}
-      onScene={async name=>{const group=groups.find(item=>item.name===name);if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
+      onScene={async id=>{const group=groups.find(item=>facingSceneChoiceId(item)===id);if(group?.mapLocation)await goToLocation(group.mapLocation);else if(group)setMeeting(await changeFacingScene(meeting.id,facingScenePosition(group)));}}
       onPortraitLayout={async (owner,id,layout)=>{const previous=loadFacingSettings().characters[owner];setPreferences(await saveFacingSettings(owner,{portraitLayouts:{...previous?.portraitLayouts,[id]:layout}}));}}
       onSettings={() => openSettings("room")} onEnd={() => { setMeeting(undefined); setPage("home"); }}
       onSpeechInput={value => commitSetting({ speechInput: value })} />}
@@ -364,7 +366,7 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     </>}
     {(page === "map" || (page === "map-settings" && mapSettingsOrigin === "map")) && character &&
       <div style={{ display: page === "map" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-        <FacingMapApp character={character} characters={characters} currentMeeting={meeting}
+        <FacingMapApp character={character} characters={characters} currentMeeting={mapOrigin==="room"?meeting:undefined} initialParticipantIds={participantIds}
           onBack={() => setPage(mapOrigin)} onSettings={() => { setMapSettingsOrigin("map"); setPage("map-settings"); }} onArrive={arriveFromMap} onLocation={setAudioLocation} />
       </div>}
     {page === "map-settings" && <FacingMapSettings onBack={() => setPage(mapSettingsOrigin)} />}
@@ -412,8 +414,9 @@ export function FacingApp({ onClose, initialMeetingId, onLaunchConsumed }: { onC
     </FacingSheet>}
     {sheet === "new" && <FacingSheet title="选择开场场景" close={() => { if (!starting) setSheet(null); }}>
       <label className="facing-opening-scene">开场场景<select value={openingScene} disabled={starting} onChange={event => setOpeningScene(event.target.value)}>
-        {groups.length ? groups.map(group => <option key={group.name}>{group.name}</option>) : <option>{FACING_DEFAULT_SCENE}</option>}
+        {groups.length ? groups.map(group => <option key={facingSceneChoiceId(group)} value={facingSceneChoiceId(group)}>{group.label??group.name}</option>) : <option>{FACING_DEFAULT_SCENE}</option>}
       </select></label>
+      <p className="facing-hint">可以选择地图中的游乐园、商场等大地点，不需要先添加背景素材。</p>
       <fieldset className="facing-cast-picker" disabled={starting || !!draftMeeting?.parentId}>
         <legend>在场角色 · 可多选</legend>
         <p className="facing-hint">多人时随机选取部分角色接话，顺序随机。按各自绑定的语音依次播放。</p>

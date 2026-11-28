@@ -19,6 +19,7 @@ import { useFacingSpeaker } from "./use-facing-speaker";
 import { useFacingSpeech } from "./use-facing-speech";
 import { useFacingLiveVoice } from "./use-facing-live-voice";
 import { createFacingVoiceSession } from "@/lib/facing-voice-input";
+import { FacingCastDialog } from "./facing-cast-dialog";
 import { FacingStoryDialog } from "./facing-story-dialog";
 import { useFacingViewportInset } from "./use-facing-viewport-inset";
 import { ShownImage } from "@/components/ui/shown-image";
@@ -27,7 +28,8 @@ import { splitVisibleCallActions } from "@/lib/call-action-text";
 import { storeShownImage } from "@/lib/shown-image";
 
 export function FacingRoom({ character, meeting, settings, portrait, scene, position, scenes, autoAsset, autoProgress, onCompleted,
-  onMeeting, onSettings, onEnd, onSpeechInput, onMap, onScene, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft,ambience,locationOptions,onLocation,onRetryCg }: {
+  onMeeting, onSettings, onEnd, onSpeechInput, onMap, onScene, onPortraitLayout, onStory,initialDraft,initialPhoto,onDraft,ambience,locationOptions,onLocation,onRetryCg,onParticipantsChange }: {
+  onParticipantsChange?: (meeting:FacingMeeting)=>void;
   ambience?:FacingAmbienceControl;
   locationOptions?:ReturnType<typeof facingLocationCandidates>;
   onLocation?:(location?:{atlasId:string;placeId:string})=>Promise<void>;
@@ -73,6 +75,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
   const [fullConversation, setFullConversation] = useState(false);
   const [toolsOpen,setToolsOpen]=useState(false);
   const [optimisticTurn,setOptimisticTurn]=useState<FacingTurn>();
+  const [castDialog,setCastDialog]=useState(false);
   const [scenePicker,setScenePicker]=useState(false);
   const [storyConfirm,setStoryConfirm]=useState(false);
   const [photo, setPhoto] = useState<File|undefined>(initialPhoto);
@@ -449,8 +452,9 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
         <button type="button" className="facing-glass facing-icon" aria-label="设置" disabled={busy || listening} onClick={()=>{live.stop();onSettings();}}><Settings2 size={19} /></button>
       </div>
     </header>
+    {castDialog&&<FacingCastDialog meeting={meeting} onClose={()=>setCastDialog(false)} onAdded={saved=>{onMeeting(saved);onParticipantsChange?.(saved);}}/>}
     {storyConfirm&&facingParticipantIds(meeting).length===1&&<FacingStoryDialog onClose={()=>setStoryConfirm(false)} onConfirm={onStory} />}
-    {scenePicker&&<div className="facing-scene-picker" role="dialog" aria-label="更换场景"><h3>更换场景</h3>{onLocation&&<label>关联地图地点<select aria-label="关联地图地点" value={meeting.mapContext?`${meeting.mapContext.atlasId}|${meeting.mapContext.placeId}`:""} onChange={e=>{const [atlasId,placeId]=e.target.value.split("|");void onLocation(atlasId&&placeId?{atlasId,placeId}:undefined).catch(e=>setError(String(e)));}}><option value="">未关联地点</option>{locationOptions?.map(item=><option key={`${item.atlas.id}|${item.place.id}`} value={`${item.atlas.id}|${item.place.id}`}>{item.atlas.name} · {item.path}</option>)}</select></label>}<div className="facing-list">{scenes.map(group=><button type="button" key={group.name} onClick={()=>void onScene(group.name).then(()=>setScenePicker(false)).catch(e=>setError(String(e)))}>{group.name}</button>)}</div>{!scenes.length&&<p>请先在场景素材中添加背景。</p>}{selectedPortrait && <button type="button" disabled={busy || listening} onClick={() => { void onPortraitLayout(speaker.id, selectedPortrait.id, { x: 50, y: 100, scale: 100 }).then(() => setScenePicker(false)).catch(e => setError(String(e))); }}>重置立绘位置</button>}<button type="button" onClick={()=>setScenePicker(false)}>取消</button></div>}
+    {scenePicker&&<div className="facing-scene-picker" role="dialog" aria-label="更换场景"><h3>更换场景</h3>{onLocation&&<label>前往地图地点<select aria-label="前往地图地点" value={meeting.mapContext?`${meeting.mapContext.atlasId}|${meeting.mapContext.placeId}`:""} onChange={e=>{const [atlasId,placeId]=e.target.value.split("|");void onLocation(atlasId&&placeId?{atlasId,placeId}:undefined).then(()=>setScenePicker(false)).catch(e=>setError(String(e)));}}><option value="">未关联地点</option>{locationOptions?.map(item=><option key={`${item.atlas.id}|${item.place.id}`} value={`${item.atlas.id}|${item.place.id}`}>{item.atlas.name} · {item.path}</option>)}</select></label>}<div className="facing-list">{scenes.map(group=><button type="button" key={group.choiceId??group.name} onClick={()=>void onScene(group.choiceId??group.name).then(()=>setScenePicker(false)).catch(e=>setError(String(e)))}>{group.label??group.name}</button>)}</div>{!scenes.length&&<p>也可以打开地图选择目的地，无需先生成背景。</p>}{selectedPortrait && <button type="button" disabled={busy || listening} onClick={() => { void onPortraitLayout(speaker.id, selectedPortrait.id, { x: 50, y: 100, scale: 100 }).then(() => setScenePicker(false)).catch(e => setError(String(e))); }}>重置立绘位置</button>}<button type="button" onClick={()=>setScenePicker(false)}>取消</button></div>}
     {!hidden && <div className="facing-room-bottom">
       {multi && !speakerVisual.portrait && !speakerVisual.reference && <div className="facing-speaker-badge facing-glass" aria-label={`当前发言：${speaker.name}`}>
         {speaker.avatar ? <img src={speaker.avatar} alt={speaker.name} /> : <span>{speaker.name.slice(0, 1)}</span>}<small>{speaker.name}</small>
@@ -472,7 +476,7 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
       </div>}
       <div className="facing-controls facing-glass">
         {live.enabled && <div className="facing-live-voice" data-phase={live.phase}>
-          <button type="button" className="facing-live-speak" disabled={live.phase === "transcribing" || live.phase === "replying" || busy || !!speech.playingId || storyConfirm || scenePicker || !!menuId}
+          <button type="button" className="facing-live-speak" disabled={live.phase === "transcribing" || live.phase === "replying" || busy || !!speech.playingId || storyConfirm || scenePicker || castDialog || !!menuId}
             aria-label={live.phase === "paused" ? "继续实时收音" : "说完了，立即发送"}
             onClick={()=>{unlockAudioPlayback();if(live.phase === "paused"){setError("");live.start();}else live.finish();}}>
             <span className="facing-live-mic"><Mic size={26} /></span>
@@ -495,9 +499,10 @@ export function FacingRoom({ character, meeting, settings, portrait, scene, posi
           if (file) setPhoto(file);
         }} />
         {toolsOpen&&<div className="facing-tools-panel facing-glass" role="group" aria-label="对话功能">
+          <button type="button" className="facing-small" disabled={busy||manualListening} onClick={()=>{live.pause();speech.stop();setToolsOpen(false);setCastDialog(true);}}><UsersRound size={20}/>增加角色</button>
           <button type="button" className="facing-small" disabled={busy||listening||live.enabled} onClick={()=>{setVoiceInput(false);photoPicker.current?.click();setToolsOpen(false);}}><ImagePlus size={20}/>添加参考图</button>
         <button type="button" className="facing-small" aria-label={live.enabled ? "结束实时对话" : "开启实时对话"}
-          title={live.enabled ? "结束实时对话" : "开启实时对话"} disabled={!live.enabled && (busy || manualListening || storyConfirm || scenePicker || !!menuId)}
+          title={live.enabled ? "结束实时对话" : "开启实时对话"} disabled={!live.enabled && (busy || manualListening || storyConfirm || scenePicker || castDialog || !!menuId)}
           aria-pressed={live.enabled} onClick={() => {
             if(live.enabled){stopGeneration();live.stop();speech.stop();return;}
             unlockAudioPlayback();speech.stop();setError("");setHidden(false);setVoiceInput(false);live.start();setToolsOpen(false);

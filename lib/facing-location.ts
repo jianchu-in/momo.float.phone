@@ -44,7 +44,7 @@ export async function bindFacingLocation(meeting:FacingMeeting,location?:{atlasI
   const target=location&&facingMeetingLocationCandidates(current).find(item=>item.atlas.id===location.atlasId&&item.place.id===location.placeId);
   if(location&&!target)throw new Error("地图地点已移除，请重新选择。");
   const prior=current.mapContext;
-  saved={...current,mapContext:target?{atlasId:target.atlas.id,placeId:target.place.id,participantIds:facingParticipantIds(current),secret:prior?.atlasId===target.atlas.id&&prior.placeId===target.place.id?prior.secret:false,description:target.place.description,sceneName:facingMeetingPosition(current).sceneName}:undefined};
+  saved={...current,mapContext:target?{atlasId:target.atlas.id,placeId:target.place.id,participantIds:facingParticipantIds(current),secret:prior?.atlasId===target.atlas.id&&prior.placeId===target.place.id?prior.secret:false,description:target.place.description,sceneName:facingMeetingPosition(current).sceneName,arrival:prior?.atlasId===target.atlas.id&&prior.placeId===target.place.id?prior.arrival:undefined}:undefined};
   return JSON.stringify(saved);
  });
  return saved;

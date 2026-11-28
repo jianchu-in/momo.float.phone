@@ -1,3 +1,4 @@
+import { facingArrivalInstruction } from "./facing-arrival";
 import { formatPromptTimestamp, resolvePromptTimeAware } from "./prompt-time";
 import { loadShownImageDataUrl, FACING_REFERENCE_IMAGE_CONTEXT } from "./shown-image";
 import { loadCharacters } from "./character-storage";
@@ -80,12 +81,15 @@ export async function polishFacingImageDescription(options: {
 }
 
 function toPromptHistory(meeting: FacingMeeting): ChatMessage[] {
-  return meeting.turns.slice(-40).map((turn, index, turns) => ({
+  const current=facingParticipantIds(meeting);
+  const visible=meeting.turns.filter(turn=>!current.length||!turn.participantIds||turn.participantIds.some(id=>current.includes(id)));
+  return visible.slice(-40).map((turn, index, turns) => ({
     id: turn.id,
     sessionId: meeting.id,
     role: turn.role,
     content: [
       turn.sceneName && turn.sceneName !== turns[index - 1]?.sceneName ? `【当时的场景：${turn.sceneName}】` : "",
+      turn.participantIds ? `【当时在场角色ID：${JSON.stringify(turn.participantIds)}】` : "",
       facingTurnText(turn),
     ].filter(Boolean).join("\n"),
     createdAt: turn.at,
@@ -119,7 +123,7 @@ export async function generateFacingReply(options: {
   const cast = loadCharacters().filter(item => participantIds.includes(item.id));
   const multi = cast.length > 1;
   const speakingIds = options.speakerId && participantIds.includes(options.speakerId) ? [options.speakerId] : multi ? chooseFacingSpeakers(cast.map(item => item.id)) : [character.id];
-  const destinations = options.deferVisual ? [] : scenes.filter(item => item.name !== scene);
+  const destinations = options.deferVisual ? [] : scenes.filter(item => !item.mapLocation && item.name !== scene);
   const summarizeReactions = (group?: FacingSceneGroup) => (group?.reactions ?? []).map(asset => ({ id: asset.id, name: asset.name }));
   const currentScene = scenes.find(item => item.name === scene);
   const identity = loadUserIdentities().find(item=>item.id===meeting.identityId)??resolveUserIdentity(character.id, "facing");
@@ -159,6 +163,7 @@ export async function generateFacingReply(options: {
     const context = meeting.mapContext;
     mapContextPrompt = [
       "这次互动从地图实际抵达地点衔接。尊重当前位置与同行名单，根据角色各自的人设自然互动。",
+      facingArrivalInstruction(context.arrival,Object.fromEntries(loadCharacters().map(item=>[item.id,item.name]))),
       !cast.length ? "用户独自抵达，目前没有已知角色在场。先描写可见环境和可互动事物，dialogue可以为空，不强行让角色出现。" : "",
       context.secret ? "用户悄悄到达，在场角色初始尚未察觉。先从用户视角观察角色正在做的事；后续用户行动真正引起注意时再让对方反应。" : "",
       JSON.stringify({ 地点: scene, 地点介绍: context.description, 在场角色: cast.map(item => ({ 姓名: item.name })) }),
@@ -180,7 +185,9 @@ export async function generateFacingReply(options: {
   const hasLatest = latest && lastUser >= 0 && typeof messages[lastUser].content === "string" && messages[lastUser].content.includes(latest.content);
   const mode: LLMMessage = {
     role: "system",
-    content: [FACING_MODE_PROMPT, facingReplyFormatInstruction(settings.replyFormat, settings.dialogueNotation), mapContextPrompt,
+    content: [FACING_MODE_PROMPT,
+      "历史中每条消息的在场角色名单是当时的知情边界；未在场角色不默认听过或亲历此前的对话，除非后来明确转述。",
+      meeting.castEvents?.length && `【中途加入记录】${JSON.stringify(meeting.castEvents)}。新成员从对应加入消息开始在场，不追溯改写旧对话，也不把后来加入的人当作最初的同行者。历史加入记录只对应当时的场景；当前在场名单为准，已离开的角色不继续在场或发言。`, facingReplyFormatInstruction(settings.replyFormat, settings.dialogueNotation), mapContextPrompt,
       resolvePromptTimeAware() && `当前现实时间：${formatPromptTimestamp(new Date().toISOString())}。结合消息时间理解间隔，不把历史中的时间当成现在。`,
       settings.extraPrompt?.trim() && `【用户的生成要求】\n${settings.extraPrompt.trim()}`,
       options.illustrate && settings.autoVisual?.extraPrompt?.trim() && `【本轮CG画面额外要求】${settings.autoVisual.extraPrompt.trim()}`,

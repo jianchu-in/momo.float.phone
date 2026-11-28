@@ -29,14 +29,15 @@ import { installBuiltinMapTemplate, type MapTemplateTarget } from "@/lib/facing-
 import { MapTravel, type MapTravelAnimation } from "./facing-map-travel";
 import { deleteFacingAtlas, renameFacingAtlas } from "@/lib/facing-map-storage";
 import { mapCharacterResidence, mapResidentIds, saveMapResidents } from "@/lib/facing-map-storage";
+import { facingParticipantIds } from "@/lib/facing-storage";
 import { loadMapPlans, saveMapPlan, formatMapPlan, mapPlanPlaces, validateMapPlan } from "@/lib/facing-map-plans";
 
 registerDynamicPrefix("ai_phone_facing_map_draft_v1:");
 type Sheet = "manage" | "transfer" | "templates" | "create" | "sources" | "generate" | "edit" | "animation" | "history" | "travel" | "invitations" | "tiles" | "scene-match" | "place-life" | null;
 type MapCandidate = { blob: Blob; url: string; plan: MapPlan; extension?: MapExtension; replacement?: MapTile; uploaded?: boolean };
-export function FacingMapApp({ character, characters, currentMeeting, onBack, onSettings, onArrive, onLocation }: {
+export function FacingMapApp({ character, characters, currentMeeting, initialParticipantIds, onBack, onSettings, onArrive, onLocation }: {
   onLocation?: (location:{atlasId:string;placeId:string}|undefined)=>void;
-  character: Character; characters: Character[]; currentMeeting?: FacingMeeting;
+  character: Character; characters: Character[]; currentMeeting?: FacingMeeting; initialParticipantIds?: string[];
   onBack: () => void; onSettings: () => void;
   onArrive: (atlas: FacingAtlas, trip: MapTrip, visitId: string) => Promise<void>;
 }) {
@@ -320,8 +321,10 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
       setSnapshotId(undefined);
     });
   }
+  const travelMembers=characters.filter(item=>members.some(member=>member.id===item.id)||(currentMeeting?facingParticipantIds(currentMeeting):initialParticipantIds??[]).includes(item.id));
   function prepareTrip(targetId?: string) {
-    if (targetId) setCompanions([]);
+    const active=currentMeeting?facingParticipantIds(currentMeeting):initialParticipantIds??[character.id];
+    setCompanions(targetId?[]:active.filter(id=>travelMembers.some(item=>item.id===id)));
     setTargetCharacter(targetId); setSecret(false); setError(""); setSheet("travel");
   }
   function beginTrip(characterIds: string[], placeId = selectedId, invited = false) {
@@ -329,8 +332,7 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     const path = mapJourneyRoute(atlas, userPlaceId ?? "", placeId);
     const paths = path ? [{ segments: path }, ...characterIds.map(id => {
       const member = characters.find(item => item.id === id);
-      const activity = snapshot?.entries.find(item => item.characterId === id);
-      return { character: member, segments: activity ? mapJourneyRoute(atlas, activity.placeId, placeId) ?? path : path };
+      return { character: member, segments: path };
     })] : [];
     setVisitId(facingId()); setProgress(0); setSheet(null);
     if (settings.animation === "route" && path) { setPageId(path[0].pageId); setSelectedId(undefined); }
@@ -599,11 +601,12 @@ export function FacingMapApp({ character, characters, currentMeeting, onBack, on
     </MapSheet>}
     {sheet === "travel" && selected && atlas && <MapSheet title={companions.length ? "确认结伴前往" : "确认前往"} onClose={closeSheet}>
       <p>前往「{mapPlacePath(atlas, selected.id)}」？</p>
-      {currentMeeting?.turns.length ? <p>将保存并暂时结束当前对话，前往这里。</p> : null}
-      {!!selectedActivities.length && <p>最近动向显示，{selectedActivities.map(entry => characters.find(item => item.id === entry.characterId)?.name).join("、")}在这里，可能会注意到你的到来。</p>}
-      <fieldset><legend>同行角色（可多选）</legend>{members.map(item => <label key={item.id} className="fmap-check">
-        <input type="checkbox" checked={companions.includes(item.id)} onChange={() => setCompanions(toggle(companions, item.id))} />{item.name}
+      {currentMeeting?.turns.length ? <p>保留当前对话记录，到达后继续；同行角色可以重新选择。</p> : null}
+      {!!selectedActivities.filter(entry=>!companions.includes(entry.characterId)).length && <p>最近动向显示，{selectedActivities.filter(entry=>!companions.includes(entry.characterId)).map(entry => characters.find(item => item.id === entry.characterId)?.name).join("、")}在这里，可能会注意到你的到来。</p>}
+      <fieldset><legend>同行角色（可多选）</legend>{travelMembers.map(item => <label key={item.id} className="fmap-check">
+        <input type="checkbox" checked={companions.includes(item.id)} onChange={() => setCompanions(current=>toggle(current,item.id))} />{item.name}
       </label>)}</fieldset>
+      {!!companions.length&&<p className="fmap-note">勾选的角色与你一起前往，不视为原本就在目的地。选择“去找他”时则按到访处理。</p>}
       {!companions.length && <label className="fmap-check"><input type="checkbox" checked={secret} onChange={event => setSecret(event.target.checked)} />偷偷前往，初始不让对方发现</label>}
       <button type="button" className="facing-primary" disabled={!!busy} onClick={() => beginTrip(companions)}>{companions.length ? `和${companions.map(id => characters.find(item => item.id === id)?.name).join("、")}直接一起去` : "确认前往"}</button>
       {!!companions.length && <button type="button" className="facing-soft" disabled={!!busy} onClick={() => void invite()}>发送邀请并等待回复 · 文字API</button>}

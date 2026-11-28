@@ -52,9 +52,10 @@ export function sceneForMapPlace(atlas:FacingAtlas,placeId:string,characterId:st
   // An explicit detail wins; missing/deleted detail media inherits the building default.
   const bound=resolve(place?.sceneBinding) ?? (root?.id!==place?.id ? resolve(root?.sceneBinding) : undefined);
   if (bound) return bound;
-  if(place?.sceneBinding?.source==="default") return facingScenePosition(groups.find(group=>group.backdrop?.id===settings?.sceneId)||groups[0]);
+  if(place?.sceneBinding?.source==="default" && root?.homeCharacterIds?.includes(characterId)) return facingScenePosition(groups.find(group=>group.backdrop?.id===settings?.sceneId)||groups[0]);
   const homeOwner=root?.homeCharacterIds?.[0];
   const scene=place?(homeOwner?matchPlaceScene(place,loadFacingAssets(homeOwner)):undefined)??matchPlaceScene(place,usable):undefined;
   if(scene)return facingScenePosition(groupFacingScenes([{...scene,portraitIds:scene.characterId===characterId?scene.portraitIds:undefined},...portraits],settings?.portraitId)[0]);
-  return facingScenePosition(groups[0]);
+  if(root?.homeCharacterIds?.length)return facingScenePosition(groups[0]);
+  return {sceneName:place?.name??"当前地点",portraitId:portraits.find(asset=>asset.id===settings?.portraitId)?.id??portraits.find(asset=>asset.use==="idle")?.id,sceneId:undefined};
 }

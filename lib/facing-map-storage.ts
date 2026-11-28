@@ -1,5 +1,7 @@
 import { kvGet, kvKeysWithPrefix, kvUpdatePersisted, kvUpdatePersistedEntries, kvDeletePersisted, registerDynamicPrefix, registerKvMigration } from "./kv-db";
-import { facingId, FACING_MEETING_PREFIX, type FacingMeeting, type FacingScenePosition } from "./facing-storage";
+import { loadCharacters } from "./character-storage";
+import { facingArrival, facingArrivalText } from "./facing-arrival";
+import { facingParticipantIds, facingId, FACING_MEETING_PREFIX, type FacingMeeting, type FacingScenePosition } from "./facing-storage";
 import { deleteThemeAsset, saveThemeAssetFromBlob } from "./theme-storage";
 
 const MAP_PREFIX = "ai_phone_facing_map_v1:";
@@ -160,7 +162,7 @@ export function placeOnMapPage(atlas: FacingAtlas, placeId: string, pageId: stri
 export function mapActivitySnapshot(atlas: FacingAtlas, snapshotId?: string): MapSnapshot | undefined {
   const saved = atlas.snapshots.find(item => item.id === snapshotId) ?? atlas.snapshots.at(-1);
   if (snapshotId || (!saved && !atlas.visits.length)) return saved;
-  const entries = atlas.visits.filter(visit => visit.at > (saved?.createdAt ?? "")).reduce((previous, visit) => [
+  const entries = atlas.visits.filter(visit => visit.at >= (saved?.createdAt ?? "")).reduce((previous, visit) => [
     ...previous.filter(entry => !visit.characterIds.includes(entry.characterId)),
     ...visit.characterIds.map(characterId => ({ characterId, placeId: visit.placeId, activity: "和用户一起抵达这里", time: visit.at })),
   ], saved?.entries ?? []);
@@ -282,30 +284,46 @@ export function routePoint(points: MapPoint[], progress: number): MapPoint {
 }
 
 export async function saveMapArrival(atlasId: string, trip: MapTrip, visitId: string, characterId: string,
-  identityId: string | null, participants: string[], scene: FacingScenePosition, previousMeeting?: FacingMeeting) {
+  identityId: string | null, participants: string[], scene: FacingScenePosition, previousMeeting?: FacingMeeting, seed?: FacingMeeting) {
   const now = new Date().toISOString();
   const atlas = loadFacingAtlas(atlasId);
   const target = atlas && mapPlace(atlas, trip.placeId);
   if (!atlas || !target) throw new Error("目的地已移除，请重新选择。");
-  const destination = mapPlacePath(atlas, trip.placeId);
-  let result: FacingMeeting = {
-    id: visitId, characterId, identityId, type: "main", title: destination, scene,
-    createdAt: now, updatedAt: now, completedRounds: 0,
-    mapContext: { atlasId, placeId: trip.placeId, participantIds: participants, secret: trip.secret, description: target.place.description },
-    turns: [{ ...scene, id: facingId(), role: "user", kind: "text", at: now,
-      text: trip.secret ? `（悄悄来到${destination}，暂时在一旁观察。）` : `（来到${destination}。）` }],
-  };
+  const destination = mapPlacePath(atlas, trip.placeId), names=Object.fromEntries(loadCharacters().map(item=>[item.id,item.name]));
+  const roster=[...new Set([...trip.characterIds,...participants])];
+  const arrival=facingArrival(visitId,trip.characterIds,roster), secret=arrival.companionIds.length?false:trip.secret;
+  const meetingId=seed?.id??visitId;
+  let result!:FacingMeeting;
   const updates: Record<string, (raw: string | null) => string> = {
-    [FACING_MEETING_PREFIX + visitId]: raw => { result = parse(raw, result); return JSON.stringify(result); },
+    [FACING_MEETING_PREFIX + meetingId]: raw => {
+      const current=parse<FacingMeeting|undefined>(raw,seed);
+      if(raw&&!current)throw new Error("当前见面记录已移除。");
+      if(current?.deletedAt)throw new Error("当前见面记录已移除。");
+      if(raw&&(!seed||current?.mapContext?.arrival?.visitId===visitId)){
+        if(current?.mapContext?.atlasId!==atlasId||current.mapContext.placeId!==trip.placeId)throw new Error("到达记录与当前目的地不一致，请重新前往。");
+        result=current!;return JSON.stringify(result);
+      }
+      const priorRoster=current?facingParticipantIds(current):[];
+      result={...current,id:meetingId,characterId,identityId,type:current?.type??"main",title:current?.title||destination,scene,
+        participantIds:roster,groupId:current&&[...priorRoster].sort().join("|")===[...roster].sort().join("|")?current.groupId:undefined,
+        participantHistoryIds:[...new Set([...(current?.participantHistoryIds??[]),...priorRoster,...roster])],
+        createdAt:current?.createdAt??now,updatedAt:now,completedRounds:current?.completedRounds??0,
+        sceneRevision:(current?.sceneRevision??0)+1,visual:undefined,
+        mapContext:{atlasId,placeId:trip.placeId,participantIds:roster,secret,description:target.place.description,sceneName:scene.sceneName,arrival},
+        turns:[...(current?.turns??[]).map(turn=>turn.participantIds?turn:{...turn,participantIds:priorRoster}),
+          {...scene,id:`${visitId}:arrival`,role:"user",kind:"text",at:now,participantIds:roster,text:facingArrivalText(destination,arrival,names,secret)}],
+      };
+      return JSON.stringify(result);
+    },
     [MAP_PREFIX + atlasId]: raw => {
       const current = parse<FacingAtlas | null>(raw, null);
       if (!current || !mapPlace(current, trip.placeId)) throw new Error("目的地已移除，请重新选择。");
       if (current.visits.some(visit => visit.id === visitId)) return JSON.stringify(current);
       return JSON.stringify({ ...current, updatedAt: now, userPlaces: { ...current.userPlaces, [identityId ?? "default"]: trip.placeId },
-        visits: [...current.visits, { id: visitId, identityId, placeId: trip.placeId, characterIds: trip.characterIds, secret: trip.secret, at: now, meetingId: visitId }] });
+        visits: [...current.visits, { id: visitId, identityId, placeId: trip.placeId, characterIds: arrival.companionIds, secret, at: now, meetingId }] });
     },
   };
-  if (previousMeeting && previousMeeting.id !== visitId) updates[FACING_MEETING_PREFIX + previousMeeting.id] = raw =>
+  if (previousMeeting && previousMeeting.id !== meetingId) updates[FACING_MEETING_PREFIX + previousMeeting.id] = raw =>
     JSON.stringify({ ...parse(raw, previousMeeting), pausedAt: now });
   await kvUpdatePersistedEntries(updates);
   return result;

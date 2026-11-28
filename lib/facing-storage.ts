@@ -51,6 +51,9 @@ export type FacingAsset = {
 
 export type FacingScenePosition = Pick<FacingTurn, "sceneName" | "portraitId" | "sceneId">;
 export type FacingSceneGroup = {
+  choiceId?: string;
+  label?: string;
+  mapLocation?: { atlasId: string; placeId: string };
   name: string;
   locationName?: string;
   ownerId?: string;
@@ -324,6 +327,7 @@ export function facingTurnText(turn: FacingTurn): string {
 
 export type FacingMeeting = {
   groupId?: string;
+  castEvents?: { kind: "join"; characterIds: string[]; at: string; turnId: string; sceneName: string }[];
   participantHistoryIds?:string[];
   id: string;
   type: "main" | "branch" | "independent";
@@ -341,7 +345,7 @@ export type FacingMeeting = {
   pausedAt?: string;
   deletedAt?: string;
   mergedFrom?: string[];
-  mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string; sceneName?: string };
+  mapContext?: { atlasId: string; placeId: string; participantIds: string[]; secret: boolean; description: string; sceneName?: string; arrival?: import("./facing-arrival").FacingArrival };
   lastCg?: FacingMeeting["visual"];
   visual?: { assetId: string; activityId: string; sceneName: string; expiresAt?: number; replacement?: boolean; round?: number; shownAtRound?: number; manual?: boolean; hidden?: boolean; displayStarted?: boolean; characterId?: string };
 };
@@ -569,6 +573,7 @@ export function createFacingMeeting(
   return {
     id: facingId(), characterId, identityId, type, createdAt: now, updatedAt: now,
     groupId: parent?.groupId,
+    castEvents: parent?.castEvents?.map(event => ({...event,characterIds:[...event.characterIds]})),
     participantIds: parent ? facingParticipantIds(parent) : [characterId],
     parentId: parent?.id, title: parent ? `分线 · ${parent.title}` : "", turns: parent?.turns.slice() ?? [], completedRounds: 0,
   };
@@ -695,5 +700,41 @@ export async function replaceFacingAssetMedia(asset: FacingAsset, blob: Blob, me
     });
   } catch(error) { await deleteThemeAsset(mediaId).catch(()=>{}); throw error; }
   // Keep media still used by another asset or historical backup reference intact.
+  return saved;
+}
+
+
+/** Add people to this meeting atomically; never edit the original saved group's roster. */
+export async function addFacingParticipants(meetingId: string, characterIds: string[]): Promise<FacingMeeting> {
+  const {loadCharacters}=await import("./character-storage");
+  const characters=loadCharacters(), requested=[...new Set(characterIds)];
+  if(!requested.length || requested.some(id=>!characters.some(item=>item.id===id)))throw new Error("请选择仍在角色库中的角色。");
+  let saved!:FacingMeeting;
+  let roster:string[]=[];
+  await kvUpdatePersistedEntries({
+    [FACING_MEETING_PREFIX+meetingId]:raw=>{
+      const current=readJson<FacingMeeting|null>(raw,null);
+      if(!current||current.deletedAt)throw new Error("当前见面记录已移除。");
+      const previous=facingParticipantIds(current),added=requested.filter(id=>!previous.includes(id));
+      roster=[...previous,...added];
+      if(!added.length){saved=current;return JSON.stringify(current);}
+      const at=new Date().toISOString(),turnId=facingId(),position=facingMeetingPosition(current);
+      const names=added.map(id=>characters.find(item=>item.id===id)!.name).join("、");
+      const group=loadFacingSettings().groups?.find(item=>[...item.participantIds].sort().join("|")===[...roster].sort().join("|"));
+      saved={...current,participantIds:roster,groupId:group?.id,
+        participantHistoryIds:[...new Set([...(current.participantHistoryIds??[]),...previous,...roster])],
+        turns:[...current.turns.map(turn=>turn.participantIds?turn:{...turn,participantIds:previous}),
+          {...position,id:turnId,role:"user",kind:"text",text:`（${names}来到当前地点，加入正在进行的见面。从此刻开始在场，没有亲历加入前的对话。）`,at,participantIds:roster}],
+        castEvents:[...(current.castEvents??[]),{kind:"join",characterIds:added,at,turnId,sceneName:position.sceneName}],
+        mapContext:current.mapContext?{...current.mapContext,participantIds:roster,secret:false}:undefined,
+        sceneRevision:(current.sceneRevision??0)+1,visual:undefined,updatedAt:at};
+      return JSON.stringify(saved);
+    },
+    [FACING_SETTINGS_KEY]:raw=>{
+      const current=readJson<FacingSettings>(raw,{characters:{}});
+      if(!saved)throw new Error("见面成员保存失败。");
+      return JSON.stringify({...current,characterId:saved.characterId,participantIds:roster,groupId:saved.groupId});
+    },
+  });
   return saved;
 }
