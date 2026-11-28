@@ -12,7 +12,22 @@ export function normalizeInterviewOptions(value?: Partial<InterviewOptions>): In
     flow: value?.flow === "all" || value?.flow === "all_user" ? value.flow : "turns",
     sceneInstructions: typeof value?.sceneInstructions === "string" ? value.sceneInstructions.slice(0, 6000) : "",
     discussion: value?.discussion === true, questionAsHost: value?.questionAsHost !== false,
+    guestGroups: Object.fromEntries(Object.entries(value?.guestGroups ?? {}).filter(([, group]) => Number.isSafeInteger(group) && group >= 1)),
+    audience: value?.audience && { enabled: value.audience.enabled === true,
+      apiConfigId: typeof value.audience.apiConfigId === "string" ? value.audience.apiConfigId : undefined,
+      prompt: typeof value.audience.prompt === "string" ? value.audience.prompt.slice(0, 3000) : undefined },
   };
+}
+
+export function interviewGuestGroups<T extends { id: string }>(guests: T[], groups?: Record<string, number>): T[][] {
+  const byGroup = new Map<number, T[]>();
+  for (const guest of guests) {
+    const key = groups?.[guest.id] ?? 1;
+    const group = byGroup.get(key);
+    if (group) group.push(guest);
+    else byGroup.set(key, [guest]);
+  }
+  return [...byGroup.entries()].sort(([left], [right]) => left - right).map(([, group]) => group);
 }
 
 export function interviewParticipationPrompt(input?: Partial<InterviewOptions>, userName = "共同受访者", userAsGuest?: boolean): string {

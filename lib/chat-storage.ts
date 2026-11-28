@@ -50,6 +50,7 @@ export type ChatSession = {
     isPinned: boolean;
     /** 允许该私聊角色在强烈希望见面时自主创建并进入线下剧情分线。默认关闭。 */
     allowForcedOfflineStory?: boolean;
+    storyAutomation?: Partial<import("./chat-automation").StoryAutomation>;
     backgroundImage?: string; // Add support for custom background
     /** 仅当前私聊里展示的用户头像；不修改用户身份、主页或其他会话 */
     userAvatarOverride?: string;
@@ -65,7 +66,10 @@ export type ChatSession = {
     notifyCharacterOnAliasChange?: boolean;
     autoReplied?: boolean; // Whether the initial greeting auto-reply has been triggered
     alias?: string;
+    reversePhoneRemarkOperations?: string[];
     videoBackground?: string;
+    /** 视频通话的可见动作描述，按会话保存。未设置时关闭。 */
+    videoCallActions?: boolean;
     voiceBackground?: string;
     isBlacklisted?: boolean;
     customCSS?: string;
@@ -88,6 +92,12 @@ export type ChatSession = {
     chineseThinkingPromptLength?: ChineseThinkingPromptLength;
     /** 流式生成（线下）：开启后该会话的线下 AI 回复边生成边显示（默认关，保持原整段请求行为） */
     streamOffline?: boolean;
+    /** 聊天界面风格：classic=经典普通，imessage=苹果拟态 */
+    chatUiStyle?: "classic" | "imessage";
+    /** 美化预设：classic=经典实色，glass=拟态半透玻璃 */
+    beautyPreset?: "classic" | "glass";
+    /** 兼容旧版开关 */
+    glassBubblesEnabled?: boolean;
     /**
      * 线下摘要自动补提：模型没写 <summary> 时再发一次小请求让它补。默认开；
      * 关掉就只调一次 API，那一轮没摘要（不进短期记忆的事件流）。按次计费的接口想省一半调用时关它。
@@ -132,6 +142,7 @@ export type ChatMessage = {
     toolExecutionId?: string; // Links visible tool attachments to their persisted tool result
     editableResponseText?: string; // Processed text shown in the reply editor
     isRetracted?: boolean;
+    listeningContext?: import("./music-listening").MusicListeningContext;
     mediaType?: "image" | "audio" | "video"
         | "red_packet" | "transfer" | "location"
         | "poke" | "sticker" | "quote" | "dice"
@@ -139,8 +150,9 @@ export type ChatMessage = {
         | "meeting_invite"
         | "accept_red_packet" | "decline_red_packet" | "accept_transfer" | "decline_transfer"
         | "payment_request" | "accept_payment_request" | "decline_payment_request"
-        | "music" | "music_share" | "music_notify" | "music_not_found"
+        | "listening_invite" | "music" | "music_share" | "music_notify" | "music_not_found"
         | "xiaohongshu_note_share"
+        | "moment_share"
         | "gift"
         | "contact_card"
         | "app_card"
@@ -156,11 +168,15 @@ export type ChatMessage = {
     origin?: "chat" | "reading_discuss" | "custom_app" | "custom_app_background" | "story_floating_phone";
     mediaUrl?: string;
     mediaData?: {
+        reversePhoneOperationId?: string;
+        characterPhoneOperationId?: string;
+        reversePhoneActorId?: string;
         amount?: number;          // 红包/转账金额
         count?: number;           // 红包个数
         label?: string;           // 红包留言/转账备注/照片描述/位置名/表情名
         status?: "pending" | "opened" | "received" | "declined" | "paid" | "canceled";  // 红包/转账/代付状态
         quoteMessageId?: string;  // 引用消息 ID
+        momentsCoverAttempted?: boolean;
         quotePreview?: string;    // 引用消息预览文本
         quoteRole?: ChatMessageRole; // 引用消息的 role
         stickerUrl?: string;      // 表情包图片路径
@@ -221,7 +237,14 @@ export type ChatMessage = {
         blacklistEvent?: "block" | "unblock"; // 仿真拉黑系统事件类型（私聊：用户拉黑/解除拉黑角色）
         blacklistCharacterName?: string; // 拉黑事件发生时的角色名（用于事件详情与上下文）
         blacklistUserName?: string;      // 拉黑事件发生时的用户名（用于事件详情与上下文）
+        musicCoverUrl?: string;
         musicTitle?: string;      // 音乐标题
+        listeningInvite?: { roomId: string; initiator: "user" | "character"; response?: "accepted" | "declined"; title?: string; artist?: string; coverUrl?: string };
+        listeningContext?: import("./music-listening").MusicListeningContext;
+        lyricMode?: "share" | "quote";
+        tapback?: string;
+        tapbackBy?: "user" | "assistant";
+        tapbacks?: import("./chat-tapback").GroupTapback[];
         musicArtist?: string;     // 音乐歌手
         xiaohongshuAuthor?: string;       // 小红书分享作者
         xiaohongshuTitle?: string;        // 小红书分享标题
@@ -232,6 +255,7 @@ export type ChatMessage = {
         xiaohongshuImageAssetId?: string;
         xiaohongshuCoverIcon?: string;
         xiaohongshuTone?: string;
+        momentShare?: import("./chat-share").MomentShareSnapshot;
         callDuration?: string;    // 通话时长（如 05:23）
         voiceDuration?: number;   // 语音条时长（秒）
         synthesizedFromText?: string; // 语音条当前音频对应的合成文本
@@ -368,6 +392,8 @@ export type ChatAppSettings = {
     meetingInviteCard?: MeetingInviteCardConfig;
     /** 私聊默认传入的最近图片数量；单独会话设置优先 */
     globalVisionImagePromptLimit?: number;
+    globalChineseThinkingPromptEnabled?: boolean;
+    globalChineseThinkingPromptLength?: ChineseThinkingPromptLength;
     timeAware?: boolean; // When true, inject timestamps into prompt so AI knows message timing (default: true)
     promptViewerEnabled?: boolean; // When true, show the floating prompt viewer entry
     quickActionEnabled?: boolean; // When true, show the floating quick action entry
@@ -377,9 +403,16 @@ export type ChatAppSettings = {
     maxToolRounds?: number; // 单条消息的工具循环轮数上限（默认 5；每轮=一次模型请求，轮内调用条数不限）
     /** 全局聊天提示音配置（新消息/发送消息/来电/致电/挂断），在“全局聊天信息”里设置 */
     globalChatSounds?: ChatSoundsConfig;
+    roleplayDiscussionEnabled?: boolean;
+    combinedFloatingTools?: boolean;
     floatingDockEnabled?: boolean; // 悬浮球贴边半隐藏收拢模式（默认关）
     /** 用剧情 APP 取代聊天输入栏原“线下模式”入口。 */
     storyAsOfflineMode?: boolean;
+    storyAutomation?: Partial<import("./chat-automation").StoryAutomation>;
+    /** 全局聊天界面风格：classic=经典普通，imessage=苹果拟态 */
+    globalChatUiStyle?: "classic" | "imessage";
+    /** 全局美化预设：classic=经典实色，glass=拟态半透玻璃 */
+    globalBeautyPreset?: "classic" | "glass";
 };
 
 // ── 聊天提示音配置 ────────────────────────────────────────────────
@@ -575,7 +608,9 @@ const MEDIA_PREVIEW_MAP: Record<string, string> = {
     payment_request: "[代付请求]",
     music: "[音乐]",
     music_share: "[音乐分享]",
+    listening_invite: "[一起听邀请]",
     xiaohongshu_note_share: "[小红书分享]",
+    moment_share: "[朋友圈分享]",
     app_card: "[应用卡片]",
     tool_notice: "[执行动作]",
     system_instruction: "[系统指令]",

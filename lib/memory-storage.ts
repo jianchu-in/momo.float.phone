@@ -5,6 +5,7 @@ import type { MemoryEntry, MemoryConfig } from "./memory-types";
 import { DEFAULT_MEMORY_CONFIG } from "./memory-types";
 import { kvGet, kvSet, registerKvMigration, registerDynamicPrefix } from "./kv-db";
 import { openIndexedDbAtLeast } from "./idb-open";
+import { deletedSourceMemoryIds, rememberDeletedDerivedMemories } from "./memory-source-deletions";
 
 // ── Long-term memory DB (unchanged from v1) ──
 
@@ -54,10 +55,15 @@ function runRequest<T>(req: IDBRequest<T>): Promise<T> {
 
 // ── Long-term Entry CRUD ──
 
+export class DeletedMemorySourceError extends Error {
+    constructor() { super("记忆来源已删除，已取消保存旧摘要。"); this.name = "DeletedMemorySourceError"; }
+}
+
 export async function saveMemoryEntry(entry: MemoryEntry): Promise<void> {
     const db = await openDb();
     if (!db) return;
     try {
+        if (deletedSourceMemoryIds(entry.characterId, [entry]).has(entry.id)) throw new DeletedMemorySourceError();
         const tx = db.transaction(STORE_NAME, "readwrite");
         tx.objectStore(STORE_NAME).put(entry);
         await new Promise<void>((res, rej) => {
@@ -85,7 +91,16 @@ export async function loadMemoryEntries(characterId: string): Promise<MemoryEntr
             entries = allEntries.filter(entry => entry.characterId === characterId);
         }
         entries.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-        return entries;
+        const removed = deletedSourceMemoryIds(characterId, entries);
+        const discarded = entries.filter(entry => removed.has(entry.id));
+        if (discarded.length) {
+            // The KV deletion ledger takes effect immediately, even if physical cleanup must retry.
+            try {
+                await rememberDeletedDerivedMemories(characterId, discarded.map(entry => entry.id));
+                await deleteMemoryEntries(discarded.map(entry => entry.id));
+            } catch (error) { console.warn("[Memory] Deferred deleted-source cleanup:", error); }
+        }
+        return entries.filter(entry => !removed.has(entry.id));
     } finally {
         db.close();
     }

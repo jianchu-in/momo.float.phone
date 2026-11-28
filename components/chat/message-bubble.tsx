@@ -9,7 +9,10 @@ import { resolveContactCard } from "@/lib/contact-card";
 import { loadCharacters } from "@/lib/character-storage";
 import { CHAT_OPEN_SESSION_EVENT, dispatchOpenAddContact } from "@/lib/chat-notification-events";
 import { ContactCardGenerateFlow } from "@/components/chat/contact-card-generate-flow";
+import { ListeningInviteCard } from "./listening-invite-card";
+import { LyricShareCard } from "@/components/music/lyric-share-card";
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
+import { GeneratedImagePromptDialog } from "@/components/chat/generated-image-prompt-dialog";
 import { findStickerByName } from "@/lib/sticker-data";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import { isInvisibleOrWhitespaceOnly } from "@/lib/rich-message-parser";
@@ -21,7 +24,7 @@ import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
-import { Blocks, Maximize2, ReceiptText } from "lucide-react";
+import { Aperture, Blocks, MapPin, Maximize2, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage, hasUserReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
@@ -32,8 +35,10 @@ import { toCustomAppIconId } from "@/lib/custom-app-types";
 import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { CHAT_PLUGIN_SLOTS_CHANGED_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
+import { getQuotePreview, normalizeQuotePreviewText } from "@/lib/chat-quote-preview";
 
 interface MessageBubbleProps {
+    quoteSource?: ChatMessage;
     msg: ChatMessage;
     onUpdate?: (updated: ChatMessage) => void;
     charName?: string;
@@ -48,6 +53,7 @@ interface MessageBubbleProps {
     displayContent?: string;
     defaultTranslationExpanded?: boolean;
     onFavoriteMedia?: (msg: ChatMessage) => void | Promise<void>;
+    isIMessage?: boolean;
 }
 
 /** 聊天插件自定义消息气泡：把裸 DOM 容器交给注册了该 kind 的插件渲染 */
@@ -91,8 +97,10 @@ function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
  * Renders a message bubble based on its mediaType.
  * Falls back to ReactMarkdown for plain text messages.
  */
-export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false, onFavoriteMedia }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, onMeetingInviteAction, displayContent, defaultTranslationExpanded = false, onFavoriteMedia, quoteSource, isIMessage }: MessageBubbleProps) {
     switch (msg.mediaType) {
+        case "listening_invite":
+            return <ListeningInviteCard msg={msg} />;
         case "red_packet":
             return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} onShowDetail={onShowDetail} />;
         case "transfer":
@@ -116,13 +124,15 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         case "dice":
             return <DiceBubble msg={msg} />;
         case "quote":
-            return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} />;
+            return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} onActionSelect={onActionSelect} quoteSource={quoteSource} isIMessage={isIMessage} />;
         case "music_share":
             return <MusicShareBubble msg={msg} onPlay={onMusicPlay} />;
         case "media_file":
             return <MediaFileBubble msg={msg} onUpdate={onUpdate} characterId={characterId} />;
         case "xiaohongshu_note_share":
             return <XiaohongshuShareBubble msg={msg} />;
+        case "moment_share":
+            return <MomentShareBubble msg={msg} />;
         case "audio":
             return <VoiceMessageBubble msg={msg} characterId={characterId} onUpdate={onUpdate} defaultTranslationExpanded={defaultTranslationExpanded} />;
         case "meeting_invite":
@@ -160,6 +170,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.mediaData?.imageGenerationStatus !== next.msg.mediaData?.imageGenerationStatus) return false;
         if (prev.msg.mediaData?.imageGenerationError !== next.msg.mediaData?.imageGenerationError) return false;
         if (prev.msg.mediaData?.meetingInviteStatus !== next.msg.mediaData?.meetingInviteStatus) return false;
+        if (prev.msg.mediaData?.momentShare !== next.msg.mediaData?.momentShare) return false;
         if (prev.msg.mediaUrl !== next.msg.mediaUrl) return false;
     }
     if (prev.charName !== next.charName) return false;
@@ -168,6 +179,10 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
     if (prev.characterId !== next.characterId) return false;
     if (prev.displayContent !== next.displayContent) return false;
     if (prev.defaultTranslationExpanded !== next.defaultTranslationExpanded) return false;
+    if (prev.isIMessage !== next.isIMessage) return false;
+    if (prev.quoteSource !== next.quoteSource) return false;
+    if (prev.msg.listeningContext !== next.msg.listeningContext) return false;
+    if (prev.msg.mediaData?.listeningInvite !== next.msg.mediaData?.listeningInvite) return false;
     return true;
 });
 
@@ -713,6 +728,95 @@ function TextBubble({ content, onActionSelect, defaultTranslationExpanded = fals
     return <BilingualTextBlock text={content} onActionSelect={onActionSelect} mode="markdown" defaultExpanded={defaultTranslationExpanded} />;
 }
 
+function QuoteBubble({
+    msg,
+    displayContent,
+    defaultTranslationExpanded = false,
+    onActionSelect,
+    quoteSource,
+    isIMessage,
+}: {
+    msg: ChatMessage;
+    displayContent?: string;
+    defaultTranslationExpanded?: boolean;
+    onActionSelect?: (text: string) => void;
+    quoteSource?: ChatMessage;
+    isIMessage?: boolean;
+}) {
+    const rawPreview = quoteSource
+        ? getQuotePreview(quoteSource)
+        : (msg.mediaData?.quotePreview ? normalizeQuotePreviewText(msg.mediaData.quotePreview) : "");
+    const previewText = rawPreview || "消息";
+    const quoteMessageId = msg.mediaData?.quoteMessageId || quoteSource?.id;
+    const role = msg.role === "user" ? "user" : "assistant";
+
+    const handleJumpToSource = (e: React.SyntheticEvent<HTMLElement>) => {
+        e.stopPropagation();
+        if (!quoteMessageId) return;
+        const room = e.currentTarget.closest(".chat-room-wrapper");
+        const target = Array.from(room?.querySelectorAll<HTMLElement>("[id]") || []).find(node => node.id === `message-${quoteMessageId}`);
+        if (target) {
+            const scroll = target.closest<HTMLElement>(".chat-scroll-anchored");
+            if (scroll) {
+                const bounds = scroll.getBoundingClientRect(), box = target.getBoundingClientRect();
+                const scale = bounds.height ? scroll.clientHeight / bounds.height : 1;
+                scroll.scrollTo({top: scroll.scrollTop + (box.top - bounds.top + box.height / 2) * scale - scroll.clientHeight / 2, behavior: "smooth"});
+            }
+            target.setAttribute("data-highlight", "");
+            setTimeout(() => {
+                target.removeAttribute("data-highlight");
+            }, 2000);
+        }
+    };
+
+    if (isIMessage) {
+        return (
+            <div className={`chat-quote-message chat-quote-message-${role}`}>
+                <div className="chat-quote-connector" aria-hidden="true" />
+                <div
+                    className="chat-quote-preview cursor-pointer select-none"
+                    onClick={handleJumpToSource}
+                    onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); handleJumpToSource(event); } }}
+                    role="button"
+                    tabIndex={0}
+                    title="点击定位到原消息"
+                >
+                    {previewText}
+                </div>
+                <div className="chat-quote-reply">
+                    <span className="imessage-bubble-surface" aria-hidden="true" />
+                    <TextBubble
+                        content={displayContent ?? msg.content}
+                        onActionSelect={onActionSelect}
+                        defaultTranslationExpanded={defaultTranslationExpanded}
+                    />
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="chat-quote-classic flex flex-col gap-1.5 min-w-0">
+            <div
+                className="chat-quote-classic-preview cursor-pointer select-none"
+                onClick={handleJumpToSource}
+                role="button"
+                tabIndex={0}
+                title="点击定位到原消息"
+            >
+                {previewText}
+            </div>
+            <div className="chat-quote-classic-body">
+                <TextBubble
+                    content={displayContent ?? msg.content}
+                    onActionSelect={onActionSelect}
+                    defaultTranslationExpanded={defaultTranslationExpanded}
+                />
+            </div>
+        </div>
+    );
+}
+
 // ── Red Packet ─────────────────────────────
 
 function RedPacketBubble({ msg, charName, userName, groupSize, onShowDetail }: {
@@ -862,6 +966,10 @@ function AppCardBubble({ msg, characterId, characterName }: { msg: ChatMessage; 
     } as React.CSSProperties;
     const openApp = () => {
         if (cardOpenDisabled) return;
+        if (d?.appId === "reverse-phone") {
+            window.dispatchEvent(new CustomEvent("reverse-phone-open", { detail: { sessionId: msg.sessionId, resumeId: d.appSceneId, replay: d.appName === "查岗记录" } }));
+            return;
+        }
         if (!d?.appId || typeof window === "undefined") return;
         window.dispatchEvent(new CustomEvent("open-app", {
             detail: {
@@ -1237,102 +1345,6 @@ function GiftInfoCell({ label, value, strong = false }: { label: string; value: 
 
 // ── Image (placeholder) ─────────────────────────────
 
-function GeneratedImagePromptDialog({
-    value,
-    onChange,
-    onCancel,
-    onConfirm,
-    busy,
-    error,
-    useReferenceImage,
-    onUseReferenceImageChange,
-    hasReferenceImage,
-    useUserReferenceImage,
-    onUseUserReferenceImageChange,
-    hasUserReference,
-}: {
-    value: string;
-    onChange: (value: string) => void;
-    onCancel: () => void;
-    onConfirm: () => void;
-    busy: boolean;
-    error?: string;
-    useReferenceImage: boolean;
-    onUseReferenceImageChange: (useRef: boolean) => void;
-    hasReferenceImage: boolean;
-    useUserReferenceImage: boolean;
-    onUseUserReferenceImageChange: (useRef: boolean) => void;
-    hasUserReference: boolean;
-}) {
-    return (
-        <div
-            className="modal-overlay"
-            data-ui="modal"
-            onPointerDown={e => e.stopPropagation()}
-            onPointerUp={e => e.stopPropagation()}
-            onPointerCancel={e => e.stopPropagation()}
-            onPointerMove={e => e.stopPropagation()}
-            onContextMenu={e => e.stopPropagation()}
-            onClick={e => {
-                e.stopPropagation();
-                onCancel();
-            }}
-        >
-            <div className="modal-dialog chat-generated-image-prompt-dialog" data-ui="modal-dialog" onClick={e => e.stopPropagation()}>
-                <div className="modal-header" data-ui="modal-header">
-                    <h3 className="modal-title">重新生成图片</h3>
-                </div>
-                <div className="modal-body chat-generated-image-prompt-body" data-ui="modal-body">
-                    <textarea
-                        className="ui-textarea chat-generated-image-prompt-textarea"
-                        value={value}
-                        onChange={e => onChange(e.target.value)}
-                        placeholder="输入图片提示词"
-                        disabled={busy}
-                    />
-                    {hasReferenceImage ? (
-                        <label className="chat-generated-image-prompt-check">
-                            <input
-                                type="checkbox"
-                                checked={useReferenceImage}
-                                disabled={busy}
-                            onChange={e => onUseReferenceImageChange(e.target.checked)}
-                            />
-                            <span>使用角色参考图（角色出镜）</span>
-                        </label>
-                    ) : (
-                        <div className="chat-generated-image-prompt-empty-hint">该角色未配置参考图</div>
-                    )}
-                    {hasUserReference ? (
-                        <label className="chat-generated-image-prompt-check">
-                            <input
-                                type="checkbox"
-                                checked={useUserReferenceImage}
-                                disabled={busy}
-                                onChange={e => onUseUserReferenceImageChange(e.target.checked)}
-                            />
-                            <span>允许使用用户参考图（文字模型判断用户是否出镜）</span>
-                        </label>
-                    ) : (
-                        <div className="chat-generated-image-prompt-empty-hint">当前用户身份未配置参考图</div>
-                    )}
-                    {error && <div className="chat-generated-image-retry-error">{error}</div>}
-                </div>
-                <div className="modal-footer" data-ui="modal-footer">
-                    <button className="ui-btn ui-btn-ghost" onClick={onCancel}>取消</button>
-                    <button
-                        className="ui-btn ui-btn-action"
-                        disabled={busy || !value.trim()}
-                        onClick={onConfirm}
-                    >
-                        生成
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 function ImageBubble({
     msg,
     onUpdate,
@@ -1689,23 +1701,6 @@ function StickerBubble({ msg, characterId }: { msg: ChatMessage; characterId?: s
     );
 }
 
-// ── Quote ─────────────────────────────
-
-function QuoteBubble({ msg, displayContent, defaultTranslationExpanded = false }: { msg: ChatMessage; displayContent?: string; defaultTranslationExpanded?: boolean }) {
-    const d = msg.mediaData;
-    return (
-        <div className="chat-quote-message max-w-full">
-            {d?.quotePreview && (
-                <div className="chat-quote-preview bg-black/[0.06] border-l-[3px] border-l-black/15 px-2.5 py-1.5 ts-12 text-[var(--c-icon)] mb-1.5 rounded-r-[6px] truncate max-w-full">
-                    {d.quotePreview}
-                </div>
-            )}
-            {msg.content && <TextBubble content={displayContent ?? msg.content} defaultTranslationExpanded={defaultTranslationExpanded} />}
-        </div>
-    );
-}
-
-
 // ── Media Detail Modal (red packet / transfer) ─────────────────────────────
 
 interface MediaDetailModalProps {
@@ -1954,17 +1949,37 @@ export function MediaImageWithPreview({
 }) {
     const [preview, setPreview] = useState(false);
     const saveName = filename || title;
+    const [resolvedUrl, setResolvedUrl] = useState<string>(isMediaStoreRef(url) ? "" : url);
+
+    useEffect(() => {
+        if (!isMediaStoreRef(url)) {
+            setResolvedUrl(url);
+            return;
+        }
+        let revokeUrl = "";
+        loadMediaObjectUrl(url).then(objUrl => {
+            if (objUrl) { setResolvedUrl(objUrl); revokeUrl = objUrl; }
+        });
+        return () => { if (revokeUrl) URL.revokeObjectURL(revokeUrl); };
+    }, [url]);
+
+    const displayUrl = resolvedUrl || url;
+
     return (
         <>
             <div className="chat-media-file-wrap">
-                <div className="chat-media-file-card chat-media-file-image" onClick={(e) => { e.stopPropagation(); setPreview(true); }}>
+                <div className="chat-media-file-card chat-media-file-image min-h-[140px] min-w-[140px] flex flex-col justify-center items-center overflow-hidden" onClick={(e) => { e.stopPropagation(); setPreview(true); }}>
                     {title && <div className="chat-media-file-title">{title}</div>}
-                    <img src={url} alt={title} style={{ cursor: "pointer" }} onError={onError} />
+                    {displayUrl ? (
+                        <img src={displayUrl} alt={title} className="block max-w-[240px] max-h-[320px] w-auto h-auto object-cover" style={{ cursor: "pointer", minHeight: "100px" }} onError={onError} />
+                    ) : (
+                        <div className="w-[140px] h-[140px] flex items-center justify-center ts-12 text-[var(--c-icon)]">图片加载中...</div>
+                    )}
                 </div>
             </div>
             {preview && (
                 <MediaPreviewOverlay
-                    imageUrl={url}
+                    imageUrl={displayUrl}
                     saveFilename={ensureExtension(saveName, "image")}
                     onFavorite={onFavorite}
                     onRegenerate={onRegenerate ? () => { setPreview(false); onRegenerate(); } : undefined}
@@ -2282,6 +2297,10 @@ function MediaFileBubble({
 function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: string, artist?: string) => void }) {
     const title = msg.mediaData?.musicTitle || "未知歌曲";
     const artist = msg.mediaData?.musicArtist || "";
+    const lyricText = msg.listeningContext?.reference?.text;
+    if (lyricText) {
+        return <LyricShareCard title={title} artist={artist} coverUrl={msg.mediaData?.musicCoverUrl} text={lyricText} onPlay={() => onPlay?.(title, artist || undefined)} />;
+    }
     return (
         <div
             className="chat-music-share-card"
@@ -2304,6 +2323,51 @@ function MusicShareBubble({ msg, onPlay }: { msg: ChatMessage; onPlay?: (title: 
                 <span>音乐</span>
             </div>
         </div>
+    );
+}
+
+function MomentShareBubble({ msg }: { msg: ChatMessage }) {
+    const post = msg.mediaData?.momentShare;
+    const photoRef = msg.mediaUrl;
+    const [localPhoto, setLocalPhoto] = useState<{ ref: string; url: string } | null>(null);
+    const [failedPhoto, setFailedPhoto] = useState<string | undefined>();
+    const needsLookup = Boolean(photoRef?.startsWith("asset://") || (photoRef && isMediaStoreRef(photoRef)));
+    const photo = needsLookup ? (localPhoto?.ref === photoRef ? localPhoto?.url : undefined) : photoRef;
+
+    useEffect(() => {
+        if (!photoRef || !needsLookup) return;
+        let cancelled = false;
+        let objectUrl: string | undefined;
+        const fromMediaStore = isMediaStoreRef(photoRef);
+        const lookup = fromMediaStore
+            ? loadMediaObjectUrl(photoRef)
+            : getChatImageFromIndexedDB(photoRef.slice(8));
+        lookup.then(url => {
+            if (!url) return;
+            if (fromMediaStore && cancelled) URL.revokeObjectURL(url);
+            if (cancelled) return;
+            if (fromMediaStore) objectUrl = url;
+            setLocalPhoto({ ref: photoRef, url });
+        }).catch(() => { /* Fall back to the photo description. */ });
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [needsLookup, photoRef]);
+
+    if (!post) return <TextBubble content={msg.content} />;
+    const date = new Date(post.createdAt);
+    return (
+        <article className="chat-moment-share-card">
+            <header><Aperture size={14} aria-hidden="true" /> 朋友圈分享</header>
+            <strong>{post.authorName}</strong>
+            {post.body && <p>{post.body}</p>}
+            {photo && photo !== failedPhoto
+                ? <MediaImageWithPreview url={photo} title="" filename="朋友圈配图" onError={() => setFailedPhoto(photo)} />
+                : post.photoDescription && <p className="chat-moment-share-photo-description">{post.photoDescription}</p>}
+            {post.location && <small><MapPin size={12} aria-hidden="true" /> {post.location}</small>}
+            {Number.isFinite(date.getTime()) && <time dateTime={post.createdAt}>{date.toLocaleString()}</time>}
+        </article>
     );
 }
 
@@ -2400,6 +2464,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const [synthesizing, setSynthesizing] = useState(false);
     const [synthError, setSynthError] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const objectUrlRef = useRef<string | null>(null);
     const mountedRef = useRef(true);
     useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
     const text = msg.mediaData?.label || "语音消息";
@@ -2409,7 +2474,8 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const needsResynthesis = msg.role !== "user" && synthesizedFromText !== speechText;
     const duration = msg.mediaData?.voiceDuration || Math.max(2, Math.ceil(speechText.length / 4));
 
-    const playSrc = (src: string) => {
+    const playSrc = (src: string, stored = false) => {
+        objectUrlRef.current = stored ? src : null;
         // 必须用 <audio> 元素:iOS 静音拨键会掐掉 Web Audio 的输出(表现为全线
         // 无声),媒体元素不受影响。元素属于宿主页面,锁屏媒体卡片指向站点本身,
         // 点了只会回到 App;播完清 src 让卡片立即撤下。
@@ -2419,6 +2485,8 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
         const finalize = () => {
             if (audioRef.current === audio) audioRef.current = null;
             try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch { /* ignore */ }
+            if (stored) URL.revokeObjectURL(src);
+            if (objectUrlRef.current === src) objectUrlRef.current = null;
             setPlaying(false);
         };
         audio.onended = finalize;
@@ -2428,23 +2496,41 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
 
     // 点击才合成（不再挂载即合成）：已有音频直接播；没有就现场合成一次，
     // 合成结果已在任务内落库，之后任何时候点都是直接播放，不再消耗额度。
-    const handlePlay = () => {
+    const handlePlay = async () => {
         if (synthesizing) return;
         if (playing && audioRef.current) {
             const active = audioRef.current;
             audioRef.current = null;
             try { active.pause(); active.removeAttribute("src"); active.load(); } catch { /* ignore */ }
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = null;
             setPlaying(false);
             return;
         }
-        if (msg.mediaUrl && !needsResynthesis) {
-            playSrc(msg.mediaUrl);
+        if (msg.mediaUrl && (!needsResynthesis || msg.role === "user" || !characterId)) {
+            const stored = isMediaStoreRef(msg.mediaUrl);
+            if (!stored && !msg.mediaUrl.startsWith("asset://")) {
+                playSrc(msg.mediaUrl);
+                return;
+            }
+            setSynthesizing(true);
+            try {
+                const src = stored ? await loadMediaObjectUrl(msg.mediaUrl)
+                    : await getChatImageFromIndexedDB(msg.mediaUrl.slice(8));
+                if (!mountedRef.current) {
+                    if (stored && src) URL.revokeObjectURL(src);
+                    return;
+                }
+                if (src) playSrc(src, stored);
+                else setSynthError("原语音文件已不可用");
+            } catch {
+                if (mountedRef.current) setSynthError("语音读取失败");
+            } finally {
+                if (mountedRef.current) setSynthesizing(false);
+            }
             return;
         }
-        if (msg.role === "user" || !characterId) {
-            if (msg.mediaUrl) playSrc(msg.mediaUrl);
-            return;
-        }
+        if (msg.role === "user" || !characterId) return;
         setSynthesizing(true);
         setSynthError(null);
         synthesizeVoiceForMessage(msg.id, characterId, speechText)
@@ -2463,7 +2549,10 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
             });
     };
 
-    useEffect(() => () => { audioRef.current?.pause(); }, []);
+    useEffect(() => () => {
+        audioRef.current?.pause();
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    }, []);
 
     // Wave bars — slightly irregular heights so the idle state already looks intentional.
     const barCount = Math.min(Math.max(4, Math.round(duration / 2)), 9);

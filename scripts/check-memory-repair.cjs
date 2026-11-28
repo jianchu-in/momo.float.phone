@@ -119,8 +119,11 @@ async function main() {
     "./settings-storage": { loadBindingConfig: () => ({}), resolveBinding: (_config, id, app) => { assert.equal(id, "char"); assert.equal(app, "moments"); return { apiConfigId: "role-api" }; },
       loadApiConfigs: () => [{ id: "role-api" }], resolveUserIdentity: () => ({ name: "简初" }) },
     "./api-helpers": { simpleLLMCall: async (config, messages, options) => { requests.push({ config, messages, options }); return { content: "雪落时也想起你" }; } },
-    "./memory-storage": { loadMemoryEntriesByType: async (id, type) => { assert.equal(id, "char"); return [{ content: type === "core" ? "角色核心记忆" : "角色长期记忆", createdAt: "2025-01-01" }]; } },
-    "./short-term-assembler": { loadNativeTimelineAsync: async () => [], prepareShortTermContext: () => ({ recentBlocks: [{ content: "角色近期记忆" }] }) },
+    "./memory-storage": { loadMemoryConfig: () => ({ coreMemoryTokenBudget: 3000 }), loadMemoryEntriesByType: async (id, type) => {
+      assert.equal(id, "char"); assert.equal(type, "long_term"); return [{ content: "角色长期记忆", createdAt: "2025-01-01" }]; } },
+    "./memory-service": { retrieveCoreMemoriesForPrompt: async (id, config) => {
+      assert.equal(id, "char"); assert.equal(config.coreMemoryTokenBudget, 3000); return [{ content: "角色核心记忆" }]; } },
+    "./short-term-assembler": { loadNativeTimelineAsync: async () => [], prepareShortTermContext: () => ({ unifiedRecentItems: [{ kind: "event", text: "角色近期记忆" }] }) },
     "./image-generation-service": { generateImageFromConfiguredApi: async params => { imageRequests.push(params); return { blob: new Blob(["image"]) }; } },
   };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root, "lib/character-moments-generation.ts"), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,

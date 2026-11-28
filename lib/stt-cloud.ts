@@ -35,11 +35,11 @@ function toCloudSttConfig(config: VoiceApiConfig | undefined | null): CloudSttCo
  * 解析可用的云端识别配置：优先角色绑定的语音配置（须为 OpenAI 兼容且启用 STT），
  * 否则取第一个满足条件的语音配置。没有则返回 null（通话回落到旧输入方式）。
  */
-export function resolveCloudSttConfig(characterId?: string): CloudSttConfig | null {
+export function resolveCloudSttConfig(characterId?: string, appId = "chat"): CloudSttConfig | null {
     const configs = loadVoiceConfigs();
     if (characterId) {
         const bindings = loadBindingConfig();
-        const slot = resolveBinding(bindings, characterId, "chat");
+        const slot = resolveBinding(bindings, characterId, appId);
         const bound = configs.find(c => c.id === slot.voiceConfigId);
         const fromBound = toCloudSttConfig(bound);
         if (fromBound) return fromBound;
@@ -133,7 +133,7 @@ export async function startCallRecording(): Promise<ActiveCallRecording> {
 }
 
 /** 调 OpenAI 兼容 /audio/transcriptions 把录音转文字。 */
-export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig): Promise<string> {
+export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig, signal?: AbortSignal): Promise<string> {
     const type = (blob.type || "").toLowerCase();
     const ext = type.includes("mp4") ? "mp4"
         : type.includes("ogg") ? "ogg"
@@ -144,6 +144,9 @@ export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig): P
     form.set("file", blob, `speech.${ext}`);
 
     const controller = new AbortController();
+    const cancel = () => controller.abort(signal?.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
     const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
     try {
         const res = await fetch(`${config.baseUrl}/audio/transcriptions`, {
@@ -164,11 +167,13 @@ export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig): P
         // response_format=text 风格的中转直接回纯文本
         return (await res.text()).trim();
     } catch (e) {
+        if (signal?.aborted) throw e;
         if (e instanceof DOMException && e.name === "AbortError") {
             throw new Error(`语音识别超时（超过 ${Math.round(TRANSCRIBE_TIMEOUT_MS / 1000)} 秒无响应）`);
         }
         throw e;
     } finally {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
     }
 }

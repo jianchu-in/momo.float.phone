@@ -1,7 +1,7 @@
 // lib/music-service.ts — Unified music search service (local + Netease Cloud Music API)
 
 import { loadAllTracks, type MusicTrack } from "./music-storage";
-import { kvGet, kvSet, kvRemove, registerKvMigration } from "./kv-db";
+import { kvGet, kvSet, kvRemove, kvKeysWithPrefix, registerKvMigration } from "./kv-db";
 import {
     DEFAULT_NETEASE_API_BASE,
     isDefaultNeteaseApiBase,
@@ -18,6 +18,7 @@ export type MusicApiConfig = {
 
 const MUSIC_API_KEY = "ai_phone_music_api_v1";
 const NETEASE_COOKIE_KEY = "ai_phone_netease_cookie_v1";
+const NETEASE_USER_KEY = "ai_phone_netease_user_v1";
 const MUSIC_API_CONFIG_VERSION = 2;
 const NETEASE_REAL_IP = process.env.NEXT_PUBLIC_NETEASE_REAL_IP || "116.25.146.177";
 
@@ -72,6 +73,24 @@ export function clearNeteaseCookie(): void {
     try { kvRemove(NETEASE_COOKIE_KEY); } catch { /* ignore */ }
 }
 
+export type NeteaseUserInfo = { nickname: string; uid?: number };
+
+export function saveNeteaseUser(user: NeteaseUserInfo): void {
+    try { kvSet(NETEASE_USER_KEY, JSON.stringify(user)); } catch { /* ignore */ }
+}
+
+export function loadNeteaseUser(): NeteaseUserInfo | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const raw = kvGet(NETEASE_USER_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
+export function clearNeteaseUser(): void {
+    try { kvRemove(NETEASE_USER_KEY); } catch { /* ignore */ }
+}
+
 /** Append saved cookie and mainland realIP to a Netease API URL as query parameters. */
 function withNeteaseParams(url: string): string {
     const cookie = loadNeteaseCookie();
@@ -79,11 +98,13 @@ function withNeteaseParams(url: string): string {
         const parsed = new URL(url);
         if (!parsed.searchParams.has("realIP")) parsed.searchParams.set("realIP", NETEASE_REAL_IP);
         if (cookie && !parsed.searchParams.has("cookie")) parsed.searchParams.set("cookie", cookie);
+        if (!parsed.searchParams.has("timestamp")) parsed.searchParams.set("timestamp", String(Date.now()));
         return parsed.toString();
     } catch {
         const params: string[] = [];
         if (!/[?&]realIP=/.test(url)) params.push(`realIP=${encodeURIComponent(NETEASE_REAL_IP)}`);
         if (cookie && !/[?&]cookie=/.test(url)) params.push(`cookie=${encodeURIComponent(cookie)}`);
+        if (!/[?&]timestamp=/.test(url)) params.push(`timestamp=${Date.now()}`);
         if (params.length === 0) return url;
         return `${url}${url.includes("?") ? "&" : "?"}${params.join("&")}`;
     }
@@ -226,7 +247,7 @@ export type NeteasePlayInfo = {
 };
 
 /** Get playable URL for a Netease song, with a concrete failure reason. */
-export async function getNeteasePlayInfo(songId: number): Promise<NeteasePlayInfo> {
+export async function getNeteasePlayInfo(songId: number, _songMeta?: { title?: string; artist?: string }): Promise<NeteasePlayInfo> {
     const base = neteaseBase();
     if (!base) return { url: null, trial: false, reason: "音乐 API 未配置" };
     try {
@@ -266,17 +287,26 @@ export async function getNeteasePlayUrl(songId: number): Promise<string | null> 
     return info.url;
 }
 
+export type NeteaseLyricData = {
+    lyrics: string;
+    tlyrics: string;
+};
+
+/** Get both original and translated lyrics for a Netease song */
+export async function getNeteaseLyricData(songId: number): Promise<NeteaseLyricData> {
+    const base = neteaseBase();
+    if (!base) return {lyrics: "", tlyrics: ""};
+    try {
+        const response = await fetch(withNeteaseParams(`${base}/lyric?id=${songId}`));
+        const data = await response.json();
+        return {lyrics: typeof data?.lrc?.lyric === "string" ? data.lrc.lyric : "", tlyrics: typeof data?.tlyric?.lyric === "string" ? data.tlyric.lyric : ""};
+    } catch { return {lyrics: "", tlyrics: ""}; }
+}
+
 /** Get lyrics for a Netease song */
 export async function getNeteaseLyrics(songId: number): Promise<string> {
-    const base = neteaseBase();
-    if (!base) return "";
-    try {
-        const resp = await fetch(withNeteaseParams(`${base}/lyric?id=${songId}`));
-        const data = await resp.json();
-        return data?.lrc?.lyric || "";
-    } catch {
-        return "";
-    }
+    const data = await getNeteaseLyricData(songId);
+    return data.lyrics;
 }
 
 /** Get song detail (cover, artist ids, etc.) */
@@ -324,24 +354,46 @@ export async function getQrImage(baseUrl: string, key: string): Promise<string |
 export async function checkQrStatus(baseUrl: string, key: string): Promise<{ code: number; message: string; nickname?: string; cookie?: string }> {
     try {
         const url = resolveNeteaseRequestBase(baseUrl);
-        const resp = await fetch(withNeteaseParams(`${url}/login/qr/check?key=${key}&timestamp=${Date.now()}`));
+        // 关键修复：增加 noCookie=true 强制让云端 API 在 JSON 响应体返回 cookie，避免被反向代理拦截
+        const resp = await fetch(withNeteaseParams(`${url}/login/qr/check?key=${key}&noCookie=true&timestamp=${Date.now()}`));
         const data = await resp.json();
-        return { code: data?.code || 0, message: data?.message || "", nickname: data?.profile?.nickname, cookie: data?.cookie };
+        const nickname = data?.profile?.nickname || data?.data?.profile?.nickname || data?.nickname;
+        const cookie = data?.cookie || data?.data?.cookie;
+        return { code: data?.code || 0, message: data?.message || "", nickname, cookie };
     } catch (e) {
         return { code: 0, message: e instanceof Error ? e.message : "检查失败" };
     }
 }
 
 /** Check current login status */
-export async function checkLoginStatus(baseUrl: string): Promise<{ loggedIn: boolean; nickname?: string }> {
+export async function checkLoginStatus(baseUrl: string): Promise<{ loggedIn: boolean; nickname?: string; uid?: number }> {
+    const cookie = loadNeteaseCookie();
+    if (!cookie) return { loggedIn: false };
     try {
         const url = resolveNeteaseRequestBase(baseUrl);
         const resp = await fetch(withNeteaseParams(`${url}/login/status?timestamp=${Date.now()}`));
         const data = await resp.json();
-        const profile = data?.data?.profile;
-        if (profile?.nickname) return { loggedIn: true, nickname: profile.nickname };
-        return { loggedIn: false };
-    } catch { return { loggedIn: false }; }
+        // 兼容官方库各种版本的 profile / account 返回结构
+        const profile = data?.data?.profile || data?.profile || data?.data?.account || data?.account;
+        if (profile) {
+            const nickname = profile.nickname || profile.userName || "网易云用户";
+            const uid = profile.userId || profile.id;
+            saveNeteaseUser({ nickname, uid });
+            return { loggedIn: true, nickname, uid };
+        }
+        // 如果本地已存有有效 Cookie，但接口偶发网络异常，优先相信本地持久化资料
+        const cached = loadNeteaseUser();
+        if (cached?.nickname) {
+            return { loggedIn: true, nickname: cached.nickname, uid: cached.uid };
+        }
+        return { loggedIn: true, nickname: "网易云已登录" };
+    } catch {
+        const cached = loadNeteaseUser();
+        if (cached?.nickname) {
+            return { loggedIn: true, nickname: cached.nickname, uid: cached.uid };
+        }
+        return { loggedIn: !!cookie, nickname: cookie ? "已授权用户" : undefined };
+    }
 }
 
 // ── User Playlists ──
@@ -359,12 +411,19 @@ export type NeteasePlaylist = {
 
 /** Get current logged-in user's uid */
 async function getLoginUid(): Promise<number | null> {
+    const cached = loadNeteaseUser();
+    if (cached?.uid) return cached.uid;
     const base = neteaseBase();
     if (!base) return null;
     try {
         const resp = await fetch(withNeteaseParams(`${base}/login/status?timestamp=${Date.now()}`));
         const data = await resp.json();
-        return data?.data?.profile?.userId || null;
+        const profile = data?.data?.profile || data?.profile || data?.data?.account || data?.account;
+        const uid = profile?.userId || profile?.id || null;
+        if (uid && profile?.nickname) {
+            saveNeteaseUser({ nickname: profile.nickname, uid });
+        }
+        return uid;
     } catch { return null; }
 }
 
@@ -859,8 +918,8 @@ export async function findPlayableMatch(title: string, _artist?: string): Promis
     // Try netease results one by one until we find a playable URL
     const neteaseResults = results.filter(r => r.source === "netease" && r.neteaseResult);
     for (const r of neteaseResults.slice(0, 5)) {
-        const url = await getNeteasePlayUrl(r.neteaseResult!.id);
-        if (url) return { result: r, playUrl: url };
+        const info = await getNeteasePlayInfo(r.neteaseResult!.id, { title: r.neteaseResult!.name, artist: r.neteaseResult!.artists });
+        if (info.url) return { result: r, playUrl: info.url };
     }
 
     return null;

@@ -1,0 +1,714 @@
+/* Classic/glass composer detail polish; keep SP and input behavior unchanged. */
+.chat-room-wrapper[data-imessage-private]:is([data-beauty-preset="classic"],[data-beauty-preset="glass"]) .chat-plus-toggle svg line:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  stroke-width: 1.15;
+}
+
+/* 占位符与主题标签：去除过度透明的 color-mix，保持高保真清晰灰度 */
+.chat-room-wrapper[data-imessage-private] .imessage-composer-subject-label:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #55555a;
+  font-weight: 500;
+}
+.chat-room-wrapper[data-imessage-private] .chat-input-textarea:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::placeholder {
+  color: #78787d;
+}
+.chat-room-wrapper[data-imessage-private] .chat-input-textarea:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #111111;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-beauty-preset="classic"],[data-beauty-preset="glass"]) .chat-voice-message-btn svg:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  width: 25px;
+  height: 25px;
+}
+
+/* 顶栏层级保障：浮动药丸与操作小钮始终位于滚动消息上方 */
+.chat-room-wrapper[data-imessage-private] > .page-header:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  z-index: 50;
+}
+.chat-room-wrapper[data-imessage-private] .imessage-header-button:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  z-index: 52;
+}
+.chat-room-wrapper[data-imessage-private] .imessage-contact-card:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  z-index: 51;
+}
+.chat-room-wrapper[data-imessage-private] .imessage-header-call-control:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  z-index: 53;
+}
+.chat-room-wrapper[data-imessage-private] .page-header-safe-area:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  z-index: 60;
+}
+
+/* 输入框底栏与透明表面保障 */
+.chat-room-wrapper[data-imessage-private] .chat-input-bar:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: transparent;
+}
+
+/* ── 核心修复 1：长按消息气泡快捷菜单对比度彻底修复 ── */
+.chat-room-wrapper[data-imessage-private] .chat-floating-ctx-menu:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(60, 60, 67, 0.16);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-radius: 16px;
+  padding: 6px 4px;
+  color: #111111;
+  z-index: 100;
+}
+
+/* 浅色/默认模式下的长按操作按钮文字：深黑清晰，拒绝白底白字 */
+.chat-room-wrapper[data-imessage-private] .chat-floating-ctx-menu .ctx-menu-btn:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #111111;
+  font-weight: 500;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  padding: 6px 12px;
+  border-right: 1px solid rgba(60, 60, 67, 0.14);
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-floating-ctx-menu .ctx-menu-btn:last-of-type:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border-right: none;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-floating-ctx-menu .ctx-menu-btn:active:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  opacity: 0.65;
+}
+
+/* 危险按钮（重试以下、删除、删除以下）：亮红 */
+.chat-room-wrapper[data-imessage-private] .chat-floating-ctx-menu .ctx-menu-btn-danger:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #ff3b30;
+  font-weight: 600;
+}
+
+/* 三角标与菜单背景同色 */
+.chat-room-wrapper[data-imessage-private] .chat-floating-ctx-menu .ctx-menu-triangle:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border-bottom-color: rgba(255, 255, 255, 0.94);
+  border-top-color: rgba(255, 255, 255, 0.94);
+}
+
+/* 深色模式下的长按菜单 */
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-floating-ctx-menu:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(36, 36, 40, 0.94);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  color: #f5f5f7;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-floating-ctx-menu .ctx-menu-btn:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #f5f5f7;
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-floating-ctx-menu .ctx-menu-btn-danger:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #ff453a;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-floating-ctx-menu .ctx-menu-triangle:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border-bottom-color: rgba(36, 36, 40, 0.94);
+  border-top-color: rgba(36, 36, 40, 0.94);
+}
+
+/* ── 核心修复 2：浅色壁纸/默认界面下顶栏和底栏控件清晰度保障 ── */
+.chat-room-wrapper[data-imessage-private]:not([data-dark-wallpaper]):not([data-chat-dark]) .imessage-header-button:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 16px rgba(50, 55, 65, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  color: #111111;
+}
+
+.chat-room-wrapper[data-imessage-private]:not([data-dark-wallpaper]):not([data-chat-dark]) .imessage-contact-name:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 14px rgba(50, 55, 65, 0.1);
+  color: #111111;
+  font-weight: 600;
+}
+
+.chat-room-wrapper[data-imessage-private]:not([data-dark-wallpaper]):not([data-chat-dark]) .imessage-contact-chevron:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #8e8e93;
+}
+
+.chat-room-wrapper[data-imessage-private]:not([data-dark-wallpaper]):not([data-chat-dark]) .imessage-header-call-option:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(255, 255, 255, 0.88);
+  color: #111111;
+}
+
+.chat-room-wrapper[data-imessage-private]:not([data-dark-wallpaper]):not([data-chat-dark]) .chat-plus-toggle:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 16px rgba(50, 55, 65, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  color: #111111;
+}
+
+.chat-room-wrapper[data-imessage-private]:not([data-dark-wallpaper]):not([data-chat-dark]) .chat-voice-message-btn:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #55555a;
+}
+
+/* ── 核心修复 3：深色壁纸/深色模式下顶栏和底栏控件清晰度保障 ── */
+.chat-room-wrapper[data-imessage-private]:is([data-dark-wallpaper], [data-chat-dark]) .imessage-header-button:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(44, 44, 48, 0.8);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-dark-wallpaper], [data-chat-dark]) .imessage-contact-name:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(44, 44, 48, 0.8);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-dark-wallpaper], [data-chat-dark]) .chat-plus-toggle:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(44, 44, 48, 0.8);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-dark-wallpaper], [data-chat-dark]) .chat-input-textarea:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #f5f5f7;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-dark-wallpaper], [data-chat-dark]) .imessage-composer-subject-label:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)), .chat-room-wrapper[data-imessage-private]:is([data-dark-wallpaper], [data-chat-dark]) .chat-input-textarea:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::placeholder {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* ── 核心修复 4：主题栏表情与贴纸双入口隐形暗门（视觉完全隐藏，保留占位与点击暗门，内部面板不隐藏） ── */
+.chat-room-wrapper[data-imessage-private] .imessage-composer-shortcuts:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+/* 两个入口（Emoji 表情与贴纸表情包）均完全透明隐藏，但保留原本 28x28px 的物理占位与点击交互能力 */
+.chat-room-wrapper[data-imessage-private] .imessage-composer-shortcut:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  color: transparent;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chat-room-wrapper[data-imessage-private] .imessage-composer-shortcut:hover:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .imessage-composer-shortcut:active:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .imessage-composer-shortcut[data-active]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: transparent;
+  opacity: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-room-wrapper[data-imessage-private] .imessage-composer-shortcut svg:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  width: 19px;
+  height: 19px;
+  stroke: transparent;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .imessage-composer-shortcut:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: transparent;
+  opacity: 0;
+  background: transparent;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .imessage-composer-shortcut:hover:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)), .chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .imessage-composer-shortcut:active:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)), .chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .imessage-composer-shortcut[data-active]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: transparent;
+  opacity: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ── 核心修复 5：表情包面板与贴纸面板浮动毛玻璃容器 ── */
+.chat-room-wrapper[data-imessage-private] .chat-emoji-panel-wrap:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-sticker-panel:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: absolute;
+  right: var(--im26-edge);
+  bottom: calc(100% + 10px);
+  left: var(--im26-edge);
+  z-index: 70;
+  height: 240px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid rgba(60, 60, 67, 0.16);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  color: #111111;
+  overflow: hidden;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) :is(.chat-emoji-panel-wrap, .chat-sticker-panel):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(36, 36, 40, 0.95);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  color: #f5f5f7;
+}
+
+.chat-room-wrapper[data-imessage-private] :is(.chat-emoji-panel-wrap, .chat-sticker-panel) .emoji-category-pill:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #55555a;
+  font-weight: 500;
+}
+
+.chat-room-wrapper[data-imessage-private] :is(.chat-emoji-panel-wrap, .chat-sticker-panel) .emoji-category-pill[data-active]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #007aff;
+  background: rgba(0, 122, 255, 0.12);
+  font-weight: 600;
+}
+
+.chat-room-wrapper[data-imessage-private] :is(.chat-emoji-panel-wrap, .chat-sticker-panel) span:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: inherit;
+}
+
+/* ── 核心修复 6：iMessage 原生消息引用（Linked Reply）物理结构与高保真样式保障 ── */
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] .chat-msg-content-wrap:has([data-media-type="quote"]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] .chat-msg-content-wrap:has(.chat-quote-message):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="assistant"] .chat-msg-content-wrap:has([data-media-type="quote"]):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="assistant"] .chat-msg-content-wrap:has(.chat-quote-message):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.chat-room-wrapper[data-imessage-private] :is(.chat-bubble-role-user, .chat-bubble-role-assistant)[data-media-type="quote"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-room-wrapper[data-imessage-private] :is(.chat-bubble-role-user, .chat-bubble-role-assistant)[data-media-type="quote"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before, .chat-room-wrapper[data-imessage-private] :is(.chat-bubble-role-user, .chat-bubble-role-assistant)[data-media-type="quote"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  content: none;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-quote-message:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: fit-content;
+  max-width: 82%;
+  box-sizing: border-box;
+}
+
+/* 引用消息内部：向连线侧（用户靠左，角色靠右）统一对齐，确保任意字数下连线两端与气泡完美贴合且绝不悬空脱节 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-user:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  align-items: flex-start;
+  align-self: flex-end;
+  margin-left: auto;
+  margin-right: 0;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-assistant:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  align-items: flex-end;
+  align-self: flex-start;
+  margin-right: auto;
+  margin-left: 0;
+}
+
+/* 微缩原消息胶囊 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-preview:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: relative;
+  z-index: 2;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 6px 14px;
+  border: 1px solid rgba(60, 60, 67, 0.22);
+  border-radius: 16px;
+  color: #55555d;
+  background: rgba(250, 250, 252, 0.92);
+  font-size: calc(11.5px * var(--app-text-scale, 1));
+  line-height: 1.35;
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+/* 当前回复主体气泡 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: relative;
+  z-index: 2;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 36px;
+  min-height: 40px;
+  padding: 10px 15px;
+  border-radius: 20px;
+  font-size: calc(14px * var(--app-text-scale, 1));
+  line-height: 1.38;
+  letter-spacing: -0.08px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 引用回复主体气泡绝对禁止生成独立尾巴小尖角（角标） */
+.chat-room-wrapper[data-imessage-private] .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before {
+  content: none;
+  display: none;
+}
+
+/* 用户发出的所有消息气泡（普通气泡与引用气泡）：彻底锁定纯白文字，严禁在任何壁纸采样或继承下变黑 */
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] .chat-bubble-role-user:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] .chat-bubble-role-user *:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] [data-media-type="text"]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] [data-media-type="text"] *:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] .chat-markdown:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-msg-wrapper[data-role="user"] .chat-markdown *:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  --bubble-text-ink: #ffffff;
+  color: #ffffff;
+}
+
+/* 用户引用：深天蓝色气泡，白色文字 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-user .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #ffffff;
+  background: var(--im26-blue, #38acfc);
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-user .chat-quote-reply *:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #ffffff;
+}
+
+/* 角色引用：浅灰色气泡，深黑文字 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-assistant .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: var(--im26-ink, #050505);
+  background: var(--im26-incoming, #e9e9eb);
+}
+
+/* 玻璃模式拟态：气泡主体透明，由内部 imessage-bubble-surface 承载毛玻璃质感光泽与对比度 */
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-user .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-assistant .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: transparent;
+}
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-user .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #ffffff;
+}
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-user .chat-quote-reply > .imessage-bubble-surface:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  opacity: 1;
+  border: 0;
+  inset: 0;
+  border-radius: 20px;
+  -webkit-mask-image: none;
+  mask-image: none;
+  -webkit-mask-box-image: none;
+  mask-border: none;
+  background: linear-gradient(155deg, rgba(255,255,255,.14) 0%, rgba(255,255,255,.035) 20%, transparent 43%),
+    linear-gradient(rgba(5,113,221,.88) 0 0);
+  -webkit-backdrop-filter: blur(1.5px) saturate(154%) contrast(1.09);
+  backdrop-filter: blur(1.5px) saturate(154%) contrast(1.09);
+  box-shadow: 0 2px 6px rgba(0,46,98,.065);
+}
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-user .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 0.6px solid rgba(227, 234, 242, 0.28);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-assistant .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: var(--im26-local-bubble-ink, #f8fafc);
+}
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-message-assistant .chat-quote-reply > .imessage-bubble-surface:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  opacity: 1;
+  border: 0;
+  inset: 0;
+  border-radius: 20px;
+  -webkit-mask-image: none;
+  mask-image: none;
+  -webkit-mask-box-image: none;
+  mask-border: none;
+  background: var(--im26-char-bubble-fill, rgba(66,72,81,.38));
+  -webkit-backdrop-filter: blur(3px) saturate(108%) contrast(1.1);
+  backdrop-filter: blur(3px) saturate(108%) contrast(1.1);
+  box-shadow: 0 2px 6px rgba(8,20,31,.07);
+}
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-quote-preview:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border: 0;
+  color: #f5f8fc;
+  background: linear-gradient(150deg, rgba(255,255,255,.11), rgba(255,255,255,.018) 42%, transparent 66%),
+    linear-gradient(rgba(16,25,34,.54) 0 0);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 2px 7px rgba(7,18,28,.08);
+  -webkit-backdrop-filter: blur(4.5px) saturate(138%) contrast(1.04);
+  backdrop-filter: blur(4.5px) saturate(138%) contrast(1.04);
+}
+
+/* 侧边 U 型平滑弧线连线（连接微缩胶囊与主气泡） */
+.chat-room-wrapper[data-imessage-private] .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: absolute;
+  top: 14px;
+  bottom: 20px;
+  z-index: 1;
+  width: 22px;
+  border-color: rgba(60, 60, 67, 0.42);
+  border-style: solid;
+  pointer-events: none;
+}
+
+/* 用户回复（右侧）：连线在右侧内部贴合两颗气泡左边缘向外弯曲 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-user .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  right: auto;
+  left: -14px;
+  border-width: 3px 0 3px 3px;
+  border-radius: 16px 0 0 16px;
+}
+
+/* 角色回复（左侧）：连线在左侧贴合向左弯曲 */
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-assistant .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  left: auto;
+  right: -14px;
+  border-width: 3px 3px 3px 0;
+  border-radius: 0 16px 16px 0;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before,
+.chat-room-wrapper[data-imessage-private] .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(60, 60, 67, 0.6);
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-user .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before {
+  top: -4px;
+  right: -2px;
+}
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-user .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  bottom: -4px;
+  right: -2px;
+}
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-assistant .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before {
+  top: -4px;
+  left: -2px;
+}
+.chat-room-wrapper[data-imessage-private] .chat-quote-message-assistant .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  bottom: -4px;
+  left: -2px;
+}
+
+/* 暗色壁纸与玻璃模式：连线与端点圆点自适应高亮白，确保在深色海景/壁纸上清晰呈现 */
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper], [data-glass-bubbles]) .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border-color: rgba(235, 235, 245, 0.65);
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper], [data-glass-bubbles]) .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before, .chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper], [data-glass-bubbles]) .chat-quote-connector:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  background: rgba(235, 235, 245, 0.85);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   终极 1:1 复刻保障：iMessage 玻璃模式边框高光、角标尾巴与无角标引用
+   ───────────────────────────────────────────────────────────── */
+
+/* 1. 框线恢复：对方所有玻璃气泡（含最后一条带 tail 消息）强制保留精致的 0.6px 高光描边 */
+/* conflict overlay cleaned */ .chat-room-wrapper-cleaned-unused:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-msg-wrapper[data-imessage-tail] .chat-bubble-role-assistant:not(.chat-bubble-media) > .imessage-bubble-surface:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+
+/* 2. 尾巴角标恢复：对方最后一条带 tail 消息稳健显现左下角 18x18 SVG 尖角尾巴 */
+/* tail radius removed */
+
+.chat-room-wrapper[data-imessage-private][data-glass-bubbles] .chat-msg-wrapper[data-imessage-tail] .chat-bubble-role-assistant:not(.chat-bubble-media):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before {
+  content: none;
+  display: none;
+}
+
+/* double tail removed */
+.chat-room-wrapper-unused2:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) { display: none; } .chat-room-wrapper-unused3:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  content: "";
+  display: block;
+  position: absolute;
+  z-index: 0;
+  bottom: -7px;
+  left: 7px;
+  width: 18px;
+  height: 18px;
+  background: var(--im26-local-bubble-fill, var(--im26-char-bubble-fill, rgba(66, 72, 81, 0.38)));
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='7 29 18 18'%3E%3Cpath d='M22.22 40c-.99 0-1.64.31-2.97 1.24-.71.5-3.45 2.6-5.72 3.85-1.96 1.08-3.64 1.82-4.06 1.85-1.26.1-1.42-1.09-.93-1.73.49-.64 1.05-1.47 1.27-1.92.48-1.01-.63-1.54-.63-3.05 0-1.86 1.32-3.24 2.36-4.16-.09-.08-.21-.18-.35-.29-.24-.19-.47-.38-.7-.57V29h16.99v11h-1.8Z' fill='black'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='7 29 18 18'%3E%3Cpath d='M22.22 40c-.99 0-1.64.31-2.97 1.24-.71.5-3.45 2.6-5.72 3.85-1.96 1.08-3.64 1.82-4.06 1.85-1.26.1-1.42-1.09-.93-1.73.49-.64 1.05-1.47 1.27-1.92.48-1.01-.63-1.54-.63-3.05 0-1.86 1.32-3.24 2.36-4.16-.09-.08-.21-.18-.35-.29-.24-.19-.47-.38-.7-.57V29h16.99v11h-1.8Z' fill='black'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+}
+
+/* 3. 引用保护：引用回复主体严格锁定四角对称光滑胶囊，绝对禁止任何角标尾巴或 mask-box-image */
+.chat-room-wrapper[data-imessage-private] .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-quote-reply > .imessage-bubble-surface:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  border-radius: 20px;
+  inset: 0;
+  -webkit-mask: none;
+  mask: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  -webkit-mask-box-image: none;
+  mask-border: none;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-quote-reply:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::before {
+  content: none;
+  display: none;
+}
+
+/* ── 核心修复 7：iMessage 聊天室加号展开菜单改版为一排四个功能网格 ── */
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: absolute;
+  right: var(--im26-edge);
+  bottom: calc(100% + 10px);
+  left: var(--im26-edge);
+  z-index: 60;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px 8px;
+  width: auto;
+  max-height: min(56vh, 420px);
+  margin: 0;
+  padding: 18px 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid rgba(60, 60, 67, 0.16);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  color: #111111;
+  scrollbar-width: none;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-plus-menu:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(36, 36, 40, 0.95);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  color: #f5f5f7;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 12px;
+  color: #111111;
+  background: transparent;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-plus-menu-item:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #f5f5f7;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item:active:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  transform: scale(0.92);
+  opacity: 0.75;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-sort-row:not(:last-of-type) .chat-plus-menu-item:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after,
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *))::after {
+  content: none;
+  display: none;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-icon-box:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  display: grid;
+  place-items: center;
+  flex: 0 0 50px;
+  width: 50px;
+  height: 50px;
+  overflow: hidden;
+  border: 1px solid rgba(60, 60, 67, 0.14);
+  border-radius: 16px;
+  color: #111111;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 3px 10px rgba(55, 61, 72, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) .chat-plus-icon-box:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(55, 55, 60, 0.85);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-icon-box svg:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+}
+
+.chat-room-wrapper[data-imessage-private] .imessage-plus-app-icon:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  object-fit: cover;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item span:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)),
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-label:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: #444448;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-room-wrapper[data-imessage-private]:is([data-chat-dark], [data-dark-wallpaper]) :is(.chat-plus-menu-item span, .chat-plus-menu-label):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #d1d1d6;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item[data-active]:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: transparent;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item[data-active] .chat-plus-icon-box:not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  background: rgba(0, 122, 255, 0.16);
+  border-color: rgba(0, 122, 255, 0.45);
+  color: #007aff;
+}
+
+.chat-room-wrapper[data-imessage-private] .chat-plus-menu-item[data-active] :is(span, .chat-plus-menu-label):not(:where(.character-phone-chat, .character-phone-chat *)):not(:where([data-chat-inspection], [data-chat-inspection] *)) {
+  color: #007aff;
+  font-weight: 600;
+}

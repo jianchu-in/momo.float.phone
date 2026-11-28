@@ -144,6 +144,7 @@ export type CheckPhonePhotosPayload = {
 };
 
 export type CheckPhoneChatBubble = {
+  source?: "proxy";
   id: string;
   text: string;
   timeLabel: string;
@@ -152,12 +153,19 @@ export type CheckPhoneChatBubble = {
 };
 
 export type CheckPhoneChatConversation = {
+  peerType?: "user" | "character" | "npc";
+  peerUserKey?:string;
+  peerCharacterId?: string;
+  pendingReply?: { operationId:string; sentMessageId:string; state?:"waiting"|"stopped"|"failed" };
+  lastActivityAt?: string;
   id: string;
   name: string;
   preview: string;
   timeLabel: string;
   muted?: boolean;
   pinned?: boolean;
+  /** 角色给聊天对象的备注，不更改联系人真实姓名。 */
+  remark?: string;
   tagLabel: string;
   messages: CheckPhoneChatBubble[];
 };
@@ -207,6 +215,10 @@ export type CheckPhoneChatContact = {
 export type CheckPhoneChatPayload = {
   headerTitle: string;
   headerSubtitle: string;
+  /** 自动刷新时建议的用户备注；已有真实私聊备注始终优先。 */
+  userRemark?: string;
+  /** Suggested remarks belong to the account and identity used during generation. */
+  userRemarkKey?: string;
   conversations: CheckPhoneChatConversation[];
   groups: CheckPhoneChatGroup[];
   momentsFeed: CheckPhoneChatMomentItem[];

@@ -42,7 +42,10 @@ async function main() {
 
     const sessions = [{ id: "main-chat", contactId: "char" }, { id: "alt-chat", contactId: "char", chatAccountId: "alt" }];
     const keys = load("lib/native-timeline-key.ts");
+    const sourceDeletions = load("lib/memory-source-deletions.ts", { "./native-timeline-key": keys,
+        "./kv-db": { kvGet: key => kv.get(key) ?? null, registerDynamicPrefix() {} } });
     const records = load("lib/short-term-memory-records.ts", { "./native-timeline-key": keys,
+        "./memory-source-deletions": sourceDeletions,
         "./kv-db": { kvGet: key => kv.get(key), kvSet: (key, value) => kv.set(key, value), registerDynamicPrefix() {} } }, { dispatchEvent() {} });
     const messages = [
         { id: "a", sessionId: "main-chat", role: "user", content: "主号的约定", createdAt: "2026-01-01" },
@@ -64,6 +67,7 @@ async function main() {
         "./prompt-sanitizer": { stripStateAndInnerForPrompt: text => text },
         "./prompt-time": { resolvePromptTimeAware: () => false, formatPromptEventLabel: label => `[${label}]` },
         "./kv-db": { kvGet: key => kv.get(key), registerDynamicPrefix() {} },
+        "./facing-storage": { loadFacingSettings: () => ({ characters: {} }), loadFacingMeetings: () => [] },
         "./memory-storage": { loadMemoryConfig: () => ({ shortTermTokenBudget: 10000 }) },
         "./token-counter": { estimateTokens: text => text.length },
     }, { dispatchEvent() {} });

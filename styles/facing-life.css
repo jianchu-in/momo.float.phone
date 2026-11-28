@@ -1,0 +1,36 @@
+.facing-life-panel{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--c-page-body-bg,#f8f6fa);z-index:3}.facing-life-card{flex:0 0 220px;border:1px solid #d9d4df;border-radius:14px;padding:14px;background:#fff;color:#40374a;overflow:hidden}.facing-life-card img,.facing-life-card video{width:100%;max-height:280px;object-fit:contain}.facing-life-card p{white-space:pre-wrap;line-height:1.6}.facing-horizontal-assets,.facing-material-group .facing-grid,.facing-portrait-folder .facing-grid{display:flex!important;gap:12px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding:5px 2px 14px}.facing-material-group .facing-grid>*,.facing-portrait-folder .facing-grid>*{flex:0 0 145px;scroll-snap-align:start}.facing-scene-picker{position:absolute;top:calc(var(--page-header-safe-top,48px) + 62px);right:12px;left:12px;max-height:55%;overflow:auto;z-index:35;padding:15px;border-radius:16px;background:#fff;color:#40374a;box-shadow:0 8px 40px #0003}.facing-record-manage{display:flex;gap:8px;align-items:center}.facing-record-manage input{width:auto}.facing-figure[data-movable=true]{touch-action:none;cursor:grab}.facing-figure[data-movable=true]:active{cursor:grabbing}
+
+.facing-products-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; gap: 10px; }
+.facing-product-card { min-width: 0; padding: 8px; background: var(--facing-card,#fff); color: var(--facing-ink,#40374a); border-color: var(--facing-line,#d9d4df); }
+.facing-product-preview { display: grid; gap: 5px; width: 100%; min-width: 0; border: 0; background: transparent; color: inherit; padding: 0; text-align: left; cursor: zoom-in; }
+.facing-product-thumbnail { display: grid; place-items: center; width: 100%; height: 150px; overflow: hidden; border-radius: 9px; background: var(--facing-soft,#f3f0f5); }
+.facing-product-thumbnail :is(img,video) { display: block; width: 100%; height: 100%; max-height: 100%; object-fit: contain; }
+.facing-product-preview h3,.facing-product-preview small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facing-product-preview h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.facing-product-preview small,.facing-product-thumbnail span { font-size: 11px; color: var(--facing-muted,#766c80); }
+.facing-product-card .facing-product-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-height: 3.2em; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.facing-product-overlay { z-index: 45; }
+.facing-life-panel .facing-product-dialog { width: 100%; max-width: 520px; max-height: 100%; min-height: 0; justify-self: center; color: var(--facing-ink,#40374a); }
+.facing-product-dialog header h2 { min-width: 0; overflow-wrap: anywhere; }
+.facing-product-dialog header button { flex: none; min-height: 40px; }
+.facing-life-panel .facing-product-dialog > :is(img,video) { display: block; width: 100%; max-height: min(42vh,320px); object-fit: contain; }
+.facing-product-full-description { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; font-size: 13px; }
+.facing-product-dialog > small { color: var(--facing-muted,#766c80); }
+@media (min-width: 600px) { .facing-products-grid { grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); } }
+
+/* The vertical page must also permit horizontal gestures in material rails. */
+.facing-app .facing-assets-scroll { touch-action: pan-x pan-y; }
+.facing-assets-scroll :is(.facing-material-group,.facing-portrait-folder) { min-width: 0; max-width: 100%; }
+.facing-assets-scroll :is(.facing-scene-rail,.facing-asset-rail) {
+  display: flex; flex-flow: row nowrap; gap: 12px;
+  width: 100%; max-width: 100%; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain; scroll-snap-type: x proximity;
+  padding: 5px 2px 14px; -webkit-overflow-scrolling: touch;
+}
+.facing-scene-rail > .facing-scene-card { flex: 0 0 180px; margin: 0; scroll-snap-align: start; }
+.facing-assets-scroll .facing-asset-rail > .facing-library-tile { flex: 0 0 145px; width: 145px; scroll-snap-align: start; }
+.facing-library-tile > .facing-asset-tile { width: 100%; }
+.facing-ambience { position:absolute;top:calc(var(--page-header-safe-top,48px) + 92px);left:10px;z-index:45;display:flex;flex-direction:column;max-width:190px;padding:5px 9px;border-radius:12px;background:#fffdf0df;color:#514560;font-size:11px;box-shadow:0 3px 14px #0001; }
+.facing-ambience button { min-height:32px; }
+.facing-ambience small { font-size:10px; }

@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, Play, RotateCcw, User, X } from "lucide-react";
+import { StoryAutomationSettings } from "./story-automation-settings";
+import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
+import { useEffect, useId, useRef, useState } from "react";
+import { BellRing, ChevronRight, Code, Image as ImageIcon, LayoutPanelTop, ListOrdered, Moon, Play, RotateCcw, Sparkles, User, X } from "lucide-react";
+import { openChatAppearance } from "@/lib/chat-appearance";
 import { PageShell } from "@/components/ui/page-shell";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
+import { normalizeChineseThinkingPromptLength } from "@/lib/chinese-thinking-prompt";
 import { Toggle } from "@/components/ui/form";
 import {
     MAX_VISION_IMAGE_PROMPT_LIMIT,
@@ -126,6 +130,7 @@ function ChatSoundsSection() {
 }
 
 export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
+    const [storyAutomationOpen,setStoryAutomationOpen]=useState(false);
     const initial = loadChatAppSettings();
     const [avatar, setAvatar] = useState(initial.globalChatUserAvatar || "");
     const [background, setBackground] = useState(initial.globalChatBackgroundImage || "");
@@ -134,7 +139,29 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
     const [visionLimit, setVisionLimit] = useState(() => normalizeVisionImagePromptLimit(initial.globalVisionImagePromptLimit));
     const [status, setStatus] = useState<StatusRegionConfig>(() => getStatusRegionConfig(GLOBAL_CHAT_STATUS_REGION_ID, false));
     const [meetingInvite, setMeetingInvite] = useState<MeetingInviteCardConfig>(() => resolveMeetingInviteCardConfig(initial));
+    const [globalThinkingEnabled, setGlobalThinkingEnabled] = useState(initial.globalChineseThinkingPromptEnabled === true);
+    const [globalThinkingLength, setGlobalThinkingLength] = useState(() => normalizeChineseThinkingPromptLength(initial.globalChineseThinkingPromptLength));
+    const thinkingLengthId = useId();
     const [storyAsOfflineMode, setStoryAsOfflineMode] = useState(initial.storyAsOfflineMode === true);
+    const [globalChatUiStyle, setGlobalChatUiStyle] = useState<"classic" | "imessage">(
+        () => initial.globalChatUiStyle || "classic"
+    );
+    const [globalBeautyPreset, setGlobalBeautyPreset] = useState<"classic" | "glass">(
+        () => initial.globalBeautyPreset || "classic"
+    );
+
+
+    const handleSwitchUiStyle = (nextStyle: "classic" | "imessage") => {
+        setGlobalChatUiStyle(nextStyle);
+        saveSettings({ globalChatUiStyle: nextStyle });
+        window.dispatchEvent(new Event("chat-app-settings-updated"));
+    };
+
+    const handleSwitchBeautyPreset = (nextPreset: "classic" | "glass") => {
+        setGlobalBeautyPreset(nextPreset);
+        saveSettings({ globalBeautyPreset: nextPreset });
+        window.dispatchEvent(new Event("chat-app-settings-updated"));
+    };
     const [editingCSS, setEditingCSS] = useState(false);
     const [editingStatus, setEditingStatus] = useState(false);
     const [editingMeetingInvite, setEditingMeetingInvite] = useState(false);
@@ -197,18 +224,41 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
         saveSettings({ storyAsOfflineMode: value });
     };
 
-    // 全部角色恢复默认：清空每个会话的单独聊天室 CSS，全部回落到全局聊天室 CSS / 主页外观 CSS。
-    // 逐个派发 chat-session-css-updated，让正打开的聊天室（含桌面小窗）立即生效。
+    // 全部角色恢复默认：清空每个会话的单独聊天室 CSS、风格覆盖与美化覆盖，全部统一跟随全局。
     const resetAllSessionCSS = () => {
         const sessions = loadChatSessions();
-        const withCSS = sessions.filter(s => (s.customCSS || "").trim());
-        if (!withCSS.length) { alert("所有聊天都在跟随全局样式，没有需要恢复的"); return; }
-        if (!window.confirm(`将清除 ${withCSS.length} 个私聊/群聊的单独 CSS，全部恢复为默认样式（全局聊天室 CSS 不受影响）。确定继续吗？`)) return;
-        saveChatSessions(sessions.map(s => (s.customCSS || "").trim() ? { ...s, customCSS: "" } : s));
-        for (const s of withCSS) {
+        const hasOverride = (s: typeof sessions[number]) =>
+            Boolean((s.customCSS || "").trim() || s.chatUiStyle || s.beautyPreset || s.glassBubblesEnabled !== undefined);
+        const withOverrides = sessions.filter(hasOverride);
+        if (!withOverrides.length) {
+            const cleaned = sessions.map(s => {
+                const copy = { ...s };
+                delete copy.customCSS;
+                delete copy.chatUiStyle;
+                delete copy.beautyPreset;
+                delete copy.glassBubblesEnabled;
+                return copy;
+            });
+            saveChatSessions(cleaned);
+            window.dispatchEvent(new Event("chat-app-settings-updated"));
+            alert("已强制同步：所有聊天室已统一恢复为全局样式");
+            return;
+        }
+        if (!window.confirm(`将清除 ${withOverrides.length} 个私聊/群聊的单独覆盖设置（包括单独 CSS、残留独立风格），全部统一跟随全局样式。确定继续吗？`)) return;
+        const cleaned = sessions.map(s => {
+            const copy = { ...s };
+            delete copy.customCSS;
+            delete copy.chatUiStyle;
+            delete copy.beautyPreset;
+            delete copy.glassBubblesEnabled;
+            return copy;
+        });
+        saveChatSessions(cleaned);
+        for (const s of sessions) {
             window.dispatchEvent(new CustomEvent("chat-session-css-updated", { detail: { sessionId: s.id, css: "" } }));
         }
-        alert(`已恢复 ${withCSS.length} 个聊天的默认样式`);
+        window.dispatchEvent(new Event("chat-app-settings-updated"));
+        alert(`已恢复 ${withOverrides.length} 个聊天的默认样式，全部跟随全局`);
     };
 
     const statusPayload = JSON.stringify({
@@ -341,15 +391,92 @@ export function GlobalChatInfoSettings({ onBack }: { onBack: () => void }) {
         );
     }
 
+    if(storyAutomationOpen)return <ReversePhoneLayer><StoryAutomationSettings onClose={()=>setStoryAutomationOpen(false)} onChange={value=>saveSettings({storyAutomation:value})}/></ReversePhoneLayer>;
     return (
         <PageShell title="全局聊天信息" onBack={onBack} className="absolute inset-0 z-[100]">
             <div className="page-menu chat-info-menu">
                 <div className="px-4 pb-2 ts-12 text-[var(--c-text)] opacity-65">单独会话设置优先于这里；这里只改变聊天室，不会修改主页用户资料。状态栏仍仅用于私聊。</div>
                 <div className="menu-group">
+                    <button className="menu-item" onClick={()=>setStoryAutomationOpen(true)}><Sparkles size={20}/><div className="menu-label-group"><span className="menu-label">自动进入剧情 · 全局设置</span><span className="menu-desc">允许角色主动带入、检测已见面、低中高强度</span></div><ChevronRight size={16}/></button>
+                    <div className="menu-item">
+                        <Sparkles size={20} className="text-[var(--c-icon)]" />
+                        <div className="menu-label-group">
+                            <span className="menu-label">消息界面风格</span>
+                            <span className="menu-desc">经典布局或 iMessage 拟态风格，保留已有自定义 CSS</span>
+                        </div>
+                        <div className="menu-right">
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-ghost h-8 px-3 text-xs"
+                                onClick={() => handleSwitchUiStyle(globalChatUiStyle === "imessage" ? "classic" : "imessage")}
+                            >
+                                {globalChatUiStyle === "imessage" ? "iMessage 拟态" : "经典模式"}
+                            </button>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <Sparkles size={20} className="text-[var(--c-icon)]" />
+                        <div className="menu-label-group">
+                            <span className="menu-label">全局美化预设</span>
+                            <span className="menu-desc">普通实色或 Liquid Glass 玻璃效果，保留角色单独设置</span>
+                        </div>
+                        <div className="menu-right">
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-ghost h-8 px-3 text-xs"
+                                onClick={() => handleSwitchBeautyPreset(globalBeautyPreset === "glass" ? "classic" : "glass")}
+                            >
+                                {globalBeautyPreset === "glass" ? "Liquid Glass 玻璃" : "经典模式"}
+                            </button>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <Moon size={20} className="text-[var(--c-icon)]" />
+                        <div className="menu-label-group">
+                            <span className="menu-label">日夜间模式</span>
+                            <span className="menu-desc">切换消息 App 日间与夜间深色主题外观</span>
+                        </div>
+                        <div className="menu-right">
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-ghost h-8 px-3 text-xs"
+                                onClick={openChatAppearance}
+                            >
+                                切换日夜模式
+                            </button>
+                        </div>
+                    </div>
                     <div className="menu-item">
                         <Play size={20} className="text-[var(--c-icon)]" />
                         <div className="menu-label-group"><span className="menu-label">剧情入口</span><span className="menu-desc">用剧情作为线下模式；旧线下记录进入时可选择迁移方式</span></div>
                         <Toggle checked={storyAsOfflineMode} onChange={changeStoryAsOfflineMode} />
+                    </div>
+                    <div className="menu-item">
+                        <Sparkles size={20} className="text-[var(--c-icon)]" />
+                        <div className="menu-label-group">
+                            <span className="menu-label">全部角色启用中文独白</span>
+                            <span className="menu-desc">统一用于线上私聊和群聊，关闭后恢复各会话的设置</span>
+                        </div>
+                        <Toggle checked={globalThinkingEnabled} onChange={value => {
+                            setGlobalThinkingEnabled(value);
+                            saveSettings({ globalChineseThinkingPromptEnabled: value });
+                        }} />
+                    </div>
+                    <div className="menu-item flex-wrap">
+                        <label htmlFor={thinkingLengthId} className="menu-label-group flex items-center gap-3" style={{ minWidth: "max-content" }}>
+                            <ListOrdered size={20} className="shrink-0 text-[var(--c-icon)]" aria-hidden="true" />
+                            <span className="menu-label whitespace-nowrap">中文独白字数</span>
+                        </label>
+                        <div className="menu-right">
+                            <select id={thinkingLengthId} className="ui-input" style={{ width: "auto", minHeight: 36, padding: "6px 8px" }}
+                                value={globalThinkingLength} onChange={event => {
+                                    const length = normalizeChineseThinkingPromptLength(Number(event.target.value));
+                                    setGlobalThinkingLength(length);
+                                    saveSettings({ globalChineseThinkingPromptLength: length });
+                                }}>
+                                {[100, 300, 500].map(length => <option key={length} value={length}>约 {length} 字</option>)}
+                            </select>
+                        </div>
                     </div>
                     <div className="menu-item cursor-pointer" role="button" tabIndex={0} onClick={() => avatarInputRef.current?.click()} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") avatarInputRef.current?.click(); }}>
                         <User size={20} className="text-[var(--c-icon)]" />

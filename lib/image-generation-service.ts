@@ -2,6 +2,7 @@ import type { ImageGenerationSettings, NovelAiPreset } from "./settings-types";
 import { loadBindingConfig, loadImageGenerationSettings, loadUserIdentities, resolveBinding, DEFAULT_NOVELAI_PRESET } from "./settings-storage";
 import { applyImageGenerationBinding } from "./image-generation-binding";
 import { loadChatScope } from "./chat-scope-storage";
+import type { UserIdentity } from "@/components/settings/user-identity";
 import JSZip from "jszip";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { storeMediaBlob } from "./media-cache-storage";
@@ -12,6 +13,7 @@ import { faceCropPixels, type FaceCrop } from "./face-crop";
 import { descriptionNeedsUserReference } from "./image-reference-selection";
 import {
   NOVELAI_COMMON_MODELS,
+  NOVELAI_DEFAULT_RESOLUTION,
   getNovelAiResolution,
   normalizeNovelAiModel,
   normalizeNovelAiNoiseSchedule,
@@ -186,11 +188,13 @@ async function normalizeReferenceImageForEdit(
 
 async function combineReferenceImagesForEdit(
   references: Array<{ dataUrl: string; label: string }>,
+  requireAll = false,
 ): Promise<string | null> {
   if (references.length === 0) return null;
-  if (references.length === 1 || typeof document === "undefined") return references[0].dataUrl;
+  if (references.length > 12) throw new Error("本张画面的参考图超过12张，请减少出镜角色或选择纯文字生图。");
+  if (references.length === 1) return references[0].dataUrl;
   try {
-    const items = await Promise.all(references.slice(0, 6).map(async reference => ({
+    const items = await Promise.all(references.map(async reference => ({
       ...reference,
       image: await loadDataUrlImage(reference.dataUrl),
     })));
@@ -203,7 +207,7 @@ async function combineReferenceImagesForEdit(
     canvas.width = columns * cell + (columns + 1) * gap;
     canvas.height = rows * (cell + labelHeight) + (rows + 1) * gap;
     const context = canvas.getContext("2d");
-    if (!context) return references[0].dataUrl;
+    if (!context) throw new Error("无法创建参考图画布");
     context.fillStyle = "#f5f5f5";
     context.fillRect(0, 0, canvas.width, canvas.height);
     items.forEach((item, index) => {
@@ -227,6 +231,7 @@ async function combineReferenceImagesForEdit(
     });
     return canvas.toDataURL("image/png");
   } catch {
+    if (requireAll) throw new Error("参考图读取或合成失败，请检查各角色图片，或选择纯文字生图。");
     return references[0].dataUrl;
   }
 }
@@ -850,6 +855,12 @@ export async function fetchNovelAiModels(apiKey: string): Promise<string[]> {
   }
 }
 
+export type ImageReferenceSelection = { character: boolean; user: boolean; identity?: UserIdentity | null };
+
+export function resolveConfiguredImageGenerationSettings(characterId?: string, appId?: string): ImageGenerationSettings {
+  return applyImageGenerationBinding(loadImageGenerationSettings(), resolveBinding(loadBindingConfig(), characterId, appId).imageConfigId);
+}
+
 export async function generateImageFromConfiguredApi(params: {
   description: string;
   characterId?: string;
@@ -858,17 +869,18 @@ export async function generateImageFromConfiguredApi(params: {
   useReferenceImage?: boolean;
   /** 强制是否加入角色当前绑定用户的参考图；未传时根据合照/用户照片语义自动判断。 */
   includeUserReferenceImage?: boolean;
+  referenceSelection?: ImageReferenceSelection;
+  explicitReferenceImage?: string;
+  explicitReferenceImages?: readonly { dataUrl: string; label: string }[];
+  portraitOutput?: boolean;
+  landscapeOutput?: boolean;
+  /** Caller owns blob persistence (e.g. facing assets). */
+  persistResult?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult | null> {
-  const storedSettings = params.settings ?? loadImageGenerationSettings();
-  // 显式传入 settings 的配置测试/工具调用保持原样；正常业务调用才读取绑定。
-  const settings = params.settings
-    ? storedSettings
-    : applyImageGenerationBinding(
-        storedSettings,
-        resolveBinding(loadBindingConfig(), params.characterId, params.appId).imageConfigId,
-      );
+  const settings = params.settings ?? resolveConfiguredImageGenerationSettings(params.characterId, params.appId);
+  const selection = params.referenceSelection;
   if (!settings.enabled) return null;
 
   const description = params.description.trim();
@@ -876,18 +888,25 @@ export async function generateImageFromConfiguredApi(params: {
 
   // NovelAI 模式
   if (settings.provider === "novelai") {
+    if (params.explicitReferenceImage || params.explicitReferenceImages?.length || (selection && (selection.character || selection.user))) {
+      throw new Error("当前 NovelAI 生图方式无法使用参考图，请改选文字生图。");
+    }
     const naiApiKey = settings.novelai?.apiKey?.trim();
     if (!naiApiKey) return null;
 
     const presets = settings.novelai?.presets && settings.novelai.presets.length > 0
       ? settings.novelai.presets
       : [DEFAULT_NOVELAI_PRESET];
-    const activePreset = presets.find(p => p.id === settings.novelai?.activePresetId) || presets[0];
+    const selectedPreset = presets.find(p => p.id === settings.novelai?.activePresetId) || presets[0];
+    const { width, height } = getNovelAiResolution(selectedPreset.resolution);
+    const activePreset = params.portraitOutput && width >= height
+      ? { ...selectedPreset, resolution: width > height ? `${height}x${width}` : NOVELAI_DEFAULT_RESOLUTION }
+      : selectedPreset;
 
     // 本轮画面描述必须排在最前面。NovelAI 对提示词顺序较敏感；此前把预设、
     // 人物外观和锚点放在描述前面，长提示词下会让聊天/朋友圈的当前场景失去权重。
     const positiveParts: string[] = [description];
-    const novelAiCharacterReference = params.characterId
+    const novelAiCharacterReference = params.characterId && !selection
       ? settings.characterReferences?.[params.characterId]
       : undefined;
     const characterFeaturePrompt = novelAiCharacterReference?.novelAiFeaturePromptEnabled !== false
@@ -917,7 +936,7 @@ export async function generateImageFromConfiguredApi(params: {
     const mimeType = data.mimeType || "image/png";
     const blob = base64ToBlob(data.b64, mimeType);
     throwIfAborted(params.signal);
-    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    const mediaRef = params.persistResult === false ? "" : await storeMediaBlob(blob, mimeType, "image");
     throwIfAborted(params.signal);
     return {
       mediaRef,
@@ -933,17 +952,30 @@ export async function generateImageFromConfiguredApi(params: {
   // OpenAI 兼容模式：使用当前激活预设（旧配置由存储层迁移后仍保持兼容）
   const openaiPreset = settings.openaiPresets?.find(preset => preset.id === settings.activeOpenAiPresetId)
     || settings.openaiPresets?.[0];
-  const openaiSettings = openaiPreset ? { ...settings, ...openaiPreset } : settings;
+  const selectedSettings = openaiPreset ? { ...settings, ...openaiPreset } : settings;
+  const dimensions = /^(\d+)x(\d+)$/.exec(selectedSettings.size);
+  let openaiSettings = selectedSettings;
+  if (params.portraitOutput && (!dimensions || Number(dimensions[1]) >= Number(dimensions[2]))) {
+    openaiSettings = { ...selectedSettings, size: "1024x1536" };
+  } else if (params.landscapeOutput && (!dimensions || Number(dimensions[1]) <= Number(dimensions[2]))) {
+    openaiSettings = { ...selectedSettings, size: "1536x1024" };
+  }
   if (!openaiSettings.apiKey.trim() || !openaiSettings.baseUrl.trim() || !openaiSettings.model.trim()) return null;
 
   const reference = params.characterId ? settings.characterReferences?.[params.characterId] : undefined;
   // 「非自拍不使用参考图」开关已从生图设置页删除：参考图启用后始终参与生成
   const shouldUseReference = Boolean(
-    params.useReferenceImage
+    (selection?.character ?? params.useReferenceImage)
     && reference?.assetId
     && reference.enabled !== false,
   );
   const referenceInputs: Array<{ dataUrl: string; label: string }> = [];
+  if (params.explicitReferenceImage) {
+    referenceInputs.push({ dataUrl: await normalizeReferenceImageForEdit(params.explicitReferenceImage), label: "本次选用的参考图" });
+  }
+  for (const reference of params.explicitReferenceImages ?? []) {
+    referenceInputs.push({ ...reference, dataUrl: await normalizeReferenceImageForEdit(reference.dataUrl) });
+  }
   if (shouldUseReference && reference?.assetId) {
     const raw = await getChatImageFromIndexedDB(reference.assetId);
     if (raw) referenceInputs.push({
@@ -951,16 +983,18 @@ export async function generateImageFromConfiguredApi(params: {
       label: "角色参考",
     });
   }
-  const activeAnchors = (reference?.anchors || []).filter(anchor => anchor.enabled !== false);
+  if (selection?.character && referenceInputs.length === 0) throw new Error("角色参考图未设置、未启用或无法读取。");
+  const activeAnchors = selection ? [] : (reference?.anchors || []).filter(anchor => anchor.enabled !== false);
   for (const anchor of activeAnchors) {
     if (!anchor.assetId) continue;
     const raw = await getChatImageFromIndexedDB(anchor.assetId);
     if (raw) referenceInputs.push({ dataUrl: raw, label: `锚点：${anchor.name || "特征"}` });
   }
-  const identityId = resolveGenerationUserIdentityId(params.characterId, params.appId);
-  const userIdentity = identityId ? loadUserIdentities().find(identity => identity.id === identityId) : undefined;
+  const identityId = selection ? selection.identity?.id : resolveGenerationUserIdentityId(params.characterId, params.appId);
+  const userIdentity = selection ? selection.identity : identityId ? loadUserIdentities().find(identity => identity.id === identityId) : undefined;
   const userReference = identityId ? settings.userReferences?.[identityId] : undefined;
-  const includeUserReference = params.includeUserReferenceImage ?? descriptionNeedsUserReference(description, userIdentity?.name);
+  const includeUserReference = selection?.user ?? params.includeUserReferenceImage ?? descriptionNeedsUserReference(description, userIdentity?.name);
+  const beforeUser = referenceInputs.length;
   if (includeUserReference && userReference?.assetId && userReference.enabled !== false) {
     const raw = await getChatImageFromIndexedDB(userReference.assetId);
     if (raw) referenceInputs.push({
@@ -969,9 +1003,10 @@ export async function generateImageFromConfiguredApi(params: {
     });
   }
   throwIfAborted(params.signal);
-  const referenceImageDataUrl = await combineReferenceImagesForEdit(referenceInputs);
+  if (selection?.user && referenceInputs.length === beforeUser) throw new Error("当前用户参考图未设置、未启用或无法读取。");
+  const referenceImageDataUrl = await combineReferenceImagesForEdit(referenceInputs, Boolean(selection || params.explicitReferenceImages?.length));
   throwIfAborted(params.signal);
-  const characterPrompt = reference?.featurePrompt?.trim() || "";
+  const characterPrompt = !selection || selection.character ? reference?.featurePrompt?.trim() || "" : "";
   const anchorsPrompt = activeAnchors
     .filter(anchor => anchor.description.trim())
     .map(anchor => `${anchor.name || "特征"}：${anchor.description.trim()}`)
@@ -985,6 +1020,7 @@ export async function generateImageFromConfiguredApi(params: {
       characterPrompt ? `【角色固定外观】${characterPrompt}` : "",
       anchorsPrompt ? `【角色特定锚点】${anchorsPrompt}` : "",
       userPrompt,
+      referenceInputs.length ? `【参考身份顺序】${referenceInputs.map((item,index)=>`${index+1}. ${item.label}`).join("；")}` : "",
       referenceInputs.length > 1 ? `【参考图说明】上传的是分格参考板，共 ${referenceInputs.length} 格；请按每格下方标签分别还原人物或物件，不要把不同格的身份混合。` : "",
     ].filter(Boolean).join("\n\n"),
     openaiSettings.extraPrompt,
@@ -998,7 +1034,7 @@ export async function generateImageFromConfiguredApi(params: {
   const mimeType = data.mimeType || "image/png";
   const blob = base64ToBlob(data.b64, mimeType);
   throwIfAborted(params.signal);
-  const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+  const mediaRef = params.persistResult === false ? "" : await storeMediaBlob(blob, mimeType, "image");
   throwIfAborted(params.signal);
   return {
     mediaRef,

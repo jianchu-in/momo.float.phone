@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
+import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, LayoutGrid, Link2, Loader2, LogOut, MessagesSquare, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
@@ -112,6 +112,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [timeAware, setTimeAware] = useState(true);
     const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
+    const [roleplayDiscussionEnabled, setRoleplayDiscussionEnabled] = useState(false);
+    const [combinedFloatingTools, setCombinedFloatingTools] = useState(false);
     const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
     const [floatingDockSheetOpen, setFloatingDockSheetOpen] = useState(false);
     const [keepAlive, setKeepAlive] = useState(false);
@@ -354,6 +356,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         setPromptViewerEnabled(settings.promptViewerEnabled === true);
         setQuickActionEnabled(settings.quickActionEnabled === true);
         setFloatingDockEnabled(settings.floatingDockEnabled === true);
+        setRoleplayDiscussionEnabled(settings.roleplayDiscussionEnabled === true);
+        setCombinedFloatingTools(settings.combinedFloatingTools === true);
         setKeepAlive(loadKeepAlive());
     }, []);
 
@@ -508,6 +512,32 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                     </span>
                                     <span className="menu-right settings-tools-menu-toggle">
                                         <Toggle checked={quickActionEnabled} onChange={handleQuickActionChange} className="settings-toggle-control" />
+                                    </span>
+                                </div>
+                                <div className="menu-item settings-tools-menu-item">
+                                    <span className="card-icon card-icon-glass"><MessagesSquare size={20} /></span>
+                                    <span className="settings-tools-menu-copy">
+                                        <span className="menu-label appearance-menu-item-label">破壁聊天</span>
+                                        <span className="menu-desc settings-tools-menu-desc">带着当前场景和模型聊角色扮演</span>
+                                    </span>
+                                    <span className="menu-right settings-tools-menu-toggle">
+                                        <Toggle checked={roleplayDiscussionEnabled} onChange={next => {
+                                            setRoleplayDiscussionEnabled(next);
+                                            saveChatAppSettings({ ...loadChatAppSettings(), roleplayDiscussionEnabled: next });
+                                        }} className="settings-toggle-control" />
+                                    </span>
+                                </div>
+                                <div className="menu-item settings-tools-menu-item">
+                                    <span className="card-icon card-icon-glass"><LayoutGrid size={20} /></span>
+                                    <span className="settings-tools-menu-copy">
+                                        <span className="menu-label appearance-menu-item-label">三合一悬浮球</span>
+                                        <span className="menu-desc settings-tools-menu-desc">点主球扇形展开已开启的工具</span>
+                                    </span>
+                                    <span className="menu-right settings-tools-menu-toggle">
+                                        <Toggle checked={combinedFloatingTools} onChange={next => {
+                                            setCombinedFloatingTools(next);
+                                            saveChatAppSettings({ ...loadChatAppSettings(), combinedFloatingTools: next });
+                                        }} className="settings-toggle-control" />
                                     </span>
                                 </div>
                             </div>

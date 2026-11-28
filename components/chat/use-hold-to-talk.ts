@@ -19,6 +19,7 @@ const MIN_RECORDING_MS = 400;
 export type HoldToTalkOptions = {
     /** 用于按角色绑定解析识别配置 */
     characterId?: string;
+    appId?: string;
     /** 当前是否允许开始录音（如通话状态是否 IDLE） */
     canStart: () => boolean;
     /** 录音真正开始（麦克风已打开） */
@@ -49,6 +50,7 @@ export function useHoldToTalk(options: HoldToTalkOptions): HoldToTalkHandle {
     const recordingRef = useRef<ActiveCallRecording | null>(null);
     const startedAtRef = useRef(0);
     const startingRef = useRef(false);
+    const pressedRef = useRef(false);
     const mountedRef = useRef(true);
     const optionsRef = useRef(options);
     optionsRef.current = options;
@@ -72,12 +74,13 @@ export function useHoldToTalk(options: HoldToTalkOptions): HoldToTalkHandle {
     const handlePress = useCallback(async () => {
         if (startingRef.current || recordingRef.current) return;
         if (!optionsRef.current.canStart()) return;
+        pressedRef.current = true;
         setError("");
         startingRef.current = true;
         try {
             const recording = await startCallRecording();
             startingRef.current = false;
-            if (!mountedRef.current) { recording.cancel(); return; }
+            if (!mountedRef.current || !pressedRef.current) { recording.cancel(); return; }
             recordingRef.current = recording;
             startedAtRef.current = Date.now();
             setRecState("recording");
@@ -89,6 +92,7 @@ export function useHoldToTalk(options: HoldToTalkOptions): HoldToTalkHandle {
     }, [fail]);
 
     const handleRelease = useCallback(async () => {
+        pressedRef.current = false;
         const recording = recordingRef.current;
         if (!recording) return;
         recordingRef.current = null;
@@ -105,7 +109,7 @@ export function useHoldToTalk(options: HoldToTalkOptions): HoldToTalkHandle {
         try {
             const blob = await recording.stop();
             if (!blob) { fail("没有录到声音"); return; }
-            const config = resolveCloudSttConfig(optionsRef.current.characterId);
+            const config = resolveCloudSttConfig(optionsRef.current.characterId, optionsRef.current.appId);
             if (!config) { fail("未找到可用的语音识别配置"); return; }
             const text = await transcribeAudioBlob(blob, config);
             if (!mountedRef.current) return;

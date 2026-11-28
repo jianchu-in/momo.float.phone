@@ -1,5 +1,6 @@
 "use client";
 
+import { OPEN_FLOATING_TOOL } from "@/lib/roleplay-discussion";
 import { useState, useEffect, useRef, useSyncExternalStore, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
 import { getDebugChatState, getDebugPromptSnapshot, subscribeDebugChatState, subscribeDebugPromptSnapshot, type DebugPromptSnapshot } from "@/lib/debug-store";
 import { previewPromptRequestSnapshot, ChatEngineError } from "@/lib/chat-engine";
@@ -26,7 +27,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import { getAllPosts } from "@/lib/moments-storage";
 import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { getWeekStartIso } from "@/lib/calendar-utils";
-import { getStorySessionOwnerKey, hydrateStoryStorage, loadStoryGlobalSettings, loadStoryGroups, loadStorySessions, loadStoryMessages } from "@/lib/story-storage";
+import { getStorySessionOwnerKey, hydrateStoryStorage, loadStoryGlobalSettings, loadStoryGroups, loadStorySessions, loadStoryMessages, nextStoryRound } from "@/lib/story-storage";
 import { previewStoryPromptPayload } from "@/lib/story-engine";
 import { loadVnSessions, loadVnMessages } from "@/lib/vn-storage";
 import { previewVnPromptPayload } from "@/lib/vn-engine";
@@ -102,7 +103,7 @@ function isExtraPromptMode(mode: DebugMode): mode is ExtraPromptAppId {
     return EXTRA_PROMPT_APPS.some(app => app.id === mode);
 }
 
-export function DebugPromptPanel() {
+export function DebugPromptPanel({ combined = false }: { combined?: boolean } = {}) {
     const chatState = useSyncExternalStore(subscribeDebugChatState, getDebugChatState, () => null);
     const promptSnapshot = useSyncExternalStore(subscribeDebugPromptSnapshot, getDebugPromptSnapshot, () => null);
     const [collapsed, setCollapsed] = useState(true);
@@ -405,7 +406,7 @@ export function DebugPromptPanel() {
                         latestMessages,
                         followUpMode
                             ? { followUpAuto: true, appTags: ["chat", "text", "followup"] }
-                            : { appTags: ["chat", "text"] }
+                            : { appTags: ["chat", "text"], allowMomentsCoverChange: true }
                     );
                 }
             }
@@ -462,6 +463,7 @@ export function DebugPromptPanel() {
                 sessionContextExcludedTags: session.contextExcludedTags,
                 settings: session.settings,
                 globalSettings: loadStoryGlobalSettings(),
+                round: nextStoryRound(session.id),
                 floatingChatContext,
                 participantIds: session.participantIds || [session.characterId],
                 storyMemory: {
@@ -908,10 +910,20 @@ export function DebugPromptPanel() {
         setAdventureWorldId(adventureWorldOptions[0].id);
     }, [adventureWorldId, adventureWorldOptions]);
 
+    useEffect(() => {
+        if (!combined || !enabled) return;
+        const openTool = (event: Event) => {
+            if ((event as CustomEvent).detail !== "prompt-viewer") return;
+            setCollapsed(false);
+        };
+        window.addEventListener(OPEN_FLOATING_TOOL, openTool);
+        return () => window.removeEventListener(OPEN_FLOATING_TOOL, openTool);
+    }, [combined, enabled]);
+
     if (!enabled) return null;
 
     const isPanelOpen = !collapsed;
-    const showFloatingButton = collapsed || floatingDockEnabled;
+    const showFloatingButton = !combined && (collapsed || floatingDockEnabled);
     const isDual = floatingDockEnabled && quickActionEnabled && enabled;
     const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
 

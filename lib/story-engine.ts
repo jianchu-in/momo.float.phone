@@ -1,3 +1,4 @@
+import { loadShownImageDataUrl, STORY_REFERENCE_IMAGE_CONTEXT, formatStoryImageInput } from "./shown-image";
 import { loadCharacters } from "./character-storage";
 import {
   loadBindingConfig,
@@ -14,16 +15,18 @@ import { previewMessagesForApi, sendLLMRequestPreferStream, sendLLMStreamRequest
 import { loadMemoryConfig } from "./memory-storage";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
-import { prepareShortTermContext } from "./short-term-assembler";
+import { loadNativeTimelineAsync, prepareShortTermContext } from "./short-term-assembler";
 import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from "./calendar-storage";
 import { getWeekStartIso } from "./calendar-utils";
 import { parseStoryResponse } from "./story-parser";
 import { STORY_PARSER_VERSION } from "./story-parser";
-import { loadStoryMessages, replaceStoryMessages, resolveActiveStorySchemes, type StoryCharacterSettings, type StoryGlobalSettings, type StoryMessage } from "./story-storage";
+import { loadStorySessions, loadStoryMessages, replaceStoryMessages, resolveActiveStorySchemes, type StoryCharacterSettings, type StoryGlobalSettings, type StoryIllustration, type StoryMessage } from "./story-storage";
+import { buildStoryIllustrationMessages, readStoryIllustration, storyIllustrationSettingsForRound, stripStoryIllustrationBlock } from "./story-illustration";
 import type { ChatMessage } from "./chat-storage";
 import { MacroEngine } from "./macro-engine";
 import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { formatPromptTimestamp } from "./prompt-time";
+import { throwIfAborted } from "./abort-utils";
 
 const DEFAULT_STORY_FOLD_TAGS = "think,thinking,summary,story_status,story_theater";
 const DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS = "think,thinking,story_theater";
@@ -55,6 +58,7 @@ export type StoryGenerationOptions = {
   sessionContextExcludedTags?: string;
   settings?: StoryCharacterSettings;
   globalSettings?: StoryGlobalSettings;
+  round?: number;
   floatingChatContext?: string;
   /** 多人剧情角色列表；第一个角色仍作为 API、预设和语音绑定的主角色。 */
   participantIds?: string[];
@@ -120,6 +124,7 @@ export type StoryGenerationResult = {
   storySummary: string;
   regexSignature: string;
   parserVersion: number;
+  illustration?: StoryIllustration;
   promptMessages: LLMMessage[];
   model: string;
   presetName: string;
@@ -150,7 +155,7 @@ function toHistoryMessage(message: StoryMessage, contextExcludedTags?: string): 
     id: message.id,
     sessionId: message.sessionId,
     role: message.contextRole || message.role,
-    content: stripContextExcludedTags(message.rawContent, contextExcludedTags),
+    content: stripContextExcludedTags(message.imageRef && (message.contextRole || message.role) === "user" ? formatStoryImageInput(message.rawContent) : message.rawContent, contextExcludedTags),
     status: "sent",
     createdAt: message.createdAt,
   };
@@ -242,12 +247,17 @@ export async function generateStoryCompletion(
   history: StoryMessage[],
   options?: StoryGenerationOptions,
 ): Promise<StoryGenerationResult> {
+  throwIfAborted(options?.signal);
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
     throw new ChatEngineError(`Character not found: ${characterId}`);
   }
 
   const { apiConfig, preset: resolvedPreset, regexes, worldBooks, regexSignature, summaryTag } = resolveStoryConfigs(characterId);
+  if (history.at(-1)?.imageRef && !apiConfig.enableImageRecognition) {
+    throw new ChatEngineError("图片已保存。请为剧情文字 API 开启识图，再重试。");
+  }
+
   const preset = selectStoryPresetPrompts(resolvedPreset, options?.settings?.enabledPresetPromptIds);
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
@@ -263,15 +273,22 @@ export async function generateStoryCompletion(
     options?.floatingChatContext,
     options?.participantIds,
     options?.storyMemory,
+    options?.signal,
   );
+  throwIfAborted(options?.signal);
   if (options?.retryInstruction?.trim()) {
     llmMessages.push({
       role: "system",
       content: `【本次重新生成额外要求】\n${options.retryInstruction.trim()}\n只在本次重新生成中遵守；不要复述、解释或向用户展示这段隐藏要求。`,
     });
   }
+  const illustrationSettings = storyIllustrationSettingsForRound(options?.globalSettings?.illustration, options?.round);
+  if (illustrationSettings) {
+    llmMessages.push(...buildStoryIllustrationMessages(illustrationSettings, characterId, options?.participantIds));
+  }
 
-  const userIdentity = resolveUserIdentity(characterId, "story");
+  const sourceSession = loadStorySessions().find(item=>item.id === history[0]?.sessionId);
+  const userIdentity = sourceSession?.facingIdentity !== undefined ? sourceSession.facingIdentity : resolveUserIdentity(characterId, "story");
   const macroEngine = new MacroEngine(character.name, userIdentity?.name ?? "用户");
 
   let rawOutput: string;
@@ -302,7 +319,7 @@ export async function generateStoryCompletion(
     }, { skipOutputRegex: true, includeReasoning: true, appId: "story", appTags: ["story"], signal: options?.signal });
   }
 
-  const parsed = parseStoryResponse(rawOutput, regexes, {
+  const parsed = parseStoryResponse(stripStoryIllustrationBlock(rawOutput), regexes, {
     summaryTag,
     foldTags: effectiveFoldTags,
     macroEngine,
@@ -314,6 +331,7 @@ export async function generateStoryCompletion(
     storySummary: parsed.summaryText,
     regexSignature,
     parserVersion: STORY_PARSER_VERSION,
+    illustration: illustrationSettings ? readStoryIllustration(rawOutput, illustrationSettings, characterId, options?.participantIds) : undefined,
     promptMessages: llmMessages,
     model: apiConfig.defaultModel,
     presetName: preset?.name || "默认预设",
@@ -332,13 +350,15 @@ async function buildStoryPromptMessages(
   floatingChatContext?: string,
   participantIds?: string[],
   storyMemory?: StoryGenerationOptions["storyMemory"],
+  signal?: AbortSignal,
 ): Promise<LLMMessage[]> {
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
     throw new ChatEngineError(`Character not found: ${characterId}`);
   }
 
-  const userIdentity = resolveUserIdentity(characterId, "story");
+  const sourceSession = loadStorySessions().find(item=>item.id === history[0]?.sessionId);
+  const userIdentity = sourceSession?.facingIdentity !== undefined ? sourceSession.facingIdentity : resolveUserIdentity(characterId, "story");
   const allCharacters = loadCharacters();
   const participantCharacters = Array.from(new Set([characterId, ...(participantIds || [])]))
     .map((id) => allCharacters.find((item) => item.id === id))
@@ -349,6 +369,12 @@ async function buildStoryPromptMessages(
   const memConfig = loadMemoryConfig();
   const independent = Boolean(storyMemory?.independent);
   const timeAware = globalSettings?.timeAware !== false;
+  const afterTimestamp = storyMemory?.inheritRecentMemory === false ? storyMemory.startedAt : undefined;
+  const prepareContext = async (id: string, userName: string) => {
+    const timeline = await loadNativeTimelineAsync(id, { appId: "story", userName, afterTimestamp, timeAware, signal });
+    throwIfAborted(signal);
+    return prepareShortTermContext(id, "story", { userName, history: historyMessages, afterTimestamp, timeAware, timeline });
+  };
   const context = independent
     ? {
       recentBlocks: [],
@@ -356,12 +382,7 @@ async function buildStoryPromptMessages(
       wbActivationContext: historyMessages.slice(-10).map((message) => message.content).join("\n"),
       unifiedRecentItems: [],
     }
-    : prepareShortTermContext(characterId, "story", {
-      userName: userIdentity?.name ?? "用户",
-      history: historyMessages,
-      afterTimestamp: storyMemory?.inheritRecentMemory === false ? storyMemory.startedAt : undefined,
-      timeAware,
-    });
+    : await prepareContext(characterId, userIdentity?.name ?? "用户");
   const { recentBlocks, truncatedHistory, wbActivationContext, unifiedRecentItems } = context;
 
   let memories: Awaited<ReturnType<typeof retrieveMemoriesForPrompt>> | null = null;
@@ -371,6 +392,7 @@ async function buildStoryPromptMessages(
       retrieveMemoriesForPrompt(characterId, wbActivationContext, memConfig).catch(() => null),
       retrieveCoreMemoriesForPrompt(characterId, memConfig).catch(() => null),
     ]);
+    throwIfAborted(signal);
   }
 
   const now = new Date();
@@ -394,6 +416,20 @@ async function buildStoryPromptMessages(
     characterRelations: independent || isEnsemble ? null : undefined,
     dwellingContext: independent || isEnsemble ? null : undefined,
   });
+  const shownImage = history.at(-1);
+  if (shownImage?.role === "user" && shownImage.imageRef) {
+    const url = await loadShownImageDataUrl(shownImage.imageRef);
+    if (!url) throw new ChatEngineError("无法读取这张图片，请重新选择。");
+    const index = messages.map(message => message.role).lastIndexOf("user");
+    const previous = messages[index]?.content;
+    const text = typeof previous === "string" ? previous : shownImage.rawContent;
+    const turn: LLMMessage = { role: "user", content: [
+      { type: "text", text: `${STORY_REFERENCE_IMAGE_CONTEXT}\n${formatStoryImageInput(text)}` },
+      { type: "image_url", image_url: { url, detail: "auto" } },
+    ] };
+    if (index < 0) messages.push(turn);
+    else messages[index] = turn;
+  }
   const settingsPrompt = buildStorySettingsPrompt(settings, userIdentity?.name ?? "用户", globalSettings, now);
   if (participantCharacters.length > 1) {
     const participantContexts = await Promise.all(participantCharacters.map(async (item) => {
@@ -403,12 +439,7 @@ async function buildStoryPromptMessages(
       }
       const localContext = item.id === characterId
         ? context
-        : prepareShortTermContext(item.id, "story", {
-          userName: identity?.name ?? userIdentity?.name ?? "用户",
-          history: historyMessages,
-          afterTimestamp: storyMemory?.inheritRecentMemory === false ? storyMemory.startedAt : undefined,
-          timeAware,
-        });
+        : await prepareContext(item.id, identity?.name ?? userIdentity?.name ?? "用户");
       const [localLongTerm, localCore] = item.id === characterId
         ? [memories, coreMemories]
         : await Promise.all([
@@ -464,7 +495,7 @@ export async function previewStoryPromptPayload(
   characterId: string,
   history: StoryMessage[],
   options?: Pick<StoryGenerationOptions,
-    "sessionContextExcludedTags" | "settings" | "globalSettings" | "floatingChatContext" | "participantIds" | "storyMemory"
+    "sessionContextExcludedTags" | "settings" | "globalSettings" | "round" | "floatingChatContext" | "participantIds" | "storyMemory"
   >,
 ): Promise<StoryPreviewResult> {
   const character = loadCharacters().find((item) => item.id === characterId);
@@ -487,6 +518,10 @@ export async function previewStoryPromptPayload(
     options?.participantIds,
     options?.storyMemory,
   );
+  const illustrationSettings = storyIllustrationSettingsForRound(options?.globalSettings?.illustration, options?.round);
+  if (illustrationSettings) {
+    llmMessages.push(...buildStoryIllustrationMessages(illustrationSettings, characterId, options?.participantIds));
+  }
   return {
     messages: previewMessagesForApi(apiConfig, preset, llmMessages),
     characterName: character.name,
@@ -501,7 +536,8 @@ export function rebuildStorySessionRenderCache(characterId: string, sessionId: s
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
 
   const character = loadCharacters().find((c) => c.id === characterId);
-  const userIdentity = resolveUserIdentity(characterId, "story");
+  const sourceSession=loadStorySessions().find(item=>item.id===sessionId);
+  const userIdentity=sourceSession?.facingIdentity!==undefined?sourceSession.facingIdentity:resolveUserIdentity(characterId,"story");
   const macroEngine = new MacroEngine(character?.name ?? "", userIdentity?.name ?? "用户");
 
   const rebuilt = loadStoryMessages(sessionId).map((message) => {

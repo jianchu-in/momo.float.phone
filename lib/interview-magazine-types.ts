@@ -44,6 +44,10 @@ export const INTERVIEW_MAGAZINE_DEFAULT_MEMORY_PROMPT = [
   "不要使用任何系统、配置或模型相关术语。",
   "80-180 个中文字，不要标题、列表、JSON 或格式标记。",
 ].join("\n");
+export const INTERVIEW_DEFAULT_AUDIENCE_PROMPT = [
+  "根据本轮公开访谈实录生成简短、自然的现场观众讨论、弹幕或评论。可以感慨、好奇、接梗、轻松调侃，或礼貌地表达不同看法。",
+  "避免吵架、互怼、拉踩、人身攻击和煽动对立。不要冒充嘉宾或主持人，不编造台上没发生的事件，不暴露幕后提问来源。",
+].join("\n");
 
 export type InterviewTarget = "character" | "user";
 
@@ -56,8 +60,12 @@ export type InterviewOptions = {
   sceneInstructions: string;
   discussion: boolean;
   questionAsHost: boolean;
+  guestGroups?: Record<string, number>;
+  audience?: { enabled?: boolean; apiConfigId?: string; prompt?: string };
 };
-export type InterviewLivePhase = "idle" | "opening" | "answering" | "awaiting_user" | "reacting" | "discussing" | "stopped" | "error" | "done";
+export type InterviewLivePhase = "idle" | "opening" | "answering" | "awaiting_user" | "reacting" | "discussing" | "audience" | "stopped" | "error" | "done";
+export type InterviewAudienceComment = { name: string; content: string };
+export type InterviewAudienceRound = { round: number; questionId?: string; comments: InterviewAudienceComment[] };
 export type InterviewLiveSnapshot = {
   messages: InterviewMessage[];
   phase: InterviewLivePhase;
@@ -68,6 +76,10 @@ export type InterviewLiveSnapshot = {
   userInput?: string;
   questionInput?: string;
   error?: string;
+  audienceRounds?: InterviewAudienceRound[];
+  audienceError?: string;
+  audienceAttemptedRound?: number;
+  questionId?: string;
 };
 
 export type InterviewMessage = {
@@ -82,6 +94,8 @@ export type InterviewMessage = {
   speakerCharacterId?: string;
   speakerName?: string;
   createdAt: string;
+  questionId?: string;
+  round?: number;
 };
 
 export type InterviewCharacterSnapshot = {
@@ -134,6 +148,7 @@ export type InterviewArticle = {
 };
 
 export type InterviewIssue = {
+  audienceRounds?: InterviewAudienceRound[];
   memoryWrittenCharacterIds?: string[];
   options?: InterviewOptions;
   id: string;

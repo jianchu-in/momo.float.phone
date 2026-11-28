@@ -6177,3 +6177,361 @@
   gap: 6px;
   padding: 0 10px 8px;
 }
+
+.phone-tools-anchor {
+  position: absolute;
+  right: 18px;
+  top: clamp(50px, calc(100% - 266px), calc(100% - 60px));
+  width: 48px;
+  height: 48px;
+  z-index: 100002;
+  pointer-events: none;
+}
+.phone-tools-anchor button {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--c-border, #ddd6e6);
+  border-radius: 50%;
+  background: var(--c-bg-card, #fff);
+  color: var(--c-text-title, #343052);
+  box-shadow: 0 5px 18px rgba(35, 28, 65, .18);
+  pointer-events: auto;
+}
+.phone-tools-anchor .phone-tools-drag-handle { touch-action: none; cursor: grab; }
+.phone-tools-anchor .phone-tools-drag-handle:active { cursor: grabbing; }
+.phone-tools-radial .phone-tools-satellite { position: absolute; inset: 0; touch-action: manipulation; }
+.phone-tools-radial { transition: left .22s ease, transform .22s ease; }
+.phone-tools-radial[data-dragging="true"] { transition: none; }
+.phone-tools-radial[data-dock-side="left"] { transform: translateX(-36px); }
+.phone-tools-radial[data-dock-side="right"] { transform: translateX(36px); }
+.phone-tools-radial .phone-tools-drag-handle[aria-expanded="false"] {
+  background: color-mix(in srgb, var(--c-bg-card, #fff) 64%, transparent); backdrop-filter: blur(9px);
+  box-shadow: 0 3px 12px rgba(35, 28, 65, .11);
+}
+.phone-tools-radial[data-dock-side="left"] .phone-tools-drag-handle svg { transform: translateX(8px); }
+.phone-tools-radial[data-dock-side="right"] .phone-tools-drag-handle svg { transform: translateX(-8px); }
+@media (prefers-reduced-motion: reduce) { .phone-tools-radial { transition: none; } }
+
+.roleplay-discussion-backdrop {
+  overflow: hidden;
+  contain: layout paint;
+  position: absolute;
+  z-index: 100003;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  background: #19152274;
+}
+.roleplay-discussion {
+  --discussion-accent: #655082;
+  --discussion-soft: color-mix(in srgb, var(--discussion-accent) 9%, var(--c-bg-card, #fff));
+  --discussion-edge: color-mix(in srgb, var(--discussion-accent) 19%, var(--c-bg-card, #fff));
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 440px);
+  min-width: 0;
+  max-width: 100%;
+  height: min(625px, 100%);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 24px;
+  background: var(--c-bg-card, #fff);
+  color: var(--c-text-title, #292431);
+  box-shadow: 0 18px 60px #1a132b47;
+}
+.roleplay-discussion:focus { outline: none; }
+.roleplay-discussion :is(button, select, input, textarea):focus-visible, .personal-note-timer :is(button, select, input):focus-visible {
+  outline: 2px solid #9474ab;
+  outline-offset: 2px;
+}
+.roleplay-discussion :where(button, select, input, textarea) { font: inherit; color: inherit; }
+.roleplay-discussion button { cursor: pointer; }
+.roleplay-discussion button:disabled { opacity: .48; cursor: default; }
+.discussion-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 13px 14px 10px;
+  background: linear-gradient(140deg, var(--discussion-soft), transparent);
+}
+.discussion-title-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 13px;
+  color: var(--c-text-title, #433356);
+  background: var(--discussion-edge);
+}
+.discussion-title { flex: 1; min-width: 0; }
+.discussion-title h2 { font-size: 17px; line-height: 1.25; margin: 0; }
+.discussion-title p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--c-text-secondary, #625c74);
+}
+.discussion-icon-button {
+  border: 0;
+  background: var(--discussion-soft);
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.discussion-role, .discussion-preset-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 14px 8px;
+}
+.discussion-role-name {
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discussion-model {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 65%;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: var(--discussion-soft);
+  color: var(--c-text-secondary, #625c74);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.discussion-model svg, .discussion-select svg { flex: none; }
+.discussion-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.discussion-preset-bar { border-bottom: 1px solid var(--discussion-edge); }
+.discussion-select {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 9px;
+  background: var(--discussion-soft);
+}
+.discussion-role .discussion-select { max-width: 55%; }
+.discussion-preset-bar .discussion-select { flex: 1; }
+.discussion-select > span { font-size: 11px; white-space: nowrap; color: var(--c-text-secondary, #625c74); }
+.discussion-select select {
+  min-width: 0;
+  flex: 1;
+  appearance: none;
+  padding: 5px 0;
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.discussion-select select option, .discussion-select select optgroup { background: var(--c-bg-card, #fff); }
+.discussion-select > svg { pointer-events: none; margin-left: -4px; }
+.discussion-edit-toggle, .discussion-editor-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 9px;
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.discussion-edit-toggle[aria-expanded="true"] { background: var(--discussion-soft); }
+.roleplay-discussion-transcript {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: 12px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--discussion-accent) 4%, var(--c-bg-card, #fff));
+}
+.roleplay-discussion-empty {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  flex: 1;
+  gap: 9px;
+  text-align: center;
+  color: var(--c-text-secondary, #625c74);
+}
+.roleplay-discussion-empty p, .discussion-replying { margin: 0; font-size: 13px; line-height: 1.5; }
+.discussion-bubble { align-self: flex-start; display: grid; gap: 4px; max-width: 90%; }
+.discussion-bubble > span { padding: 0 4px; color: var(--c-text-secondary, #625c74); font-size: 11px; }
+.discussion-bubble p {
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 4px 14px 14px;
+  background: var(--c-bg-card, #fff);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.58;
+}
+.discussion-bubble[data-role="user"] { align-self: flex-end; }
+.discussion-bubble[data-role="user"] > span { text-align: right; }
+.discussion-bubble[data-role="user"] p { border-color: transparent; border-radius: 14px 4px 14px 14px; color: #fff; background: var(--discussion-accent); }
+.discussion-replying { color: var(--c-text-secondary, #625c74); }
+.discussion-composer {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  gap: 8px;
+  margin: 8px 12px 12px;
+  padding: 5px;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 15px;
+  background: var(--discussion-soft);
+}
+.discussion-composer textarea, .discussion-editor :is(input, textarea) {
+  width: 100%;
+  min-width: 0;
+  resize: none;
+  font-size: 16px;
+}
+.discussion-composer textarea {
+  min-height: 42px;
+  max-height: 80px;
+  border: 0;
+  border-radius: 9px;
+  padding: 5px 7px;
+  background: transparent;
+  line-height: 1.35;
+  field-sizing: content;
+}
+.roleplay-discussion .discussion-primary {
+  border: 0;
+  color: #fff;
+  background: var(--discussion-accent);
+}
+.roleplay-discussion .discussion-send { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 10px; }
+.discussion-editor {
+  display: grid;
+  align-content: start;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  background: var(--discussion-soft);
+}
+.discussion-editor label { display: grid; gap: 5px; color: var(--c-text-secondary, #625c74); font-size: 12px; }
+.discussion-editor :is(input, textarea) {
+  border: 1px solid var(--discussion-edge);
+  border-radius: 9px;
+  background: var(--c-bg-card, #fff);
+  color: var(--c-text-title, #292431);
+  padding: 7px 9px;
+}
+.discussion-editor textarea { min-height: 110px; resize: vertical; }
+.discussion-editor-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.discussion-editor-actions .discussion-delete, .roleplay-discussion-error { color: var(--c-danger, #a53851); }
+.roleplay-discussion-error { margin: 0; font-size: 13px; }
+.discussion-send-error { margin: 6px 14px 0; }
+
+.discussion-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.discussion-new-icon { color: var(--discussion-accent); }
+.discussion-history {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  padding: 10px 13px 13px;
+  border-top: 1px solid var(--discussion-edge);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--discussion-soft);
+}
+.discussion-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  flex: none;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.discussion-history-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.discussion-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 62px;
+  border: 1px solid var(--discussion-edge);
+  border-radius: 12px;
+  background: var(--c-bg-card, #fff);
+  padding: 8px 10px;
+  text-align: left;
+}
+.discussion-history-row > div { flex: 1; min-width: 0; }
+.discussion-history-row strong, .discussion-history-row span, .discussion-history-row p {
+  display: block;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discussion-history-row strong { font-size: 14px; font-weight: 650; }
+.discussion-history-row span, .discussion-history-row time { color: var(--c-text-secondary, #625c74); font-size: 11px; }
+.discussion-history-row p { margin-top: 2px; color: var(--c-text-secondary, #625c74); font-size: 12px; }
+.discussion-history-row time, .discussion-history-row svg { flex: none; }
+.discussion-retry { align-self: flex-end; }
+
+@supports (-webkit-touch-callout:none) {
+  .roleplay-discussion :is(textarea,input,select) { font-size:16px; }
+}
+
+.roleplay-discussion, .roleplay-discussion-backdrop { box-sizing: border-box; }
+.roleplay-discussion { position: relative; }
+.discussion-header, .discussion-role, .discussion-preset-bar, .discussion-composer { flex-shrink: 0; }
+.discussion-history-delete { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 9px; border: 0; background: transparent; color: var(--c-danger, #a53851); font-size: 12px; }
+.discussion-bubble { position: relative; -webkit-touch-callout: none; }
+.discussion-message-more { display: block; margin-left: auto; min-width: 28px; border: 0; background: transparent; font-size: 14px; }
+.discussion-versions { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.discussion-versions button { border: 0; min-width: 28px; background: transparent; }
+.discussion-message-menu { flex: none; display: grid; gap: 8px; max-height: 55%; overflow: auto; padding: 12px; border-top: 1px solid var(--discussion-edge); background: var(--c-bg-card, #fff); }
+.discussion-message-menu header { display: flex; justify-content: space-between; gap: 8px; }
+.discussion-message-menu textarea { width: 100%; min-height: 60px; box-sizing: border-box; font-size: 16px; resize: vertical; }
+@media (max-height: 500px) {
+  .roleplay-discussion-backdrop { padding: 4px 8px; }
+  .roleplay-discussion { border-radius: 14px; }
+  .discussion-header { padding-block: 5px; }
+  .discussion-role, .discussion-preset-bar { padding-block: 3px; }
+  .discussion-composer { margin-block: 3px; padding-block: 3px; }
+}

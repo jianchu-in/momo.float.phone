@@ -3,6 +3,7 @@
 // Changes broadcast via a window event.
 
 import { kvGet, kvSet, kvRemove, registerKvMigration } from "./kv-db";
+import type { ResolvedMusicTheme } from "./music-theme";
 
 export type MusicPlayerBgMode = "cover" | "follow" | "custom";
 
@@ -97,28 +98,30 @@ export function fileToCompressedDataUrl(file: File, maxDim = 1440, quality = 0.8
 
 type BgInlineStyle = { backgroundImage: string; backgroundSize: "cover"; backgroundPosition: string };
 
-function buildBgStyle(image: string, dimPct: number, boost: number): BgInlineStyle {
+function buildBgStyle(image: string, dimPct: number, boost: number, theme: ResolvedMusicTheme = "dark"): BgInlineStyle {
     const a = Math.max(0, Math.min(0.95, dimPct / 100 + boost));
+    // 日间模式：凝脂白晶高透遮罩；夜间模式：沉稳暗化遮罩
+    const rgb = theme === "light" ? "248, 247, 245" : "8, 9, 14";
     return {
-        backgroundImage: `linear-gradient(rgba(8, 9, 14, ${a}), rgba(8, 9, 14, ${a})), url("${image}")`,
+        backgroundImage: `linear-gradient(rgba(${rgb}, ${a}), rgba(${rgb}, ${a})), url("${image}")`,
         backgroundSize: "cover",
         backgroundPosition: "center",
     };
 }
 
 /** Background style for app pages (home / playlists / mine), or undefined for default. */
-export function appBgStyle(cfg: MusicBgConfig): BgInlineStyle | undefined {
+export function appBgStyle(cfg: MusicBgConfig, theme?: ResolvedMusicTheme): BgInlineStyle | undefined {
     if (!cfg.image) return undefined;
-    return buildBgStyle(cfg.image, cfg.dim, 0);
+    return buildBgStyle(cfg.image, cfg.dim, 0, theme);
 }
 
 /** Background style for the full-screen player, or undefined for the cover-palette default. */
-export function playerBgStyle(cfg: MusicBgConfig): BgInlineStyle | undefined {
+export function playerBgStyle(cfg: MusicBgConfig, theme?: ResolvedMusicTheme): BgInlineStyle | undefined {
     if (cfg.playerMode === "custom" && cfg.playerImage) {
-        return buildBgStyle(cfg.playerImage, cfg.playerDim, 0.08);
+        return buildBgStyle(cfg.playerImage, cfg.playerDim, 0.08, theme);
     }
     if (cfg.playerMode === "follow" && cfg.image) {
-        return buildBgStyle(cfg.image, cfg.dim, 0.08);
+        return buildBgStyle(cfg.image, cfg.dim, 0.08, theme);
     }
     return undefined;
 }

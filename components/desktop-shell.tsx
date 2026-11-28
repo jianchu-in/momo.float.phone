@@ -16,6 +16,7 @@ import { PhonePlaceholderApp } from "@/components/phone-placeholder-app";
 import MusicApp from "@/components/music/music-app";
 import MusicPlayer from "@/components/music/music-player";
 import MusicFloat from "@/components/music/music-float";
+import { ListeningGlow } from "@/components/music/listening-glow";
 import MiniAppWindow from "@/components/music/mini-app-window";
 import { PhoneCalendarApp } from "@/components/calendar-app";
 import { PhoneQaApp } from "@/components/phone-qa-app";
@@ -27,6 +28,7 @@ import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/
 import { DiaryApp } from "@/components/diary/diary-app";
 import { XiaohongshuApp } from "@/components/xiaohongshu/xiaohongshu-app";
 import { StoryApp } from "@/components/story/story-app";
+import { FacingApp } from "@/components/facing/facing-app";
 import { VnApp } from "@/components/vn/vn-app";
 import ReadingApp from "@/components/reading/reading-app";
 import MapApp from "@/components/map/map-app";
@@ -125,8 +127,7 @@ import {
 } from "@/lib/desktop-layout-storage";
 import { WidgetRenderer } from "@/components/widgets/widget-renderer";
 import type { DIYWidgetTemplate } from "@/lib/widget-types";
-import { DebugPromptPanel } from "@/components/debug-prompt-panel";
-import { QuickActionFloat } from "@/components/quick-action-float";
+import { FloatingTools } from "@/components/floating-tools";
 import { CHAT_MESSAGE_PUSHED_EVENT, CHAT_REQUEST_REPLY_EVENT, findChatSessionById, hydrateChatStorage, loadChatSessions, loadChatMessages, pushChatMessage, type ChatMessage, type ChatSession } from "@/lib/chat-storage";
 import { ensureGlobalBindingDefaults, resolveUserIdentity } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -138,6 +139,7 @@ import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { installChatSoundListener, playChatSoundOnce, setMiniChatSoundSessionId, startChatSoundLoop } from "@/lib/chat-sound";
 import { setMascotContext } from "@/lib/mascot-context";
 import { DESKTOP_WIDGETS_CHANGED_EVENT } from "@/lib/mascot-events";
+import { ReversePhoneAutomation } from "@/components/checkphone/reverse-phone-automation";
 import { useWeixinBridge } from "@/lib/use-weixin-bridge";
 import { startWeixinCloudRealtimeSync } from "@/lib/weixin-cloud-sync";
 import { WeixinSyncToast } from "@/components/weixin-sync-toast";
@@ -977,7 +979,7 @@ function useAndroidCaretKeyboardLift() {
 
     const handleFocusIn = (event: FocusEvent) => {
       const target = event.target;
-      if (!isKeyboardEditableElement(target)) return;
+      if (!isKeyboardEditableElement(target) || target.closest(".facing-room")) return;
       focusedElement = target;
       requestUpdate();
     };
@@ -1038,6 +1040,7 @@ const MusicShellOverlays = memo(function MusicShellOverlays({
     <>
       {musicPlayer?.showFullPlayer && musicPlayer.currentTrack && <MusicPlayer />}
       <MusicFloat hidden={activeApp === "music" || musicPlayer?.showFullPlayer} />
+      <ListeningGlow />
     </>
   );
 });
@@ -1062,6 +1065,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [glassPaintPass, setGlassPaintPass] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeApp, setActiveApp] = useState<DesktopIconId | null>(null);
+  const [facingInitMeetingId,setFacingInitMeetingId]=useState<string|null>(null);
   const [customApps, setCustomApps] = useState<InstalledCustomApp[]>([]);
   // 自定义 APP 桌面图标样式偏好（global = 忽略上传图标走全局效果）
   const [customAppIconStyles, setCustomAppIconStyles] = useState<Record<string, CustomAppIconStyle>>({});
@@ -2410,6 +2414,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         if (detail.appId === "resources") {
           setResourcesInitialPage(detail.resourcePage === "vn_assets" || detail.resourcePage === "memory" ? detail.resourcePage : "main");
         }
+        if(nextAppId==="facing")setFacingInitMeetingId(typeof detail.facingMeetingId==="string"?detail.facingMeetingId:null);
         setActiveApp(nextAppId as DesktopIconId);
         if (detail.sessionId) setChatInitSessionId(detail.sessionId);
         else setChatInitSessionId(null);
@@ -4084,6 +4089,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       return <StoryApp onClose={() => setActiveApp(null)} />;
     }
 
+    if (activeApp === "facing") {
+      return <FacingApp onClose={() => setActiveApp(null)} initialMeetingId={facingInitMeetingId} onLaunchConsumed={()=>setFacingInitMeetingId(null)} />;
+    }
+
     if (activeApp === "vnmode") {
       return <VnApp onClose={() => setActiveApp(null)} />;
     }
@@ -4150,6 +4159,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
   return (
     <>
+      <ReversePhoneAutomation />
       <section
         className="phone-shell-wrap"
         style={{
@@ -4467,6 +4477,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                 onExpand={handleMiniChatExpand}
               >
                 <PhoneChatApp
+                  sceneVisible={showMiniChat}
                   onClose={handleMiniChatClose}
                   onSessionChange={handleMiniChatSessionChange}
                   sharePayload={miniSharePayload}
@@ -4835,8 +4846,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                   })}
                 </footer>
               ) : null}
-              <DebugPromptPanel />
-              <QuickActionFloat />
+              <FloatingTools />
               <MascotFloat />
               {/* 预览弹窗宿主：独立于桌宠的展开/收起状态，否则桌宠收成小球时弹不出来 */}
               <MascotPreviewHost />

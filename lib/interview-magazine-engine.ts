@@ -7,7 +7,7 @@ import { previewMessagesForApi, sendLLMRequest, sendLLMStreamRequest, ChatEngine
 import { interviewParticipationPrompt } from "./interview-magazine-options";
 import { buildInterviewRecentMemory } from "./interview-magazine-recent-memory";
 import { throwIfAborted } from "./abort-utils";
-import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
+import { applyOutputRegex, assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
 import { MacroEngine } from "./macro-engine";
 import { normalizeUserNameToMacro } from "./user-macro";
 import {
@@ -25,6 +25,7 @@ import { loadInterviewHostPrompt, loadInterviewMemoryPrompt } from "./interview-
 import {
   INTERVIEW_MAGAZINE_APP_ID,
   INTERVIEW_MAGAZINE_HOST_NAME,
+  INTERVIEW_DEFAULT_AUDIENCE_PROMPT,
   type InterviewArticle,
   type InterviewCharacterSnapshot,
   type InterviewGuestSnapshot,
@@ -32,6 +33,7 @@ import {
   type InterviewUserSnapshot,
   type InterviewWorldBookSnapshot,
   type InterviewOptions,
+  type InterviewAudienceComment,
 } from "./interview-magazine-types";
 
 type InterviewGuestContext = {
@@ -267,17 +269,15 @@ export function loadInterviewContextForGuests(characterIds: string[], userIdenti
   const apiConfigs = loadApiConfigs();
   const allWorldBooks = loadWorldBooks();
   const allRegexes = loadRegexes();
+  const fallbackApi = ids.map(id => resolveBinding(bindings, id, INTERVIEW_MAGAZINE_APP_ID).apiConfigId)
+    .map(id => apiConfigs.find(config => config.id === id)).find(Boolean);
   const guests = ids.map((id) => {
     const character = allCharacters.find((item) => item.id === id);
     if (!character) throw new ChatEngineError(`找不到受访角色：${id}`);
 
     const slot = resolveBinding(bindings, id, INTERVIEW_MAGAZINE_APP_ID);
-    if (!slot.apiConfigId) {
-      throw new ChatEngineError(`未给「在场」绑定 ${character.name} 的 API 配置。`);
-    }
-
-    const apiConfig = apiConfigs.find((config) => config.id === slot.apiConfigId);
-    if (!apiConfig) throw new ChatEngineError(`找不到 ${character.name} 的「在场」API 配置。`);
+    const apiConfig = apiConfigs.find((config) => config.id === slot.apiConfigId) ?? fallbackApi;
+    if (!apiConfig) throw new ChatEngineError("请先为「在场」绑定文字 API 配置。");
 
     let preset = slot.presetId ? presets.find((entry) => entry.id === slot.presetId) ?? null : null;
     if (!preset) preset = presets.find((entry) => entry.builtIn) ?? null;
@@ -626,6 +626,72 @@ export async function generateCharacterInterviewAnswer(params: {
   );
 
   return cleanText(raw, params.onDelta ? 16000 : 1000) || "（沉默了一会儿）这个问题，我需要从一个很小的地方说起。";
+}
+
+export async function generateInterviewGroupAnswers(params: {
+  theme: string; characterIds: string[]; groupIds: string[]; userIdentityId?: string;
+  question: string; transcript: InterviewMessage[]; round: number; phase: "answer" | "reaction" | "discussion";
+  options: InterviewOptions; userAsGuest: boolean; signal: AbortSignal;
+}): Promise<Record<string, string>> {
+  const context = loadInterviewContextForGuests(params.characterIds, params.userIdentityId);
+  const members = params.groupIds.map(id => context.guests.find(guest => guest.character.id === id)).filter(item => !!item);
+  const lead = members[0];
+  if (!lead) return {};
+  const transcript = formatInterviewTranscript(params.transcript, lead.character.name, context.userName, getCharacterNameMap(context));
+  const recent = await buildInterviewRecentMemory(members.map(guest => ({ id: guest.character.id, name: guest.character.name })), context.userName,
+    params.options.readRecentMemory);
+  throwIfAborted(params.signal);
+  const activity = params.phase === "reaction" ? "根据实录，回应用户刚刚的真实回答" : params.phase === "discussion"
+    ? "依次回应已出现的嘉宾观点，小组内可以自然接话" : "各自回答这一轮的问题，保持人物差异";
+  const messages = assemblePromptPayload({ character: lead.character, history: [], preset: lead.preset,
+    worldBooks: lead.worldBooks, regexes: lead.regexes, userIdentity: context.userIdentity,
+    appId: INTERVIEW_MAGAZINE_APP_ID, appTags: ["interview_magazine", "answer"],
+    interviewTheme: params.theme, interviewGuests: context.guestListText, interviewGuestCount: String(context.guests.length),
+    interviewCurrentGuest: members.map(member => member.character.name).join("、"), interviewOtherGuests: getOtherGuestNames(context, lead.character.id),
+    interviewQuestion: params.question, interviewTranscript: transcript, interviewPhase: activity, interviewRound: String(params.round),
+    worldBookActivationContext: `${params.theme}\n${params.question}\n${transcript}`,
+  });
+  messages.push({ role: "system", content: [
+    interviewParticipationPrompt(params.options, context.userName, params.userAsGuest),
+    `本次是同组嘉宾合并生成，覆盖预设里的单嘉宾输出约定。任务：${activity}。每个列出的角色各输出一条发言，严格区分人设和专属背景。不可代写主持人、用户或其他组嘉宾。`,
+    '只输出 JSON 对象 {"answers":[{"id":"角色 ID","content":"这位角色的发言"}]}。按下列成员顺序，每个 ID 只写一次。',
+    ...members.map(member => [`ID ${member.character.id}`, formatCharacterCard(member.characterSnapshot),
+      formatWorldBooks(member.worldBookSnapshot)].join("\n")), recent,
+  ].filter(Boolean).join("\n\n") });
+  const raw = await sendLLMRequest(lead.apiConfig, lead.preset, messages, [], { characterName: lead.character.name, userName: context.userName },
+    { skipOutputRegex: true, appId: INTERVIEW_MAGAZINE_APP_ID, signal: params.signal });
+  const output = parseJsonLike<{ answers?: { id?: unknown; content?: unknown }[] }>(raw);
+  if (!Array.isArray(output?.answers)) throw new ChatEngineError("该组的回复格式无法读取，可单独重试。");
+  return Object.fromEntries(members.flatMap(({ character, regexes }) => {
+    const row = output.answers!.find(item => item?.id === character.id && typeof item.content === "string" && item.content.trim());
+    if (!row || typeof row.content !== "string") return [];
+    const content = regexes.length ? applyOutputRegex(row.content, regexes, { macroEngine: new MacroEngine(character.name, context.userName),
+      activeTags: ["interview_magazine", "answer"] }) : row.content;
+    return [[character.id, cleanText(content, 16000)]];
+  }));
+}
+
+export async function generateInterviewAudience(params: {
+  theme: string; characterIds: string[]; userName: string; transcript: InterviewMessage[]; round: number;
+  options: InterviewOptions; signal: AbortSignal;
+}): Promise<InterviewAudienceComment[]> {
+  const apis = loadApiConfigs();
+  const selected = params.options.audience?.apiConfigId;
+  const bindings = loadBindingConfig();
+  const api = selected ? apis.find(item => item.id === selected) : params.characterIds
+    .map(id => resolveBinding(bindings, id, INTERVIEW_MAGAZINE_APP_ID).apiConfigId)
+    .map(id => apis.find(item => item.id === id)).find(Boolean);
+  if (!api) throw new ChatEngineError("找不到观众区的 API 配置。");
+  const raw = await sendLLMRequest(api, null, [
+    { role: "system", content: [INTERVIEW_DEFAULT_AUDIENCE_PROMPT, params.options.audience?.prompt?.trim(),
+      '始终遵守上面的观众规则。输出 3–6 条，只返回 JSON {"comments":[{"name":"观众昵称","content":"短评论"}]}。'].filter(Boolean).join("\n") },
+    { role: "user", content: `主题：${params.theme}\n第 ${params.round} 轮公开实录：\n${formatInterviewTranscript(params.transcript, "嘉宾", params.userName)}` },
+  ], [], { characterName: "在场观众区" }, { skipOutputRegex: true, appId: INTERVIEW_MAGAZINE_APP_ID, signal: params.signal });
+  const output = parseJsonLike<{ comments?: { name?: unknown; content?: unknown }[] }>(raw);
+  if (!Array.isArray(output?.comments)) throw new ChatEngineError("观众评论格式无法读取。");
+  return output.comments.flatMap(item => typeof item?.content === "string" && item.content.trim() ? [{
+    name: typeof item.name === "string" ? cleanText(item.name, 30) || "现场观众" : "现场观众", content: cleanText(item.content, 180),
+  }] : []).slice(0, 6);
 }
 
 export async function previewInterviewMagazinePromptPayload(params: {

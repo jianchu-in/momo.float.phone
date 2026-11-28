@@ -114,6 +114,7 @@ export async function loadMediaBlob(ref: string): Promise<{ blob: Blob; mimeType
 
 export async function deleteMediaRef(ref: string | undefined): Promise<void> {
     if (!ref || !ref.startsWith(MEDIA_STORE_PROTOCOL)) return;
+    if (await (await import("./favorites-storage")).favoriteUsesMedia(ref)) return;
     const id = ref.slice(MEDIA_STORE_PROTOCOL.length);
     await getDb().entries.delete(id);
 }

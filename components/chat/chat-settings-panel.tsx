@@ -1,5 +1,11 @@
 "use client";
 
+import { StoryAutomationSettings } from "./story-automation-settings";
+import { ReversePhoneApp } from "@/components/checkphone/reverse-phone-app";
+import { ReversePhoneSettings } from "@/components/checkphone/reverse-phone-settings";
+import { ReversePhoneLayer } from "@/components/checkphone/reverse-phone-layer";
+import { reverseScope } from "@/lib/reverse-phone-storage";
+import { resolveStoryAutomation } from "@/lib/chat-automation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
     CHAT_INITIAL_VISIBLE_MESSAGE_COUNT,
@@ -190,6 +196,7 @@ import {
     DEFAULT_OFFLINE_CHAT_BILINGUAL_PROMPT,
 } from "@/lib/bilingual-prompt-defaults";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
+import { ChatHistoryMedia, type HistoryMediaKind } from "./chat-history-media";
 import { MessageBubble, isStandaloneHtmlPreviewContent } from "./message-bubble";
 import { ScreenEffectSettingsModal } from "./screen-effect-settings-modal";
 
@@ -335,7 +342,8 @@ export function ChatSettingsPanel({
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
-    const [allowForcedOfflineStory, setAllowForcedOfflineStory] = useState(session.allowForcedOfflineStory === true);
+    const [automationPanel,setAutomationPanel]=useState<"story"|"reverse"|"reverse-history">();
+    const [,setAutomationRevision]=useState(0);
     // 仿真拉黑：拉黑期间用户发出的消息会被对方拒收（仿微信红色感叹号）
     const [isBlacklisted, setIsBlacklisted] = useState(session.isBlacklisted || false);
     // 自定义状态栏（状态区）
@@ -449,6 +457,8 @@ export function ChatSettingsPanel({
     const [bilingualPromptDraft, setBilingualPromptDraft] = useState(session.bilingualTranslationPrompt || defaultBilingualPrompt);
     const [offlineBilingualTranslationPrompt, setOfflineBilingualTranslationPrompt] = useState(session.offlineBilingualTranslationPrompt || defaultOfflineBilingualPrompt);
     const [offlineBilingualPromptDraft, setOfflineBilingualPromptDraft] = useState(session.offlineBilingualTranslationPrompt || defaultOfflineBilingualPrompt);
+    const [chatUiStyle, setChatUiStyle] = useState(session.chatUiStyle ?? "inherit");
+    const [beautyPreset, setBeautyPreset] = useState(session.beautyPreset ?? "inherit");
     const [customCSS, setCustomCSS] = useState(() => {
         // Read latest CSS from storage (in case 小卷 updated it)
         const sessions = loadChatSessions();
@@ -469,6 +479,8 @@ export function ChatSettingsPanel({
     // TA 的电脑：翻看角色云端电脑（连接了角色电脑才显示入口）
     const [showComputer, setShowComputer] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+    const [searchMedia, setSearchMedia] = useState<HistoryMediaKind | null>(null);
+    const [mediaQuery, setMediaQuery] = useState("");
     const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
     const [searchHistoryMessages, setSearchHistoryMessages] = useState<ChatMessage[]>([]);
     const [searchHasMore, setSearchHasMore] = useState(false);
@@ -493,6 +505,8 @@ export function ChatSettingsPanel({
     const openSearchPanel = () => {
         searchRunRef.current += 1;
         setSearchQuery("");
+        setSearchMedia(null);
+        setMediaQuery("");
         setSubmittedSearchQuery("");
         setSearchResults([]);
         setIsSearching(false);
@@ -504,6 +518,8 @@ export function ChatSettingsPanel({
         searchRunRef.current += 1;
         setShowSearch(false);
         setSearchQuery("");
+        setSearchMedia(null);
+        setMediaQuery("");
         setSubmittedSearchQuery("");
         setSearchResults([]);
         setSearchHistoryMessages([]);
@@ -519,6 +535,7 @@ export function ChatSettingsPanel({
     };
 
     const runSearch = () => {
+        if (searchMedia) { setMediaQuery(searchQuery.trim()); return; }
         const rawQuery = searchQuery.trim();
         const runId = searchRunRef.current + 1;
         searchRunRef.current = runId;
@@ -1068,6 +1085,9 @@ export function ChatSettingsPanel({
     const searchMode = submittedSearchQuery.trim().length > 0;
     const displayedSearchMessages = searchMode ? searchResults : searchHistoryMessages;
 
+    if(automationPanel==="story")return <ReversePhoneLayer><StoryAutomationSettings session={session} onClose={()=>setAutomationPanel(undefined)} onChange={value=>{updateSession({storyAutomation:value,allowForcedOfflineStory:undefined});Object.assign(session,{storyAutomation:value,allowForcedOfflineStory:undefined});setAutomationRevision(v=>v+1);}}/></ReversePhoneLayer>;
+    if(automationPanel==="reverse-history")return <ReversePhoneLayer><ReversePhoneApp initialPanel="history" initialCharacterId={session.contactId} onClose={()=>setAutomationPanel("reverse")}/></ReversePhoneLayer>;
+    if(automationPanel==="reverse")return <ReversePhoneLayer><ReversePhoneSettings scope={reverseScope()} initialCharacterId={session.contactId} initialOwner={session.contactId} onHistory={()=>setAutomationPanel("reverse-history")} onClose={()=>setAutomationPanel(undefined)}/></ReversePhoneLayer>;
     return (
         <PageShell title="聊天信息" onBack={onClose} className="absolute inset-0 z-[100]">
             <div className="page-menu chat-info-menu">
@@ -1324,18 +1344,10 @@ export function ChatSettingsPanel({
 
                 {/* Toggles */}
                 <div className="menu-group">
-                    {!session.isGroup && (
-                        <div className="menu-item">
-                            <ChatInfoIcon icon={Sparkles} color={CONTENT_APP_ACCENTS.story} />
-                            <div className="menu-label-group">
-                                <span className="menu-label">允许强制开启线下剧情</span>
-                                <span className="menu-desc">角色非常渴望见面、准备惊喜或主动推进见面时，可直接创建衔接记忆分线并进入剧情</span>
-                            </div>
-                            <div className="menu-right">
-                                <Toggle checked={allowForcedOfflineStory} onChange={c => { setAllowForcedOfflineStory(c); updateSession({ allowForcedOfflineStory: c }); }} />
-                            </div>
-                        </div>
-                    )}
+                    {!session.isGroup && <>
+                        <button className="menu-item" onClick={()=>setAutomationPanel("story")}><ChatInfoIcon icon={Sparkles} color={CONTENT_APP_ACCENTS.story}/><div className="menu-label-group"><span className="menu-label">自动进入剧情 · 细分设置</span><span className="menu-desc">主动带入／已见面检测 · {resolveStoryAutomation(session).intensity==="low"?"低":resolveStoryAutomation(session).intensity==="high"?"高":"中"}强度 · 角色设置优先</span></div><ChevronRight size={16}/></button>
+                        <button className="menu-item" onClick={()=>setAutomationPanel("reverse")}><ChatInfoIcon icon={Sparkles} color={CONTENT_APP_ACCENTS.story}/><div className="menu-label-group"><span className="menu-label">反查岗 · 触发与权限</span><span className="menu-desc">对话邀请、自主偷偷查岗、时间与应用权限</span></div><ChevronRight size={16}/></button>
+                    </>}
                     <div className="menu-item">
                         <ChatInfoIcon icon={Pin} color={BINDING_ACCENTS.preset} />
                         <div className="menu-label-group"><span className="menu-label">置顶聊天</span></div>
@@ -1533,6 +1545,24 @@ export function ChatSettingsPanel({
 
                 {/* Backgrounds & UI */}
                 <div className="menu-group">
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                        <label className="menu-label-group" htmlFor={`chat-layout-${session.id}`}><span className="menu-label">消息界面风格</span><span className="menu-desc">本会话优先，切换保留自定义 CSS</span></label>
+                        <select id={`chat-layout-${session.id}`} className="ui-input" style={{width:"auto",maxWidth:"45%"}} value={chatUiStyle} onChange={event => {
+                            const value = event.target.value as "inherit" | "classic" | "imessage";
+                            setChatUiStyle(value); updateSession({chatUiStyle: value === "inherit" ? undefined : value});
+                            window.dispatchEvent(new Event("chat-app-settings-updated"));
+                        }}><option value="inherit">跟随全局</option><option value="classic">经典布局</option><option value="imessage">iMessage</option></select>
+                    </div>
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                        <label className="menu-label-group" htmlFor={`chat-beauty-${session.id}`}><span className="menu-label">气泡美化</span><span className="menu-desc">玻璃效果用于 iMessage 布局</span></label>
+                        <select id={`chat-beauty-${session.id}`} className="ui-input" style={{width:"auto",maxWidth:"45%"}} value={beautyPreset} onChange={event => {
+                            const value = event.target.value as "inherit" | "classic" | "glass";
+                            setBeautyPreset(value); updateSession({beautyPreset: value === "inherit" ? undefined : value, glassBubblesEnabled: undefined});
+                            window.dispatchEvent(new Event("chat-app-settings-updated"));
+                        }}><option value="inherit">跟随全局</option><option value="classic">普通气泡</option><option value="glass">Liquid Glass</option></select>
+                    </div>
                     <label className="menu-item">
                         <ChatInfoIcon icon={ImageIcon} color={BINDING_ACCENTS.api} />
                         <div className="menu-label-group"><span className="menu-label">聊天背景</span></div>
@@ -1606,7 +1636,9 @@ export function ChatSettingsPanel({
                         <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.api} />
                         <div className="menu-label-group">
                             <span className="menu-label">启用内置中文思考提示词</span>
-                            <span className="menu-desc">仅当前会话：线上回复加入中文角色独白，沿用现有思考区的字体与排版</span>
+                            <span className="menu-desc">{loadChatAppSettings().globalChineseThinkingPromptEnabled
+                                ? "当前使用全局中文独白设置。关闭全局开关后，此会话的设置生效。"
+                                : "仅当前会话：线上回复加入中文角色独白，沿用现有思考区的字体与排版"}</span>
                             <button type="button" className="mt-1 flex w-fit items-center gap-1 text-left ts-12 text-[var(--c-icon-active)]" onClick={() => setShowChineseThinkingSettings(true)}>
                                 详细设置 · 约 {chineseThinkingPromptLength} 字 <ChevronRight size={14} />
                             </button>
@@ -2032,7 +2064,6 @@ export function ChatSettingsPanel({
                     <PageShell title="查找聊天记录" onBack={closeSearchPanel}>
                         <div className="px-4 pt-2 pb-3 flex items-center gap-2">
                             <input
-                                autoFocus
                                 type="text"
                                 placeholder="搜索聊天记录..."
                                 value={searchQuery}
@@ -2056,7 +2087,20 @@ export function ChatSettingsPanel({
                                 <Search size={20} strokeWidth={2.1} />
                             </button>
                         </div>
-                        <div className="flex flex-col gap-4 px-4 pb-4">
+                        <div className="chat-history-media-tags" role="group" aria-label="聊天记录标签">
+                            {([[null, "全部"], ["image", "图片"], ["audio", "语音"]] as const).map(([kind, label]) => (
+                                <button type="button" key={label} aria-pressed={searchMedia === kind} onClick={() => {
+                                    searchRunRef.current += 1;
+                                    setIsSearching(false);
+                                    setSearchMedia(kind);
+                                    setMediaQuery("");
+                                    setSearchQuery("");
+                                    setSubmittedSearchQuery("");
+                                }}>{label}</button>
+                            ))}
+                        </div>
+                        {searchMedia ? <ChatHistoryMedia key={`${session.id}:${searchMedia}:${mediaQuery}`} session={session} kind={searchMedia}
+                            query={mediaQuery} onJump={jumpToSearchMessage} /> : <div className="flex flex-col gap-4 px-4 pb-4">
                             {!searchMode && searchHistoryMessages.length === 0 && (
                                 <div className="ui-empty">
                                     <span className="menu-desc">暂无聊天记录</span>
@@ -2087,7 +2131,7 @@ export function ChatSettingsPanel({
                                     <span className="menu-desc">仅显示最近 {SEARCH_RESULT_LIMIT} 条结果</span>
                                 </div>
                             )}
-                        </div>
+                        </div>}
                     </PageShell>
                 </div>
                 </div>

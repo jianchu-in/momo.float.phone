@@ -64,6 +64,7 @@ const MDI_PATHS: Record<IconId, string> = {
   calendar: mdiCalendarMonth,
   interview_magazine: mdiMicrophone,
   vnmode: mdiScriptTextOutline,
+  facing: mdiAccountGroup,
   mapmode: mdiMapMarker,
   worldbuilder: mdiEarth,
   qa: mdiHammerWrench,

@@ -49,7 +49,7 @@ export function useChatBottomReserve<TWrapper extends HTMLElement, TScroll exten
             const wasNearBottom = el
                 ? el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_THRESHOLD
                 : false;
-            const height = Math.ceil(overlay.getBoundingClientRect().height);
+            const height = Math.ceil(overlay.offsetHeight || overlay.getBoundingClientRect().height);
 
             if (height > 0) {
                 wrapper.style.setProperty(CHAT_BOTTOM_RESERVE_CSS_VAR, `${height}px`);

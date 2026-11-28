@@ -75,6 +75,8 @@ async function main() {
     containerId: `session-${id}`, containerName: "会话", sourceItemIds: [id], sourceCreatedAt: now, createdAt: now, updatedAt: now, title: id, preview: "内容", tags: ["收藏"],
     entries: [{ id, role: "assistant", senderName: entityId, content: "原文", createdAt: now, ...entry }], ...extra });
   const items = [
+    item("a-facing", "甲", { mediaType: "image", mediaUrl: "theme-asset://asset-one" }, { category: "facing" }),
+    item("a-dwelling", "甲", { mediaType: "image", mediaUrl: imageRef }, { category: "dwelling" }),
     item("a-voice", "甲", { mediaType: "audio", mediaUrl: audioRef, mediaData: { voiceDuration: 4 } }),
     item("a-story", "甲", { mediaType: "image", mediaUrl: "asset://asset-one" }, { category: "story", scopeKey: "alt::one", chatAccountId: "alt" }),
     item("a-group", "group-one", { mediaType: "image", mediaUrl: "https://expired.invalid/image", mediaData: { imageGenerationMediaRef: imageRef } }, { entityType: "group", participantIds: ["甲", "乙"], participantNames: ["甲", "乙"] }),
@@ -110,8 +112,10 @@ async function main() {
   const group = await backup.createBackupBlob(["favorites"], { favoriteEntity: { id: "group-one", type: "group" } });
   assert.equal(group.manifest.totalRecords, 1);
 
-  // Restore on an empty device: original caches are intentionally absent.
+  // Source deletion preserves originals held by favorites. Simulate an empty device by clearing the underlying cache.
   await deleteMediaRef(audioRef); await deleteMediaRef(imageRef);
+  assert.ok(await require(path.join(root, "lib/media-cache-storage.ts")).loadMediaBlob(audioRef));
+  await write("AiPhoneMediaCacheDB", "entries", [], true);
   await write("ai_phone_theme_db_v1", "assets", [], true);
   await new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase("AiPhoneFavoritesDB");
@@ -128,7 +132,7 @@ async function main() {
     assert.match(entry.mediaUrl, /^data:audio\/wav;base64,/);
     assert.deepEqual(Buffer.from(await (await realFetch(entry.mediaUrl)).arrayBuffer()), Buffer.from(await wav.arrayBuffer()));
   }
-  for (const id of ["a-story", "a-group", "b-only"]) {
+  for (const id of ["a-facing", "a-dwelling", "a-story", "a-group", "b-only"]) {
     const entry = rows.find(row => row.id === id).entries[0];
     assert.match(entry.mediaUrl, /^data:image\/png;base64,/);
     assert.deepEqual(Buffer.from(await (await realFetch(entry.mediaUrl)).arrayBuffer()), Buffer.from(await png.arrayBuffer()));

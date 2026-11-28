@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { LanguageIcon } from "@heroicons/react/24/solid";
 import { marked } from "marked";
@@ -41,7 +41,7 @@ function isSafeTag(tag: string) {
 // ── Content splitting: separate ```html blocks from regular content ──
 
 type Segment =
-    | { type: "markdown"; content: string }
+    | { type: "markdown"; content: string; isSummary?: boolean }
     | { type: "html-page"; content: string }
     | { type: "fold"; label: string; content: string };
 
@@ -168,6 +168,54 @@ function splitNonFoldContent(text: string): Segment[] {
     const remaining = text.slice(lastIndex).trim();
     if (remaining) segments.push({ type: "markdown", content: remaining });
     return segments;
+}
+
+function splitIllustrationSummary(segments: Segment[], summaryTag?: string): Segment[] {
+    const tags = ["summary", "story_summary", summaryTag?.trim().toLowerCase()].filter(tag => tag && /^[\w-]+$/.test(tag));
+    const summary = new RegExp(`(^|\\n)[ \\t]*<(${tags.join("|")})>[\\s\\S]*?<\\/\\2>`, "i");
+    return segments.flatMap(segment => {
+        if (segment.type !== "markdown" || !summary.test(segment.content)) return [segment];
+        let offset = 0;
+        for (const token of marked.lexer(segment.content)) {
+            // A <summary> nested in ordinary HTML details is its heading.
+            const match = token.type === "paragraph" || token.type === "html" ? summary.exec(token.raw) : null;
+            if (match && (token.type !== "html" || match.index === 0)) {
+                const start = offset + match.index + match[1].length;
+                const before = segment.content.slice(0, start).trimEnd();
+                const tail: Segment = { type: "markdown", content: segment.content.slice(start), isSummary: true };
+                return before ? [{ ...segment, content: before }, tail] : [tail];
+            }
+            offset += token.raw.length;
+        }
+        return [segment];
+    });
+}
+
+function findIllustrationPlacement(segments: Segment[], position: "tail" | "middle", summaryTag?: string) {
+    const tail = segments.findIndex(segment => (segment.type === "markdown" && segment.isSummary)
+        || (segment.type === "fold" && ["story_status", "story_theater", "summary", "story_summary", summaryTag?.trim().toLowerCase()]
+            .includes(segment.label.toLowerCase())));
+    const end = tail === -1 ? segments.length : tail;
+    if (position === "tail") return { index: end };
+    const prose = segments.slice(0, end).flatMap((segment, index) => segment.type === "fold" ? [] : [index]);
+    if (prose.length > 1) return { index: prose[Math.ceil(prose.length / 2)] };
+    const index = prose[0];
+    const segment = segments[index];
+    if (segment?.type !== "markdown") return { index: end };
+
+    // Split only at document-level Markdown boundaries so HTML blocks, fences and lists stay intact.
+    const tokens = marked.lexer(segment.content);
+    if (Object.keys(tokens.links).length) return { index: end };
+    let offset = 0;
+    let midpoint = 0;
+    for (const token of tokens.slice(0, -1)) {
+        offset += token.raw.length;
+        if (!midpoint || Math.abs(offset - segment.content.length / 2) < Math.abs(midpoint - segment.content.length / 2)) {
+            midpoint = offset;
+        }
+    }
+    if (!midpoint) return { index: end };
+    return { index, split: midpoint };
 }
 
 // ── Markdown segment: marked + scoped HTML rendering ──
@@ -591,58 +639,78 @@ export interface StoryHtmlRendererProps {
     playingVoiceSegmentId?: string | null;
     statusRenderHtml?: string;
     theaterRenderHtml?: string;
+    illustration?: ReactNode;
+    illustrationPosition?: "tail" | "middle";
+    summaryTag?: string;
     /** Free-layout dialogue colors; leave other consumers' markup unchanged. */
     colorDialogue?: boolean;
 }
 
-function StoryHtmlRendererInner({ content, messageId, onOptionSelect, htmlPageMode = "auto", serifIframeFallback = false, onVoicePlay, playingVoiceSegmentId, statusRenderHtml, theaterRenderHtml, colorDialogue = false }: StoryHtmlRendererProps) {
-    const segments = useMemo(() => splitContent(content), [content]);
+function StoryHtmlRendererInner({ content, messageId, onOptionSelect, htmlPageMode = "auto", serifIframeFallback = false, onVoicePlay, playingVoiceSegmentId, statusRenderHtml, theaterRenderHtml, colorDialogue = false, illustration, illustrationPosition, summaryTag }: StoryHtmlRendererProps) {
+    const segments = useMemo(() => {
+        const contentSegments = splitContent(content);
+        return illustrationPosition ? splitIllustrationSummary(contentSegments, summaryTag) : contentSegments;
+    }, [content, illustrationPosition, summaryTag]);
+    const placement = useMemo(() => illustrationPosition && findIllustrationPlacement(segments, illustrationPosition, summaryTag),
+        [segments, illustrationPosition, summaryTag]);
     const scopeClass = `smsg-${messageId.slice(-8)}`;
     const containerRef = useRef<HTMLDivElement>(null);
     useActionDelegate(containerRef, onOptionSelect);
     useStoryVoiceDelegate(containerRef, onVoicePlay);
     const voicePrefix = (suffix: string) => onVoicePlay ? `${messageId}:${suffix}` : undefined;
 
+    const rendered = segments.map((seg, i) => {
+        if (seg.type === "html-page") {
+            return <HtmlPageSegment key={`hp-${i}`} html={seg.content} onOptionSelect={onOptionSelect} htmlPageMode={htmlPageMode} serifIframeFallback={serifIframeFallback} />;
+        }
+        if (seg.type === "fold") {
+            const tailKind = seg.label.toLowerCase() === "story_status"
+                ? "status"
+                : seg.label.toLowerCase() === "story_theater"
+                    ? "theater"
+                    : null;
+            const tailRenderHtml = tailKind === "status" ? statusRenderHtml : tailKind === "theater" ? theaterRenderHtml : "";
+            return (
+                <StoryFoldBlock key={`fold-${i}`} label={tailKind === "status" ? "状态栏" : tailKind === "theater" ? "小剧场" : seg.label} content={seg.content} scopeClass={scopeClass}>
+                    {tailKind && tailRenderHtml ? (
+                        <CustomStatusFrame
+                            html={tailRenderHtml}
+                            raw={seg.content}
+                            kind={tailKind}
+                            title={tailKind === "status" ? "剧情状态栏" : "剧情小剧场"}
+                        />
+                    ) : splitContent(seg.content).map((innerSeg, innerIndex) => {
+                        if (innerSeg.type === "html-page") {
+                            return <HtmlPageSegment key={`fold-hp-${i}-${innerIndex}`} html={innerSeg.content} onOptionSelect={onOptionSelect} htmlPageMode={htmlPageMode} serifIframeFallback={serifIframeFallback} />;
+                        }
+                        if (innerSeg.type === "fold") {
+                            return (
+                                <StoryFoldBlock key={`fold-inner-${i}-${innerIndex}`} label={innerSeg.label} content={innerSeg.content} scopeClass={scopeClass}>
+                                    <MarkdownSegment content={innerSeg.content} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`fold:${i}:${innerIndex}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />
+                                </StoryFoldBlock>
+                            );
+                        }
+                        return <MarkdownSegment key={`fold-md-${i}-${innerIndex}`} content={innerSeg.content} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`fold:${i}:${innerIndex}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />;
+                    })}
+                </StoryFoldBlock>
+            );
+        }
+        const split = placement && placement.index === i ? placement.split : undefined;
+        if (split) return (
+            <Fragment key={`md-${i}`}>
+                <MarkdownSegment content={seg.content.slice(0, split)} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`md:${i}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />
+                {illustration}
+                <MarkdownSegment content={seg.content.slice(split)} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`md:${i}:after-illustration`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />
+            </Fragment>
+        );
+        return <MarkdownSegment key={`md-${i}`} content={seg.content} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`md:${i}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />;
+    });
+    if (placement && !placement.split) {
+        rendered.splice(placement.index, 0, <Fragment key="story-illustration">{illustration}</Fragment>);
+    }
     return (
         <div className="story-richtext" ref={containerRef}>
-            {segments.map((seg, i) => {
-                if (seg.type === "html-page") {
-                    return <HtmlPageSegment key={`hp-${i}`} html={seg.content} onOptionSelect={onOptionSelect} htmlPageMode={htmlPageMode} serifIframeFallback={serifIframeFallback} />;
-                }
-                if (seg.type === "fold") {
-                    const tailKind = seg.label.toLowerCase() === "story_status"
-                        ? "status"
-                        : seg.label.toLowerCase() === "story_theater"
-                            ? "theater"
-                            : null;
-                    const tailRenderHtml = tailKind === "status" ? statusRenderHtml : tailKind === "theater" ? theaterRenderHtml : "";
-                    return (
-                        <StoryFoldBlock key={`fold-${i}`} label={tailKind === "status" ? "状态栏" : tailKind === "theater" ? "小剧场" : seg.label} content={seg.content} scopeClass={scopeClass}>
-                            {tailKind && tailRenderHtml ? (
-                                <CustomStatusFrame
-                                    html={tailRenderHtml}
-                                    raw={seg.content}
-                                    kind={tailKind}
-                                    title={tailKind === "status" ? "剧情状态栏" : "剧情小剧场"}
-                                />
-                            ) : splitContent(seg.content).map((innerSeg, innerIndex) => {
-                                if (innerSeg.type === "html-page") {
-                                    return <HtmlPageSegment key={`fold-hp-${i}-${innerIndex}`} html={innerSeg.content} onOptionSelect={onOptionSelect} htmlPageMode={htmlPageMode} serifIframeFallback={serifIframeFallback} />;
-                                }
-                                if (innerSeg.type === "fold") {
-                                    return (
-                                        <StoryFoldBlock key={`fold-inner-${i}-${innerIndex}`} label={innerSeg.label} content={innerSeg.content} scopeClass={scopeClass}>
-                                            <MarkdownSegment content={innerSeg.content} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`fold:${i}:${innerIndex}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />
-                                        </StoryFoldBlock>
-                                    );
-                                }
-                                return <MarkdownSegment key={`fold-md-${i}-${innerIndex}`} content={innerSeg.content} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`fold:${i}:${innerIndex}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />;
-                            })}
-                        </StoryFoldBlock>
-                    );
-                }
-                return <MarkdownSegment key={`md-${i}`} content={seg.content} scopeClass={scopeClass} voiceIdPrefix={voicePrefix(`md:${i}`)} playingVoiceSegmentId={playingVoiceSegmentId} colorDialogue={colorDialogue} />;
-            })}
+            {rendered}
         </div>
     );
 }

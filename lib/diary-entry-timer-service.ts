@@ -1,3 +1,5 @@
+import { cancelStalePersonalNoteReaction, runPersonalNoteTimerCheck } from "./personal-note-timer";
+import { PERSONAL_NOTE_TIMER_EVENT } from "./personal-note-timer-settings";
 import { bgSetInterval } from "./bg-timer";
 import { loadCharacters } from "./character-storage";
 import type { Character } from "./character-types";
@@ -124,19 +126,28 @@ export async function runDiaryEntryTimerCheck(): Promise<void> {
 function handleVisibilityChange(): void {
   if (typeof document === "undefined" || document.visibilityState !== "visible") return;
   void runDiaryEntryTimerCheck();
+  void runPersonalNoteTimerCheck();
 }
 
 function handleSettingsUpdated(): void {
   void runDiaryEntryTimerCheck();
 }
 
+function handlePersonalNoteUpdated(): void {
+  cancelStalePersonalNoteReaction();
+  void runPersonalNoteTimerCheck();
+}
+
 export function startDiaryEntryTimerService(): void {
   if (typeof window === "undefined" || stopInterval) return;
   stopInterval = bgSetInterval(() => {
     void runDiaryEntryTimerCheck();
+    void runPersonalNoteTimerCheck();
   }, CHECK_INTERVAL_MS);
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener(DIARY_ENTRY_TIMER_SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
+  window.addEventListener(PERSONAL_NOTE_TIMER_EVENT, handlePersonalNoteUpdated);
+  handlePersonalNoteUpdated();
   void runDiaryEntryTimerCheck();
 }
 
@@ -146,6 +157,7 @@ export function stopDiaryEntryTimerService(): void {
     stopInterval = null;
   }
   if (typeof window === "undefined") return;
+  window.removeEventListener(PERSONAL_NOTE_TIMER_EVENT, handlePersonalNoteUpdated);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
   window.removeEventListener(DIARY_ENTRY_TIMER_SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
 }

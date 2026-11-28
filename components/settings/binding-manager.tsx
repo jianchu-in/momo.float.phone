@@ -93,7 +93,7 @@ const AUX_FIELD_VISUALS: Record<AuxBindingField, { icon: LucideIcon; color: stri
 };
 
 const APP_OVERRIDE_COLORS = CONTENT_APP_ACCENTS;
-const REGEX_BINDABLE_APP_IDS: ContentAppId[] = ["chat", "group_chat", "story"];
+const REGEX_BINDABLE_APP_IDS: ContentAppId[] = ["chat", "group_chat", "story", "facing"];
 
 const bindingAccentStyle = (color: string): CSSProperties => ({
     "--binding-accent": color,

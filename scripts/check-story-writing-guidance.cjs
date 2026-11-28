@@ -18,15 +18,33 @@ function load(file, deps, suffix = "", globals = {}) {
 
 async function main() {
   const characters = [{ id: "a", name: "角色甲", persona: "安静温和" }, { id: "b", name: "角色乙", persona: "开朗" }];
+  const images=load("lib/shown-image.ts", {});
+  let imageRecognition=true;
   const requests = [];
+  const timelineReads = [];
+  let onTimelineRead;
   const reply = "*他期待着见面。*\n\n**他记住了约定。**";
   const engine = load("lib/story-engine.ts", {
+    "./shown-image": {...images,loadShownImageDataUrl:async()=>"data:image/png;base64,cmVmZXJlbmNl"},
     "./character-storage": { loadCharacters: () => characters },
     "./settings-storage": { loadBindingConfig: () => ({ characterBindings: [] }), resolveBinding: () => ({ apiConfigId: "api" }),
-      loadApiConfigs: () => [{ id: "api", defaultModel: "test" }], loadPresets: () => [], loadRegexes: () => [], loadWorldBooks: () => [], resolveUserIdentity: () => ({ name: "简初" }) },
-    "./story-storage": { resolveActiveStorySchemes: () => ({}) },
+      loadApiConfigs: () => [{ id: "api", defaultModel: "test", enableImageRecognition:imageRecognition }], loadPresets: () => [], loadRegexes: () => [], loadWorldBooks: () => [], resolveUserIdentity: () => ({ name: "简初" }) },
+    "./story-storage": {loadStorySessions:()=>[], resolveActiveStorySchemes: () => ({}) },
     "./memory-storage": { loadMemoryConfig: () => ({}) },
-    "./llm-prompt-assembler": { assemblePromptPayload: () => [{ role: "system", content: "原有角色与预设" }] },
+    "./abort-utils": { throwIfAborted: signal => { if (signal?.aborted) throw new DOMException("Aborted", "AbortError"); } },
+    "./memory-service": { retrieveMemoriesForPrompt: async () => [], retrieveCoreMemoriesForPrompt: async () => [] },
+    "./short-term-assembler": {
+      loadNativeTimelineAsync: async (id, options) => {
+        timelineReads.push({ id, ...options });
+        await onTimelineRead?.();
+        return [{ content: `角色${id}的近期事件` }];
+      },
+      prepareShortTermContext: (_id, _app, { history, timeline }) => ({
+        recentBlocks: [{ tag: "recent_chat", content: timeline[0].content }],
+        truncatedHistory: history, wbActivationContext: "", unifiedRecentItems: [],
+      }),
+    },
+    "./llm-prompt-assembler": { assemblePromptPayload: ({history}) => [{ role: "system", content: "原有角色与预设" },...history.map(message=>({role:message.role,content:message.content}))] },
     "./macro-engine": { MacroEngine: class {} },
     "./story-parser": { STORY_PARSER_VERSION: 1, parseStoryResponse: raw => ({ rawText: raw, renderedText: raw, summaryText: "" }) },
     "./chat-engine": { ChatEngineError: Error, previewMessagesForApi: (_api, _preset, messages) => messages,
@@ -55,6 +73,70 @@ async function main() {
   let delta = "";
   await engine.generateStoryCompletion("a", [], { ...options, settings: enabled, participantIds: ["b"], globalSettings: { timeAware: false, streamingEnabled: true }, onDelta: text => { delta += text; } });
   assert.match(requests.at(-1).at(-1).content, /\*\*重点内容\*\*/); assert.equal(delta, reply);
+  assert.equal(timelineReads.length, 0, "Independent stories skip the timeline");
+  const startedAt = "2026-11-01T00:00:00Z";
+  await engine.generateStoryCompletion("a", [], { participantIds: ["a", "b"], storyMemory: { inheritRecentMemory: false, startedAt } });
+  assert.deepEqual(timelineReads.map(({ id, afterTimestamp }) => [id, afterTimestamp]), [["a", startedAt], ["b", startedAt]]);
+  assert.ok(requests.at(-1).some(message => message.content.includes("角色b的近期事件")));
+  const abort = new AbortController();
+  onTimelineRead = () => abort.abort();
+  const beforeAbort = requests.length;
+  await assert.rejects(engine.generateStoryCompletion("a", [], { signal: abort.signal }), { name: "AbortError" });
+  assert.equal(requests.length, beforeAbort, "Stopping during timeline preparation skips the model request");
+
+  onTimelineRead=undefined;
+  const imageCases=["我拿出这件衣服，问你适不适合今晚穿。","我端来刚做好的草莓蛋糕。","这是我刚做好的饭，摆到桌上。","我举起手机，给你看相册里的这张照片。",""];
+  for(const text of imageCases){
+    const rawContent=images.formatStoryImageInput(text),history=[{id:"image-user",sessionId:"s",role:"user",rawContent,imageRef:"ref",createdAt:""}];
+    const before=requests.length;
+    await engine.generateStoryCompletion("a",history,{...options,participantIds:["a","b"]});
+    assert.equal(requests.length,before+1,"Reference images use the normal story request only");
+    const turn=requests.at(-1).find(message=>Array.isArray(message.content));
+    assert.equal(turn.role,"user");assert.equal(turn.content[1].type,"image_url");
+    assert.ok(turn.content[0].text.includes(images.STORY_REFERENCE_IMAGE_CONTEXT));
+    assert.ok(turn.content[0].text.endsWith(rawContent));assert.equal(rawContent,"（剧情参考图）"+(text?"\n"+text:""));
+  }
+  const old={id:"old",sessionId:"s",role:"user",rawContent:"（当面展示了一张图片）\n我端来一盘饭。",imageRef:"ref",createdAt:""};
+  await engine.generateStoryCompletion("a",[old,{id:"next",sessionId:"s",role:"user",rawContent:"尝尝看。",createdAt:""}],options);
+  assert.ok(requests.at(-1).some(message=>message.content==="（剧情参考图）\n我端来一盘饭。"));
+  assert.equal(old.rawContent,"（当面展示了一张图片）\n我端来一盘饭。","Old saved messages are not rewritten");
+  assert.ok(!requests.at(-1).some(message=>typeof message.content==="string"&&message.content.includes("当面展示了一张图片")));
+  imageRecognition=false;const beforeNoVision=requests.length;
+  await assert.rejects(engine.generateStoryCompletion("a",[old],options),/开启识图/);assert.equal(requests.length,beforeNoVision);imageRecognition=true;
+
+  const facingFormats=load("lib/facing-reply-format.ts",{"./call-action-text":load("lib/call-action-text.ts",{})});
+  const facingStorage=load("lib/facing-storage.ts",{"./facing-reply-format":facingFormats,"./memory-source-deletions":{isNativeMemorySourceDeleted:()=>false}}),facingRequests=[];
+  const facing=load("lib/facing-engine.ts",{
+    "./facing-reply-format":facingFormats,
+    "./shown-image":{...images,loadShownImageDataUrl:async()=>"data:image/png;base64,cmVmZXJlbmNl"},
+    "./character-storage":{loadCharacters:()=>characters},
+    "./facing-storage":{...facingStorage,loadFacingUsableAssets:()=>[],groupFacingScenes:()=>[]},
+    "./settings-storage":{loadBindingConfig:()=>({}),resolveBinding:()=>({apiConfigId:"api"}),loadApiConfigs:()=>[{id:"api",enableImageRecognition:imageRecognition}],loadPresets:()=>[],loadWorldBooks:()=>[],loadRegexes:()=>[],loadUserIdentities:()=>[],resolveUserIdentity:()=>({name:"简初"})},
+    "./memory-storage":{loadMemoryConfig:()=>({})},
+    "./abort-utils":{throwIfAborted:signal=>{if(signal.aborted)throw new Error("aborted");}},
+    "./llm-prompt-assembler":{assemblePromptPayload:({history})=>history.map(item=>({role:item.role,content:item.content}))},
+    "./stream-preview":{cleanStreamText:text=>text},"./call-action-text":load("lib/call-action-text.ts",{}),
+    jsonrepair:require("jsonrepair"),
+    "./chat-engine":{sendLLMRequest:async(_api,_preset,messages)=>{facingRequests.push(messages);return JSON.stringify({replies:[{speaker_id:"a",dialogue:"好的。",action:""}]});}},
+  });
+  const facingOptions={character:characters[0],settings:{memory:false},scene:"厨房",scenes:[],speakerId:"a",signal:new AbortController().signal};
+  for(const text of imageCases){
+    const turn={id:"facing-image",role:"user",kind:"text",text,imageRef:"ref",sceneName:"厨房",at:""};
+    const before=facingRequests.length;
+    await facing.generateFacingReply({...facingOptions,meeting:{id:"meeting",characterId:"a",participantIds:["a","b"],turns:[turn],type:"independent"}});
+    assert.equal(facingRequests.length,before+1,"Facing references reuse the normal reply request, including multi-facing");
+    const imageTurn=facingRequests.at(-1).find(item=>Array.isArray(item.content));
+    assert.equal(imageTurn.content[1].type,"image_url");assert.ok(imageTurn.content[0].text.includes(images.FACING_REFERENCE_IMAGE_CONTEXT));
+    assert.ok(imageTurn.content[0].text.includes("（场景参考图）"));assert.ok(!imageTurn.content[0].text.includes("（当面展示了一张图片）"));
+    assert.equal(turn.text,text,"Attachments do not add a phone/photo action to saved user text");if(text)assert.ok(imageTurn.content[0].text.includes(text));
+  }
+  const priorFacing={id:"past",role:"user",kind:"text",text:"我端来一盘饭。",imageRef:"past-ref",sceneName:"厨房",at:""};
+  await facing.generateFacingReply({...facingOptions,meeting:{id:"meeting",characterId:"a",turns:[priorFacing,{...priorFacing,id:"next",text:"尝尝看。",imageRef:undefined}],type:"independent"}});
+  assert.ok(facingRequests.at(-1).some(item=>typeof item.content==="string"&&item.content.includes("我端来一盘饭。\n（场景参考图）")));
+  assert.ok(!JSON.stringify(facingRequests.at(-1)).includes("当面展示了一张图片"));assert.equal(priorFacing.text,"我端来一盘饭。");
+  imageRecognition=false;const beforeFacingNoVision=facingRequests.length;
+  await assert.rejects(facing.generateFacingReply({...facingOptions,meeting:{id:"meeting",characterId:"a",turns:[priorFacing],type:"independent"}}),/开启识图/);
+  assert.equal(facingRequests.length,beforeFacingNoVision);imageRecognition=true;
 
   const { window } = require("linkedom").parseHTML('<html><body><div id="root"></div></body></html>');
   global.window = window; global.document = window.document; global.HTMLElement = window.HTMLElement; global.Node = window.Node;
@@ -95,6 +177,6 @@ async function main() {
   await click("应用"); await render();
   assert.equal(toggle("引导生成角色心声").checked, true); assert.equal(toggle("引导使用重点强调").checked, true);
   await act(async () => renderer.unmount());
-  console.log("✅ 剧情心声/重点引导：默认关闭与旧提示词一致、独立开关、预览/实际请求/多人流式一致、设置预设保存恢复；全程模拟 API");
+  console.log("✅ 剧情及面对面参考图（实物/照片/历史/多人/识图关闭）与剧情心声、重点引导、预设保存恢复；全程模拟 API");
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

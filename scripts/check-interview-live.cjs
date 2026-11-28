@@ -36,6 +36,7 @@ async function main() {
   const group = scenario({ flow: "all_user" }, { answer: input => { const d = deferred(); pending.push({ input, ...d }); input.onDelta(input.characterId); return d.promise; } });
   const first = group.live.start(); await tick();
   assert.equal(pending.length, 2);
+  assert.throws(()=>group.live.updateGuests([{id:"c",name:"丙"}]),/暂停/);
   await group.live.nextQuestion();
   assert.equal(pending.length, 2, "Repeated clicks must not create a second concurrent round");
   assert.equal(group.live.state.messages.filter(m => m.status === "streaming").length, 2);
@@ -85,6 +86,41 @@ async function main() {
   await host.live.manualQuestion("我本人问的问题", "简初");
   assert.equal(host.live.state.messages[0].role, "user");
   assert.equal(host.live.state.messages[0].kind, "question");
+
+  const groupGuests = Array.from({ length: 7 }, (_, index) => ({ id: String(index + 1), name: `嘉宾${index + 1}` }));
+  const groupRequests = [], audienceRequests = [], individualRequests = [];
+  const grouped = new InterviewLiveController(groupGuests, options.normalizeInterviewOptions({ participation: "backstage", flow: "all",
+    guestGroups: { 3: 2, 4: 2, 5: 3, 6: 3, 7: 3 }, audience: { enabled: true } }), {
+    groupAnswers: async input => { groupRequests.push(input); return Object.fromEntries(input.groupIds.map(id => [id, `回答 ${id}`])); },
+    audience: async input => { audienceRequests.push(input); return [{ name: "观众", content: "原来如此" }]; },
+    answer: async input => { individualRequests.push(input); return "单独重试后的回答"; },
+  }, () => {});
+  await grouped.manualQuestion("原始问题", "主持人");
+  assert.deepEqual(groupRequests.map(call => call.groupIds.join()).join("|"), "1,2|3,4|5,6,7");
+  assert.equal(audienceRequests.length, 1);
+  assert.equal(audienceRequests[0].transcript.filter(message => message.role === "character").length, 7);
+  assert.equal(grouped.state.audienceRounds[0].comments[0].content, "原来如此");
+  assert.ok(!grouped.state.messages.some(message => message.content === "原来如此"));
+  const questionToEdit = grouped.state.messages.find(message => message.kind === "question");
+  const answerToRetry = grouped.state.messages.find(message => message.speakerCharacterId === "4");
+  grouped.editQuestion(questionToEdit.id, "改过的问题");
+  await grouped.retryAnswer(answerToRetry.id);
+  assert.equal(individualRequests.length, 1);
+  assert.equal(individualRequests[0].question, "改过的问题");
+  assert.equal(grouped.state.messages.find(message => message.id === answerToRetry.id).content, "单独重试后的回答");
+  assert.equal(groupRequests.length, 3);
+  assert.equal(audienceRequests.length, 1);
+  grouped.deleteMessage(questionToEdit.id);
+  assert.equal(grouped.state.messages.length, 7);
+  assert.equal(grouped.state.audienceRounds.length, 0);
+
+  const beforeRosterChange = grouped.state.messages.length, beforeRosterCalls = groupRequests.length;
+  grouped.updateGuests([{id:"2",name:"嘉宾2"},{id:"8",name:"新嘉宾"}]);
+  grouped.updateOptions({...grouped.options,guestGroups:{2:1,8:2}});
+  assert.equal(grouped.state.messages.length,beforeRosterChange); assert.equal(groupRequests.length,beforeRosterCalls);
+  await grouped.manualQuestion("更换嘉宾后的问题","主持人");
+  assert.deepEqual(individualRequests.slice(-2).map(call=>call.characterId).join(),"2,8");
+  assert.throws(()=>grouped.updateGuests([]),/至少/);
 
   const flexible = scenario({ participation: "flexible", flow: "all", questionAsHost: false });
   await flexible.live.start(); await flexible.live.manualQuestion("先幕后代问", "简初");

@@ -17,6 +17,7 @@ export type IconId =
   | "calendar"
   | "interview_magazine"
   | "vnmode"
+  | "facing"
   | "mapmode"
   | "vnplay"
   | "vnchapters"
@@ -66,6 +67,7 @@ export const PAGE_2_DEFAULT: IconId[] = [
   "dwelling",
   "story",
   "vnmode",
+  "facing",
   "mapmode"
 ];
 
@@ -100,6 +102,7 @@ export const ICONS: Record<IconId, IconMeta> = {
   shopping: { id: "shopping", label: "\u8D2D\u7269", tone: "var(--c-icon-amber)", placeholder: false },
   calendar: { id: "calendar", label: "\u65E5\u5386", tone: "var(--c-icon-rose)", placeholder: true },
   interview_magazine: { id: "interview_magazine", label: "在场", tone: "var(--c-icon-lilac)", placeholder: false },
+  facing: { id: "facing", label: "面对面", tone: "var(--c-icon-lilac)", placeholder: false },
   vnmode: { id: "vnmode", label: "漫卷", tone: "var(--c-icon-rose)", placeholder: false },
   mapmode: { id: "mapmode", label: "冒险", tone: "var(--c-icon-amber)", placeholder: false },
   vnplay: { id: "vnplay", label: "漫卷播放", tone: "var(--c-icon-rose)", placeholder: true },
