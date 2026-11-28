@@ -80,9 +80,9 @@ async function main() {
   assert.ok(!button("添加场景素材")); assert.ok(button("选择见面角色 · 2人"));
   await click(button("选择见面角色 · 2人"));
   await click(button("新建多人组"));
-  assert.equal(host.querySelectorAll('.facing-list [aria-pressed="true"]').length, 2);
-  await change(host.querySelector('[aria-label="多人组名称"]'), "地图同行");
-  await click(button("保存并选择多人组")); await click(button("开启新对话"));
+  assert.equal(host.querySelectorAll('.facing-target-grid [aria-pressed="true"]').length, 2);
+  assert.equal(host.querySelector('[aria-label="多人组名称"]'), null);
+  await click(button("保存并选择（2人）")); await click(button("开启新对话"));
   assert.equal(host.querySelectorAll('.facing-cast-picker [aria-pressed="true"]').length, 2);
   await click(host.querySelector('[aria-label="关闭"]')); await click(button("见面记录"));
   assert.ok(host.textContent.includes("双人记录")); assert.ok(!host.textContent.includes("单人记录"), "single and multi records remain separate");

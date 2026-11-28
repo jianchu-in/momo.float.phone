@@ -259,17 +259,39 @@ export async function applyFacingPreset(id: string) {
   }); return saved;
 }
 export async function saveFacingGroup(name: string, participantIds: string[]) {
+  const {loadCharacters}=await import("./character-storage");
+  const characters=loadCharacters();
   const ids = [...new Set(participantIds.filter(Boolean))];
-  if (ids.length < 2 || !name.trim()) throw new Error("请输入组名并选择至少两位角色。");
+  if (ids.length < 2) throw new Error("请至少选择两位角色。");
+  if(ids.some(id=>!characters.some(item=>item.id===id)))throw new Error("部分角色已被移除，请重新选择。");
+  const automaticName=ids.map(id=>characters.find(item=>item.id===id)!.name).join("、");
   let saved!: FacingSettings;
   await kvUpdatePersisted(FACING_SETTINGS_KEY, raw => {
     const current = readJson<FacingSettings>(raw, { characters: {} });
     const match = current.groups?.find(item => [...item.participantIds].sort().join("|") === [...ids].sort().join("|"));
-    const group = { id: match?.id ?? facingId(), name: name.trim(), participantIds: ids };
+    const group = { id: match?.id ?? facingId(), name: name.trim() || match?.name?.trim() || automaticName || "多人见面", participantIds: ids };
     saved = { ...current, groups: [...(current.groups ?? []).filter(item => item.id !== group.id), group], groupId: group.id, characterId: ids[0], participantIds: ids };
     return JSON.stringify(saved);
   }); return saved;
 }
+/** Remove the saved group entry while retaining its people, meetings and media. */
+export async function deleteFacingGroup(groupId: string): Promise<FacingSettings> {
+  let saved!:FacingSettings;
+  const meetingKeys=kvKeysWithPrefix(FACING_MEETING_PREFIX).filter(key=>readJson<FacingMeeting|null>(kvGet(key),null)?.groupId===groupId);
+  await kvUpdatePersistedEntries({
+    [FACING_SETTINGS_KEY]:raw=>{
+      const current=readJson<FacingSettings>(raw,{characters:{}});
+      saved={...current,groups:(current.groups??[]).filter(group=>group.id!==groupId),groupId:current.groupId===groupId?undefined:current.groupId};
+      return JSON.stringify(saved);
+    },
+    ...Object.fromEntries(meetingKeys.map(key=>[key,(raw:string|null)=>{
+      const meeting=readJson<FacingMeeting|null>(raw,null);
+      return meeting?.groupId===groupId?JSON.stringify({...meeting,groupId:undefined}):raw??"null";
+    }])),
+  });
+  return saved;
+}
+
 /** Qualify same-named places by owner while preserving their stable backdrop IDs. */
 export function facingCastScenes(ids: string[], names: Record<string, string>): FacingSceneGroup[] {
   const owners = [...new Set([...ids, FACING_SHARED_CHARACTER_ID])];

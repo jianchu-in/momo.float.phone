@@ -19,7 +19,7 @@ export function FacingCastDialog({ meeting, onClose, onAdded }: {
     catch (cause) { setError(cause instanceof Error ? cause.message : "角色加入失败，请重试。"); }
     finally { setSaving(false); }
   }
-  return <div className="facing-overlay" onClick={() => { if (!saving) onClose(); }}>
+  return <div className="facing-overlay facing-overlay-center" onClick={() => { if (!saving) onClose(); }}>
     <section className="facing-sheet" role="dialog" aria-modal="true" aria-label="增加角色" onClick={event => event.stopPropagation()}>
       <header><h2>增加角色</h2><button type="button" disabled={saving} onClick={onClose}>关闭</button></header>
       <p>新角色从此刻加入当前地点，继续这段对话。已有聊天、地点和个人素材保留。</p>

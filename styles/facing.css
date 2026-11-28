@@ -286,3 +286,42 @@
 .facing-settings-list textarea { min-height:90px; width:100%; padding:10px; border:1px solid var(--facing-line); border-radius:10px; background:var(--facing-card); resize:vertical; }
 .facing-settings-list label:has(>textarea) { flex-direction:column; align-items:stretch; }
 .facing-scene-picker select { width:100%; min-height:44px; color:#2f3833; }
+
+/* Keep object selection compact and centered, with both kinds visible together. */
+.facing-target-overlay { z-index: 15; justify-items: center; padding: 16px; }
+.facing-target-dialog { width: min(100%, 390px); max-height: min(84%, 680px); padding: 0; gap: 0; display: flex; flex-direction: column; box-shadow: 0 18px 64px #17111f30; }
+.facing-target-dialog > header { flex: none; padding: 10px 14px 6px; }
+.facing-target-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 16px 18px; display: grid; gap: 20px; }
+.facing-target-body h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--facing-muted); }
+.facing-target-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 8px; }
+.facing-target-grid > button { min-width: 0; position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 5px 2px; border-radius: 12px; }
+.facing-target-grid > button > span:not(.facing-target-avatar):not(.facing-target-check) { width: 100%; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.facing-target-avatar { width: 48px; height: 48px; display: grid; place-items: center; flex: none; border-radius: 50%; overflow: hidden; background: var(--facing-soft); color: var(--facing-accent); font-size: 19px; }
+.facing-target-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.facing-target-grid > button[aria-pressed=true] { background: var(--facing-soft); }
+.facing-target-grid > button[aria-pressed=true] > .facing-target-avatar { outline: 2px solid var(--facing-accent); outline-offset: 2px; }
+.facing-target-check { position: absolute; top: 1px; right: max(2px, calc(50% - 29px)); width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--facing-accent); border: 2px solid var(--facing-card); }
+.facing-target-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.facing-target-section-head h3 { margin: 0; }
+.facing-target-section-head .facing-small { display: inline-flex; align-items: center; gap: 4px; color: var(--facing-accent); }
+.facing-target-groups { display: grid; gap: 8px; }
+.facing-target-group { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 12px; border: 1px solid var(--facing-line); }
+.facing-target-group[data-active=true] { background: var(--facing-soft); }
+.facing-target-group-select { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; text-align: left; }
+.facing-target-collage { width: 44px; height: 44px; flex: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; overflow: hidden; border-radius: 10px; background: var(--facing-soft); }
+.facing-target-collage .facing-target-avatar { width: 100%; height: 100%; border-radius: 0; font-size: 12px; }
+.facing-target-group-copy { display: grid; gap: 4px; min-width: 0; }
+.facing-target-group-copy strong { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.facing-target-group-copy small { font-size: 11px; line-height: 1.5; color: var(--facing-muted); overflow-wrap: anywhere; }
+.facing-target-group-delete { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 42px; min-height: 44px; font-size: 11px; color: var(--c-danger, #a33151) !important; }
+.facing-target-hint, .facing-target-delete-copy p, .facing-settings-scope-note { font-size: 12px; line-height: 1.7; color: var(--facing-muted); }
+.facing-target-delete-copy { display: grid; gap: 10px; }
+.facing-target-dialog > footer { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px 16px 16px; border-top: 1px solid var(--facing-line); }
+.facing-target-dialog > footer button { min-height: 42px; }
+.facing-target-dialog .facing-error { padding: 4px 16px 10px; }
+.facing-target-dialog .facing-target-confirm-delete { border-radius: 12px; color: #fff; background: var(--c-danger, #a33151); }
+.facing-settings-scope-note { padding: 10px 12px; border-radius: 12px; background: var(--facing-soft); }
+.facing-setting-owner { display: grid; gap: 8px; }
+@media (max-width: 340px) { .facing-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.facing-personal-settings h3 { margin: 0; font-size: 13px; }
